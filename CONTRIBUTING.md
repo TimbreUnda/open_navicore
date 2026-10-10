@@ -32,6 +32,13 @@ ABI compatibility and still-unknown product semantics.
 5. Explain the evidence class, ownership/lifetime behavior, and any remaining
    limitations in the pull request.
 
+Python tools and checks are local packages. Run them from the repository root
+with `python3 -m tools.<group>.<module>` or `python3 -m tests.<module>`, for example
+`python3 -m tools.abi.qnx_arm_abi_oracle --help`. The Make targets use this same
+convention. No package installation or `PYTHONPATH` setting is needed; shared
+helpers use ordinary imports such as `from tools.callback_symbols import
+callback_symbol`.
+
 ## ABI evidence rules
 
 A symbol name or plausible decompilation is not enough to change a native

@@ -218,7 +218,7 @@ prioritizable without turning absence of evidence into an exclusion.
 The inventory is reproduced from the raw Ghidra outputs with:
 
 ```text
-python3 tools/analysis/classify_callback_dispatches.py \
+python3 -m tools.analysis.classify_callback_dispatches \
   /tmp/exact-callback-dispatches.csv \
   /tmp/attributed-callback-dispatches-v5.csv \
   evidence/qr39/static/callback-outside-inventory.csv \
@@ -266,7 +266,7 @@ JAVA_HOME=/home/shish/tools/jdk \
   /mnt/d/open_navicore/evidence/qr39/static/callback-receiver-dataflow.csv \
   /mnt/d/open_navicore/evidence/qr39/static/callback-field-origins.csv
 
-python3 tools/analysis/summarize_callback_field_origins.py \
+python3 -m tools.analysis.summarize_callback_field_origins \
   evidence/qr39/static/callback-field-origins.csv \
   evidence/qr39/static/callback-field-origin-groups.csv
 ```

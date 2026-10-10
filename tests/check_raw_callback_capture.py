@@ -24,9 +24,9 @@ if len(rows) != 199 or len({r["interface"] for r in rows}) != 25:
 
 with tempfile.TemporaryDirectory() as directory:
     temp = pathlib.Path(directory)
-    subprocess.run([sys.executable, str(root / "tools/generators/generate_raw_callback_trampolines.py"),
+    subprocess.run([sys.executable, "-m", "tools.generators.generate_raw_callback_trampolines",
                     str(manifest), str(temp / "slots.S"), str(temp / "table.c")],
-                   check=True, stdout=subprocess.DEVNULL)
+                   cwd=root, check=True, stdout=subprocess.DEVNULL)
     for generated, checked in ((temp / "slots.S", root / "src/capture/generated/mock_raw_callback_slots_arm.S"),
                                (temp / "table.c", root / "src/capture/generated/mock_raw_callback_slot_table.c")):
         if generated.read_bytes() != checked.read_bytes():
@@ -53,10 +53,10 @@ with tempfile.TemporaryDirectory() as directory:
         "registers": {}, "allocations": [], "stubs": [],
     }
     (temp / "template.json").write_text(json.dumps(template), encoding="utf-8")
-    subprocess.run([sys.executable, str(root / "tools/replay/raw_callback_to_replay.py"),
+    subprocess.run([sys.executable, "-m", "tools.replay.raw_callback_to_replay",
                     str(temp / "capture.raw"), str(temp / "template.json"),
                     str(temp / "replay.json"), "--manifest", str(manifest)],
-                   check=True)
+                   cwd=root, check=True)
     replay = json.loads((temp / "replay.json").read_text(encoding="utf-8"))
     if replay["execution"] != {"entry": "0x80001000", "isa": "thumb",
                                "stop_pc": "0x23000000"}:

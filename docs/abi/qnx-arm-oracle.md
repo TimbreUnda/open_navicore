@@ -25,7 +25,7 @@ The exact compiler flags recorded in every catalog row are:
 The script additionally uses `-std=c99` for C and `-lang-c++` for C++. Run:
 
 ```sh
-python3 tools/abi/qnx_arm_abi_oracle.py
+python3 -m tools.abi.qnx_arm_abi_oracle
 make qnx-arm-abi-oracle-selftest
 ```
 
@@ -47,7 +47,7 @@ preceding the selected `bl`/`blx`, the call itself, and its relocation. Normaliz
 an independently extracted objdump function/call window with:
 
 ```sh
-python3 tools/abi/qnx_arm_abi_oracle.py \
+python3 -m tools.abi.qnx_arm_abi_oracle \
   --normalize-objdump target.objdump --function FUNCTION --call-index 0
 ```
 

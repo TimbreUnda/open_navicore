@@ -9,7 +9,7 @@ import pathlib
 import subprocess
 import tempfile
 
-from qnx_arm_abi_oracle import FLAGS, parse_objdump
+from tools.abi.qnx_arm_abi_oracle import FLAGS, parse_objdump
 
 
 DEFAULT_SDK = "/mnt/d/tools/qnx660-sdk"

@@ -189,31 +189,31 @@ $(BUILD_DIR) $(DIST_DIR):
 # only committed source, contracts, and evidence; no QNX SDK or stock ELF.
 check-contracts: pas-proxy-coverage-selftest
 	sh tests/check_plugin_elf.sh --self-test
-	python3 tests/check_raw_callback_capture.py
+	python3 -m tests.check_raw_callback_capture
 	sh tests/check_callback_coverage.sh $(CALLBACK_MATRIX) contracts/qr39/callbacks/runtime-coverage.csv src/compat/qr39/mock_navicore.c
-	python3 tests/check_static_callback_additions.py contracts/qr39/callbacks/runtime-coverage.csv \
+	python3 -m tests.check_static_callback_additions contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv
-	python3 tests/check_static_callback_thunk_ownership.py \
+	python3 -m tests.check_static_callback_thunk_ownership \
 		evidence/qr39/static/callback-thunk-ownership.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv
-	python3 tests/check_static_callback_contracts.py \
+	python3 -m tests.check_static_callback_contracts \
 		contracts/qr39/callbacks/static-contracts.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv include/mock_pas_callbacks.h \
 		src/compat/qr39/mock_pas_callbacks.c src/compat/qr39/mock_navicore.c
-	python3 tests/check_static_callback_outside_inventory.py \
+	python3 -m tests.check_static_callback_outside_inventory \
 		evidence/qr39/static/callback-outside-inventory.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
 		evidence/qr39/static/callback-unresolved-next-actions.csv \
 		evidence/qr39/static/callback-receiver-dataflow.csv \
 		evidence/qr39/static/callback-arm-slices.csv
-	python3 tests/check_static_callback_field_origins.py \
+	python3 -m tests.check_static_callback_field_origins \
 		evidence/qr39/static/callback-field-origins.csv \
 		evidence/qr39/static/callback-field-origin-groups.csv \
 		evidence/qr39/static/callback-outside-inventory.csv \
 		evidence/qr39/static/callback-arm-slices.csv
-	python3 tests/check_provider_coverage.py $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
+	python3 -m tests.check_provider_coverage $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
 		contracts/qr39/provider/api-coverage.csv src/compat/qr39/mock_navicore.c
-	python3 tests/check_static_provider_slots.py contracts/qr39/provider/slot-manifest.csv \
+	python3 -m tests.check_static_provider_slots contracts/qr39/provider/slot-manifest.csv \
 		src/compat/qr39/mock_navicore.c src/compat/qr39/mock_static_provider_slots.def
 
 # Backwards-compatible full contract target. The explicit targets below make
@@ -325,32 +325,32 @@ test-host: check-contracts
 test: test-host
 
 provider-coverage-selftest:
-	python3 tests/check_provider_coverage.py $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
+	python3 -m tests.check_provider_coverage $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
 		contracts/qr39/provider/api-coverage.csv src/compat/qr39/mock_navicore.c --self-test
 
 static-provider-coverage-selftest:
-	python3 tests/check_static_provider_slots.py contracts/qr39/provider/slot-manifest.csv \
+	python3 -m tests.check_static_provider_slots contracts/qr39/provider/slot-manifest.csv \
 		src/compat/qr39/mock_navicore.c src/compat/qr39/mock_static_provider_slots.def --self-test
 
 static-callback-coverage-selftest: pas-proxy-coverage-selftest
-	python3 tests/check_static_callback_additions.py contracts/qr39/callbacks/runtime-coverage.csv \
+	python3 -m tests.check_static_callback_additions contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv
-	python3 tests/check_static_callback_thunk_ownership.py \
+	python3 -m tests.check_static_callback_thunk_ownership \
 		evidence/qr39/static/callback-thunk-ownership.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
 		--self-test
-	python3 tests/check_static_callback_contracts.py \
+	python3 -m tests.check_static_callback_contracts \
 		contracts/qr39/callbacks/static-contracts.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv include/mock_pas_callbacks.h \
 		src/compat/qr39/mock_pas_callbacks.c src/compat/qr39/mock_navicore.c
-	python3 tests/check_static_callback_outside_inventory.py \
+	python3 -m tests.check_static_callback_outside_inventory \
 		evidence/qr39/static/callback-outside-inventory.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
 		evidence/qr39/static/callback-unresolved-next-actions.csv \
 		evidence/qr39/static/callback-receiver-dataflow.csv \
 		evidence/qr39/static/callback-arm-slices.csv \
 		--self-test
-	python3 tests/check_static_callback_field_origins.py \
+	python3 -m tests.check_static_callback_field_origins \
 		evidence/qr39/static/callback-field-origins.csv \
 		evidence/qr39/static/callback-field-origin-groups.csv \
 		evidence/qr39/static/callback-outside-inventory.csv \
@@ -359,7 +359,7 @@ static-callback-coverage-selftest: pas-proxy-coverage-selftest
 
 pas-proxy-coverage-selftest:
 	mkdir -p $(BUILD_DIR)
-	python3 tools/generators/build_pas_proxy_slot_manifest.py \
+	python3 -m tools.generators.build_pas_proxy_slot_manifest \
 		evidence/qr39/static/pas-proxy-vtables.csv $(CALLBACK_MATRIX) \
 		contracts/qr39/callbacks/runtime-coverage.csv contracts/qr39/callbacks/dispatch-additions.csv \
 		contracts/qr39/callbacks/static-contracts.csv \
@@ -368,7 +368,7 @@ pas-proxy-coverage-selftest:
 		$(BUILD_DIR)/pas-callback-proxy-slot-manifest.generated.csv
 	cmp contracts/qr39/callbacks/proxy-slot-manifest.csv \
 		$(BUILD_DIR)/pas-callback-proxy-slot-manifest.generated.csv
-	python3 tests/check_pas_proxy_slot_manifest.py \
+	python3 -m tests.check_pas_proxy_slot_manifest \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv evidence/qr39/static/pas-proxy-vtables.csv \
 		$(CALLBACK_MATRIX) contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv \
@@ -377,39 +377,39 @@ pas-proxy-coverage-selftest:
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		include/mock_pas_callbacks.h src/compat/qr39/mock_pas_callbacks.c \
 		src/compat/qr39/mock_navicore.c
-	python3 tests/check_cross_version_concrete_vtable_audit.py \
+	python3 -m tests.check_cross_version_concrete_vtable_audit \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv
-	python3 tests/check_concrete_callback_integration.py \
+	python3 -m tests.check_concrete_callback_integration \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv \
 		include/mock_pas_callbacks.h src/compat/qr39/mock_pas_callbacks.c \
 		tests/pas_callbacks_smoke.c src/compat/qr39/mock_navicore.c
 
 qnx-arm-abi-oracle-selftest:
-	python3 tools/abi/qnx_arm_abi_oracle.py --verify
-	python3 tools/abi/qnx_aggregate_abi_oracle.py --verify
-	python3 tests/check_qnx_arm_abi_oracle.py \
+	python3 -m tools.abi.qnx_arm_abi_oracle --verify
+	python3 -m tools.abi.qnx_aggregate_abi_oracle --verify
+	python3 -m tests.check_qnx_arm_abi_oracle \
 		evidence/qr39/oracles/qnx-arm-catalog.csv \
 		evidence/qr39/oracles/qnx-arm-assessment.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv
-	python3 tests/check_aggregate_callback_abi.py \
+	python3 -m tests.check_aggregate_callback_abi \
 		evidence/qr39/oracles/aggregate-callback-abi.csv \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv
 
 arm-snapshot-replay-selftest:
-	python3 tests/check_arm_snapshot_replay.py
+	python3 -m tests.check_arm_snapshot_replay
 
 raw-callback-capture-selftest: $(RAW_CAPTURE_TARGET)
-	python3 tests/check_raw_callback_capture.py
+	python3 -m tests.check_raw_callback_capture
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-DMOCK_RAW_CALLBACK_TESTING -DMOCK_RAW_CALLBACK_HOST_TEST \
 		$(CPPFLAGS) src/capture/mock_raw_callback_capture.c \
 		src/capture/generated/mock_raw_callback_slot_table.c tests/raw_callback_capture_smoke.c \
 		-o $(BUILD_DIR)/raw-callback-capture-smoke
 	$(BUILD_DIR)/raw-callback-capture-smoke
-	LD_LIBRARY_PATH=$(HOST_LIBS) python3 tests/check_raw_callback_arm.py \
+	LD_LIBRARY_PATH=$(HOST_LIBS) python3 -m tests.check_raw_callback_arm \
 		$(QNX_OBJDUMP) $(BUILD_DIR)/mock_raw_callback_trampolines_arm.o \
 		$(BUILD_DIR)/mock_raw_callback_slots_arm.o
 	LD_LIBRARY_PATH=$(HOST_LIBS) $(QNX_READELF) -h $(RAW_CAPTURE_TARGET) | \
