@@ -1,7 +1,7 @@
 # QR39.6 static provider-slot provenance
 
 This note defines what
-[`static-provider-slot-manifest.csv`](static-provider-slot-manifest.csv) proves
+[`contracts/qr39/provider/slot-manifest.csv`](../../contracts/qr39/provider/slot-manifest.csv) proves
 and, just as importantly, what it does not prove.
 
 ## Input and identity
@@ -81,7 +81,7 @@ output pointer. The output-bearing paths are:
   field initialized, and a non-null compatibility output is set to one.
 
 Known provider input pointers have separate extent rules in
-`provider-api-coverage.csv` and the pointer matrix used by
+`contracts/qr39/provider/api-coverage.csv` and the pointer matrix used by
 `tests/check_provider_coverage.py`. The HMI window/theme pointers are logged
 synchronously only and are neither dereferenced nor retained in the
 asynchronous reply queue.

@@ -14,9 +14,9 @@ QR40 `nv_navigation` SHA-256
 and the stock QR39.6/QR40-compatible `libNaviCore.so` SHA-256
 `fd1e931430cca61116c533cdf617dc805548e312a9131e972f55a7d30ab64842`.
 The exact vtable/target facts are retained in
-`cross-version-concrete-vtable-audit.csv`,
-`static-callback-dispatch-additions.csv`, and
-`static-callback-contract-manifest.csv`.
+`evidence/qr39/cross-version/concrete-vtable-audit.csv`,
+`contracts/qr39/callbacks/dispatch-additions.csv`, and
+`contracts/qr39/callbacks/static-contracts.csv`.
 
 ## Proven contracts
 

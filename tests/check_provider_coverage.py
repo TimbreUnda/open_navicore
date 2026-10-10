@@ -236,7 +236,10 @@ def main():
             args.provider_matrix, args.pointer_matrix)
         rows = read_csv(args.manifest, FIELDS)
         source = args.source.read_text(encoding="utf-8")
-        project_root = args.manifest.resolve().parent
+        # Evidence paths in the manifest are repository-relative. Keeping the
+        # root independent of the manifest's organizational directory lets the
+        # checked contract move without rewriting its evidence identities.
+        project_root = pathlib.Path(__file__).resolve().parents[1]
         validate(rows, provider, pointer_keys, source, project_root)
         if args.self_test:
             negative_self_test(rows, provider, pointer_keys, source, project_root)

@@ -88,11 +88,13 @@ contracts, ownership rules, and runtime behavior.
 | [`src/`](src) | Provider, lifecycle, renderer, backend loader, and callback code |
 | [`include/`](include) | Public and internal ABI declarations |
 | [`plugins/`](plugins) | Reference backend and negative-test plugins |
+| [`contracts/`](contracts) | Checked provider and callback compatibility contracts |
+| [`evidence/`](evidence) | Static, cross-version, and compiler-oracle evidence |
 | [`tests/`](tests) | Host, ARM ABI, lifecycle, stress, and manifest checks |
 | [`tools/`](tools) | Ghidra scripts, ABI oracles, generators, and replay tooling |
 | [`fixtures/`](fixtures) | Deterministic original-code replay fixtures |
 | [`deploy/`](deploy) | Bench deployment and control helpers |
-| `*.csv` | Checked interface inventories and evidence manifests |
+| [`docs/`](docs) | ABI, development, and validation documentation |
 
 Generated ARM callback tables and checked CSV manifests are intentionally
 versioned. Verification compares regenerated output against them.

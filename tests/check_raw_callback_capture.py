@@ -16,7 +16,7 @@ def fail(message: str) -> None:
 
 
 root = pathlib.Path(__file__).resolve().parents[1]
-manifest = root / "pas-callback-proxy-slot-manifest.csv"
+manifest = root / "contracts/qr39/callbacks/proxy-slot-manifest.csv"
 rows = [r for r in csv.DictReader(manifest.open(newline="", encoding="utf-8"))
         if r["slot_kind"] == "pure_virtual_application"]
 if len(rows) != 199 or len({r["interface"] for r in rows}) != 25:

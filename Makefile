@@ -188,30 +188,30 @@ $(BUILD_DIR) $(DIST_DIR):
 check-contracts: pas-proxy-coverage-selftest
 	sh tests/check_plugin_elf.sh --self-test
 	python3 tests/check_raw_callback_capture.py
-	sh tests/check_callback_coverage.sh $(CALLBACK_MATRIX) callback-coverage.csv src/mock_navicore.c
-	python3 tests/check_static_callback_additions.py callback-coverage.csv \
-		static-callback-dispatch-additions.csv
+	sh tests/check_callback_coverage.sh $(CALLBACK_MATRIX) contracts/qr39/callbacks/runtime-coverage.csv src/mock_navicore.c
+	python3 tests/check_static_callback_additions.py contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv
 	python3 tests/check_static_callback_thunk_ownership.py \
-		static-callback-thunk-ownership.csv callback-coverage.csv \
-		static-callback-dispatch-additions.csv static-callback-contract-manifest.csv
+		evidence/qr39/static/callback-thunk-ownership.csv contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv
 	python3 tests/check_static_callback_contracts.py \
-		static-callback-contract-manifest.csv callback-coverage.csv \
-		static-callback-dispatch-additions.csv include/mock_pas_callbacks.h \
+		contracts/qr39/callbacks/static-contracts.csv contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv include/mock_pas_callbacks.h \
 		src/mock_pas_callbacks.c src/mock_navicore.c
 	python3 tests/check_static_callback_outside_inventory.py \
-		static-callback-outside-inventory.csv callback-coverage.csv \
-		static-callback-dispatch-additions.csv static-callback-contract-manifest.csv \
-		static-callback-unresolved-next-actions.csv \
-		static-callback-receiver-dataflow.csv \
-		static-callback-arm-slices.csv
+		evidence/qr39/static/callback-outside-inventory.csv contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
+		evidence/qr39/static/callback-unresolved-next-actions.csv \
+		evidence/qr39/static/callback-receiver-dataflow.csv \
+		evidence/qr39/static/callback-arm-slices.csv
 	python3 tests/check_static_callback_field_origins.py \
-		static-callback-field-origins.csv \
-		static-callback-field-origin-groups.csv \
-		static-callback-outside-inventory.csv \
-		static-callback-arm-slices.csv
+		evidence/qr39/static/callback-field-origins.csv \
+		evidence/qr39/static/callback-field-origin-groups.csv \
+		evidence/qr39/static/callback-outside-inventory.csv \
+		evidence/qr39/static/callback-arm-slices.csv
 	python3 tests/check_provider_coverage.py $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
-		provider-api-coverage.csv src/mock_navicore.c
-	python3 tests/check_static_provider_slots.py static-provider-slot-manifest.csv \
+		contracts/qr39/provider/api-coverage.csv src/mock_navicore.c
+	python3 tests/check_static_provider_slots.py contracts/qr39/provider/slot-manifest.csv \
 		src/mock_navicore.c src/mock_static_provider_slots.def
 
 # Backwards-compatible full contract target. The explicit targets below make
@@ -324,63 +324,63 @@ test: test-host
 
 provider-coverage-selftest:
 	python3 tests/check_provider_coverage.py $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
-		provider-api-coverage.csv src/mock_navicore.c --self-test
+		contracts/qr39/provider/api-coverage.csv src/mock_navicore.c --self-test
 
 static-provider-coverage-selftest:
-	python3 tests/check_static_provider_slots.py static-provider-slot-manifest.csv \
+	python3 tests/check_static_provider_slots.py contracts/qr39/provider/slot-manifest.csv \
 		src/mock_navicore.c src/mock_static_provider_slots.def --self-test
 
 static-callback-coverage-selftest: pas-proxy-coverage-selftest
-	python3 tests/check_static_callback_additions.py callback-coverage.csv \
-		static-callback-dispatch-additions.csv
+	python3 tests/check_static_callback_additions.py contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv
 	python3 tests/check_static_callback_thunk_ownership.py \
-		static-callback-thunk-ownership.csv callback-coverage.csv \
-		static-callback-dispatch-additions.csv static-callback-contract-manifest.csv \
+		evidence/qr39/static/callback-thunk-ownership.csv contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
 		--self-test
 	python3 tests/check_static_callback_contracts.py \
-		static-callback-contract-manifest.csv callback-coverage.csv \
-		static-callback-dispatch-additions.csv include/mock_pas_callbacks.h \
+		contracts/qr39/callbacks/static-contracts.csv contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv include/mock_pas_callbacks.h \
 		src/mock_pas_callbacks.c src/mock_navicore.c
 	python3 tests/check_static_callback_outside_inventory.py \
-		static-callback-outside-inventory.csv callback-coverage.csv \
-		static-callback-dispatch-additions.csv static-callback-contract-manifest.csv \
-		static-callback-unresolved-next-actions.csv \
-		static-callback-receiver-dataflow.csv \
-		static-callback-arm-slices.csv \
+		evidence/qr39/static/callback-outside-inventory.csv contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
+		evidence/qr39/static/callback-unresolved-next-actions.csv \
+		evidence/qr39/static/callback-receiver-dataflow.csv \
+		evidence/qr39/static/callback-arm-slices.csv \
 		--self-test
 	python3 tests/check_static_callback_field_origins.py \
-		static-callback-field-origins.csv \
-		static-callback-field-origin-groups.csv \
-		static-callback-outside-inventory.csv \
-		static-callback-arm-slices.csv \
+		evidence/qr39/static/callback-field-origins.csv \
+		evidence/qr39/static/callback-field-origin-groups.csv \
+		evidence/qr39/static/callback-outside-inventory.csv \
+		evidence/qr39/static/callback-arm-slices.csv \
 		--self-test
 
 pas-proxy-coverage-selftest:
 	mkdir -p $(BUILD_DIR)
 	python3 tools/build_pas_proxy_slot_manifest.py \
-		qr39.6-pas-proxy-vtables.csv $(CALLBACK_MATRIX) \
-		callback-coverage.csv static-callback-dispatch-additions.csv \
-		static-callback-contract-manifest.csv \
-		cross-version-callback-contracts.csv \
-		cross-version-concrete-vtable-audit.csv \
+		evidence/qr39/static/pas-proxy-vtables.csv $(CALLBACK_MATRIX) \
+		contracts/qr39/callbacks/runtime-coverage.csv contracts/qr39/callbacks/dispatch-additions.csv \
+		contracts/qr39/callbacks/static-contracts.csv \
+		evidence/qr39/cross-version/callback-contracts.csv \
+		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		$(BUILD_DIR)/pas-callback-proxy-slot-manifest.generated.csv
-	cmp pas-callback-proxy-slot-manifest.csv \
+	cmp contracts/qr39/callbacks/proxy-slot-manifest.csv \
 		$(BUILD_DIR)/pas-callback-proxy-slot-manifest.generated.csv
 	python3 tests/check_pas_proxy_slot_manifest.py \
-		pas-callback-proxy-slot-manifest.csv qr39.6-pas-proxy-vtables.csv \
-		$(CALLBACK_MATRIX) callback-coverage.csv \
-		static-callback-dispatch-additions.csv \
-		static-callback-contract-manifest.csv \
-		cross-version-callback-contracts.csv \
-		cross-version-concrete-vtable-audit.csv \
+		contracts/qr39/callbacks/proxy-slot-manifest.csv evidence/qr39/static/pas-proxy-vtables.csv \
+		$(CALLBACK_MATRIX) contracts/qr39/callbacks/runtime-coverage.csv \
+		contracts/qr39/callbacks/dispatch-additions.csv \
+		contracts/qr39/callbacks/static-contracts.csv \
+		evidence/qr39/cross-version/callback-contracts.csv \
+		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		include/mock_pas_callbacks.h src/mock_pas_callbacks.c \
 		src/mock_navicore.c
 	python3 tests/check_cross_version_concrete_vtable_audit.py \
-		cross-version-concrete-vtable-audit.csv \
-		pas-callback-proxy-slot-manifest.csv
+		evidence/qr39/cross-version/concrete-vtable-audit.csv \
+		contracts/qr39/callbacks/proxy-slot-manifest.csv
 	python3 tests/check_concrete_callback_integration.py \
-		cross-version-concrete-vtable-audit.csv \
-		pas-callback-proxy-slot-manifest.csv \
+		evidence/qr39/cross-version/concrete-vtable-audit.csv \
+		contracts/qr39/callbacks/proxy-slot-manifest.csv \
 		include/mock_pas_callbacks.h src/mock_pas_callbacks.c \
 		tests/pas_callbacks_smoke.c src/mock_navicore.c
 
@@ -388,13 +388,13 @@ qnx-arm-abi-oracle-selftest:
 	python3 tools/qnx_arm_abi_oracle.py --verify
 	python3 tools/qnx_aggregate_abi_oracle.py --verify
 	python3 tests/check_qnx_arm_abi_oracle.py \
-		qnx-arm-abi-oracle-catalog.csv \
-		qnx-arm-abi-oracle-assessment.csv \
-		pas-callback-proxy-slot-manifest.csv
+		evidence/qr39/oracles/qnx-arm-catalog.csv \
+		evidence/qr39/oracles/qnx-arm-assessment.csv \
+		contracts/qr39/callbacks/proxy-slot-manifest.csv
 	python3 tests/check_aggregate_callback_abi.py \
-		aggregate-callback-abi-oracle.csv \
-		cross-version-concrete-vtable-audit.csv \
-		pas-callback-proxy-slot-manifest.csv
+		evidence/qr39/oracles/aggregate-callback-abi.csv \
+		evidence/qr39/cross-version/concrete-vtable-audit.csv \
+		contracts/qr39/callbacks/proxy-slot-manifest.csv
 
 arm-snapshot-replay-selftest:
 	python3 tests/check_arm_snapshot_replay.py

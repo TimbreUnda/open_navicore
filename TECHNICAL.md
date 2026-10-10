@@ -51,7 +51,7 @@ capacity rejection, forced cleanup context loss, concurrent teardown, and
 rejected ABI registrations.
 
 Both targets also run the fail-closed provider API coverage gate. The
-machine-readable [`provider-api-coverage.csv`](provider-api-coverage.csv)
+machine-readable [`contracts/qr39/provider/api-coverage.csv`](contracts/qr39/provider/api-coverage.csv)
 contains exactly the 36 adapter/slot pairs observed in the v11 provider trace
 plus separately recovered GPS 9/4. Each row records the recovered prototype and
 canonical argument shape, concrete function and vtable, compiler-checked C
@@ -63,7 +63,7 @@ additionally proves that duplicate, missing, prototype-corrupt, and
 generic-symbol manifests fail.
 
 The broader
-[`static-provider-slot-manifest.csv`](static-provider-slot-manifest.csv) is the
+[`contracts/qr39/provider/slot-manifest.csv`](contracts/qr39/provider/slot-manifest.csv) is the
 QR39.6 static-call-graph boundary. It records 140 root/adapter slots reachable
 by the stock executable and eight code-present slots belonging to adapters 21,
 27, and 28 that stock `getAdapter` deliberately rejects. Recovered but not yet
@@ -79,7 +79,7 @@ both ACTIVE (success) and after teardown (rejection).
 The manifest's repeated per-adapter `static_evidence` addresses are provenance
 anchors, not a claim that every row originates at the same instruction; their
 interpretation, input-only rule, and ABI limits are recorded in
-[`static-provider-analysis.md`](static-provider-analysis.md).
+[`docs/abi/provider-boundary.md`](docs/abi/provider-boundary.md).
 
 The static evidence was checked against the QR39.6 executable with SHA-256
 `8c8b5010d3db9062f2c970a8c932d707615eb7c40e1d4e9ad8f8eb9060b796ae`.
@@ -87,7 +87,7 @@ Its SI function/call graph and addresses match QR39.5; the binary difference is
 outside these provider dispatches.
 
 The first executable original-code fragment oracle is documented in
-[`arm-snapshot-replay.md`](arm-snapshot-replay.md). It replays a guarded stock
+[`docs/development/arm-snapshot-replay.md`](docs/development/arm-snapshot-replay.md). It replays a guarded stock
 Thumb callback thunk with explicit register, stack, object-graph, external-call,
 fault, and execution-budget state. `make arm-snapshot-replay-selftest` proves
 the baseline plus lane/return counterfactuals, graph relocation, null branch,
@@ -413,7 +413,7 @@ HMI-reply, audio-transition, cluster, voice-provider-reply, and real thread
 paths invoke the catalog, while optional methods remain callable seams for a
 future backend.
 
-[`callback-coverage.csv`](callback-coverage.csv) accounts for every one of the
+[`contracts/qr39/callbacks/runtime-coverage.csv`](contracts/qr39/callbacks/runtime-coverage.csv) accounts for every one of the
 61 rows in the authoritative v11 callback matrix:
 
 | Coverage state | Rows |
@@ -432,13 +432,13 @@ The 61-row matrix is runtime-observed coverage. A subsequent audit of stock
 provider SHA-256 `fd1e9314...64842` proved seven additional
 dispatches: root 5, HMI 1/4 and 1/5, GPS 9/6, Connectivity 20/6, TTS 24/4,
 and Phone 26/4. They are recorded in
-[`static-callback-dispatch-additions.csv`](static-callback-dispatch-additions.csv).
+[`contracts/qr39/callbacks/dispatch-additions.csv`](contracts/qr39/callbacks/dispatch-additions.csv).
 None is emitted. Exact concrete GPS and Phone receivers now prove both former
 pointer layouts and their typed dormant seams.
-[`static-callback-analysis.md`](static-callback-analysis.md) documents the
+[`docs/abi/callback-boundary.md`](docs/abi/callback-boundary.md) documents the
 reproducible Ghidra extraction. The 35 statically recovered dense-thunk ABI
 gaps are recorded in
-[`static-callback-contract-manifest.csv`](static-callback-contract-manifest.csv):
+[`contracts/qr39/callbacks/static-contracts.csv`](contracts/qr39/callbacks/static-contracts.csv):
 all 35 have typed dormant seams after concrete-consumer recovery of the final
 three pointer-bearing rows. The independent checker reconciles 61 runtime + 7 prior static +
 35 recovered rows + 14 Audio concrete-consumer rows + 63 complete
@@ -449,8 +449,8 @@ whole-image-unreferenced callback-shaped orphans explicitly excluded by the
 machine-readable guard.
 
 The callback proxy surface itself is independently complete in
-[`qr39.6-pas-proxy-vtables.csv`](qr39.6-pas-proxy-vtables.csv) and
-[`pas-callback-proxy-slot-manifest.csv`](pas-callback-proxy-slot-manifest.csv).
+[`evidence/qr39/static/pas-proxy-vtables.csv`](evidence/qr39/static/pas-proxy-vtables.csv) and
+[`contracts/qr39/callbacks/proxy-slot-manifest.csv`](contracts/qr39/callbacks/proxy-slot-manifest.csv).
 QR39.6 contains 25 `IF_Server*Proxy` vtables with 249 true entries: 50 C++
 destructors and 199 abstract application slots. The earlier 252-row extraction
 had crossed three vtable tails into the same unrelated
@@ -462,35 +462,35 @@ contract remains fail-closed. No ABI-unrecovered slot remains and no
 generic or variadic emitter is generated. The five safe scalar direct-static rows
 that formerly lacked functions now have tested dormant seams. Fourteen
 AudioHandling seams come from exact QR39.6/QR40 concrete receiver alignment;
-[`cross-version-callback-analysis.md`](cross-version-callback-analysis.md)
+[`docs/abi/cross-version.md`](docs/abi/cross-version.md)
 records the binaries, slots, operands, and limits.
 
 A subsequent bounded concrete-vtable pass covers all 63 former ABI gaps. The independent
-[`cross-version-concrete-vtable-audit.csv`](cross-version-concrete-vtable-audit.csv)
+[`evidence/qr39/cross-version/concrete-vtable-audit.csv`](evidence/qr39/cross-version/concrete-vtable-audit.csv)
 partitions all 63 as fixed typed-capable contracts. The exact pointer roles,
 extents, lifetime, and AAPCS
 alignment recovered for the former pointer-fail-closed set are documented in
-[`pointer-callback-contract-recovery.md`](pointer-callback-contract-recovery.md).
+[`docs/abi/pointer-callbacks.md`](docs/abi/pointer-callbacks.md).
 QR39.6 and QR40 resolve every row to the same concrete target and have
 identical complete target listings. All 63 rows now have fixed dormant
 production seams and host smoke coverage; the pointer rows retain their
 invalid-extent tests. The four by-value layouts have a separate QNX compiler
 oracle and are documented in
-[`aggregate-callback-contract-recovery.md`](aggregate-callback-contract-recovery.md).
+[`docs/abi/aggregate-callbacks.md`](docs/abi/aggregate-callbacks.md).
 None of the 63 dormant seams has a provider-side emitter.
 
 The remaining 1,740 exact syntactic chains are no longer an unaccounted blob.
-[`static-callback-outside-inventory.csv`](static-callback-outside-inventory.csv)
+[`evidence/qr39/static/callback-outside-inventory.csv`](evidence/qr39/static/callback-outside-inventory.csv)
 classifies every chain using callback-object and call-receiver provenance: nine
 are receiver-proven callbacks already present in the runtime/static catalogs,
 498 are excluded by concrete proxy-slot or receiver evidence, and 1,233 remain
 explicitly unresolved and non-callable. The reproducible Ghidra p-code
 definition/use artifact
-[`static-callback-receiver-dataflow.csv`](static-callback-receiver-dataflow.csv)
+[`evidence/qr39/static/callback-receiver-dataflow.csv`](evidence/qr39/static/callback-receiver-dataflow.csv)
 accounts for all 1,799 raw chains and proves 103 outside-dense exclusions
 where the actual `r0` and vtable-source objects have disjoint origins. The
 SHA/image-base-guarded instruction artifact
-[`static-callback-arm-slices.csv`](static-callback-arm-slices.csv) analyzes all
+[`evidence/qr39/static/callback-arm-slices.csv`](evidence/qr39/static/callback-arm-slices.csv) analyzes all
 657 unresolved decompiler receiver gaps: 646 prove machine receiver equality,
 ten prove disjoint origins, and one call-clobbered pair remains ambiguous.
 Equality is not ownership, so no contract was
@@ -499,7 +499,7 @@ back to fail-closed unresolved. Unique CI caller adjacency is not enough; in
 total, 114 callback-shaped chains are now proven to call on a different `r0`
 receiver. The unresolved split and next
 proof for every slot group are in
-[`static-callback-unresolved-next-actions.csv`](static-callback-unresolved-next-actions.csv).
+[`evidence/qr39/static/callback-unresolved-next-actions.csv`](evidence/qr39/static/callback-unresolved-next-actions.csv).
 The independent inventory checker fixes both raw key digests and the dataflow
 relation totals, reconciles the nine callbacks to existing contracts, checks
 all classification invariants and next-action totals, and runs nine negative
@@ -510,7 +510,7 @@ pending those concrete object-origin proofs; none is silently promoted or
 treated as safe merely because it matches the object+4/vtable/slot syntax.
 
 The historical ABI-gap set also has a reproducible QNX compiler oracle; see
-[`qnx-arm-abi-oracle.md`](qnx-arm-abi-oracle.md). It compiles 30 paired
+[`docs/abi/qnx-arm-oracle.md`](docs/abi/qnx-arm-oracle.md). It compiles 30 paired
 caller/callee declaration families (60 functions) with the installed QNX 6.6
 ARM compiler, including 0–10 scalar words, 64-bit alignment, soft float/double,
 POD-by-value, hidden sret, pointers/references, and C++ member/virtual forms.
@@ -529,12 +529,12 @@ not a reserved ABI slot; its recovered concrete implementations are handled
 by the same evidence rule.
 
 The equal-receiver subset now has a second, context-sensitive ownership pass.
-[`static-callback-field-origins.csv`](static-callback-field-origins.csv)
+[`evidence/qr39/static/callback-field-origins.csv`](evidence/qr39/static/callback-field-origins.csv)
 preserves field offsets and expands direct incoming call arguments and return
 paths for all 1,142 targets: 494 reach interprocedural terminals, one uses the
 independent long-timeout local p-code result, and 647 remain machine-only
 because Ghidra exposes no receiver varnode at the indirect call.
-[`static-callback-field-origin-groups.csv`](static-callback-field-origin-groups.csv)
+[`evidence/qr39/static/callback-field-origin-groups.csv`](evidence/qr39/static/callback-field-origin-groups.csv)
 collapses address-only differences into 132 reproducible shapes with exact slot
 counts and next actions. It promotes zero callbacks and positively identifies
 two slot-2 candidates as provider-constructed non-callback objects; no callback
@@ -954,7 +954,7 @@ are root slot 3 `getAdapter(self, enum, void **)`, which writes `NULL` before
 any rejection and a stable object only on success, and exported
 `panaVersionCheck`, which initializes every field of each non-null client and
 compatibility output. Full rules and provenance are in
-[`static-provider-analysis.md`](static-provider-analysis.md).
+[`docs/abi/provider-boundary.md`](docs/abi/provider-boundary.md).
 
 The target is 32-bit ARM EABI5 soft-float. Opaque scalar/pointer calls are
 represented by one 32-bit `uintptr_t` per proven core-register/stack word;
@@ -976,7 +976,7 @@ the production provider and establish an independent rollback path before any
 controlled device-side experiment.
 
 For ABI discovery beyond guessed C prototypes, the optional
-[`raw-callback-capture.md`](raw-callback-capture.md) component generates a
+[`docs/development/raw-callback-capture.md`](docs/development/raw-callback-capture.md) component generates a
 prototype-free ARM forwarding trampoline for every one of the 199 application
 slots in the 25 PAS callback interfaces. It records bounded register/stack and
 return snapshots into a nonblocking fixed ring and converts drained records

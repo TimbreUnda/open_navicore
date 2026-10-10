@@ -12,7 +12,7 @@ call boundary. Pointer extent and ownership require separate consumer evidence.
 No local `decomp-permuter` installation was present in `/mnt/d/tools`,
 `/home/shish/tools`, or `/mnt/d`. Rather than install unreviewed software, the
 repository contains a bounded deterministic declaration/wrapper permuter in
-[`tools/qnx_arm_abi_oracle.py`](tools/qnx_arm_abi_oracle.py).
+[`tools/qnx_arm_abi_oracle.py`](../../tools/qnx_arm_abi_oracle.py).
 
 ## Reproduction
 
@@ -58,7 +58,7 @@ agreement on one family, and a family with all hidden-return, 64-bit,
 by-value-aggregate, and pointer/reference hazards excluded.
 
 The evidence input is
-[`qnx-arm-abi-oracle-evidence.csv`](qnx-arm-abi-oracle-evidence.csv). Each row
+[`evidence/qr39/oracles/qnx-arm-evidence.csv`](../../evidence/qr39/oracles/qnx-arm-evidence.csv). Each row
 is keyed by adapter and slot and carries independently normalized producer and
 consumer call-setup instruction strings plus provenance. Evidence must refer
 to the exact callback object/slot; an unattributed object+vtable call is not a
@@ -66,18 +66,18 @@ producer. A pure-virtual base-vtable entry is not a concrete consumer.
 
 ## Current result
 
-[`qnx-arm-abi-oracle-catalog.csv`](qnx-arm-abi-oracle-catalog.csv) contains 60
+[`evidence/qr39/oracles/qnx-arm-catalog.csv`](../../evidence/qr39/oracles/qnx-arm-catalog.csv) contains 60
 compiled functions in 30 paired families. The historical 63-row ABI-gap set
 continues to be assessed after its independent QR39.6/QR40 concrete-consumer
 audit was integrated. The empty evidence file remains deliberate: none of
 these rows has an independently owned provider callsite on both sides of the
 compiler matcher, so the oracle did not promote any row by itself.
-[`qnx-arm-abi-oracle-assessment.csv`](qnx-arm-abi-oracle-assessment.csv)
+[`evidence/qr39/oracles/qnx-arm-assessment.csv`](../../evidence/qr39/oracles/qnx-arm-assessment.csv)
 therefore records **0 compiler-oracle promotions**. Identical concrete
 consumer bodies plus a separate bounded pointer-contract audit establish
 fixed ABI prototypes for 59 dormant seams. The final four by-value declarations
 are compiled and fingerprinted by the exact-purpose aggregate oracle described
-in `aggregate-callback-contract-recovery.md`; the general declaration permuter
+in `docs/abi/aggregate-callbacks.md`; the general declaration permuter
 itself still promoted zero rows. The production manifest has zero
 `fail_closed_unrecovered_abi` rows without attributing that result to the
 compiler oracle. The existing fourteen AudioHandling seams remain a separate,

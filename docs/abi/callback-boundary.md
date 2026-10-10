@@ -54,21 +54,21 @@ normal-address, Thumb-address, data, vtable, or member-pointer reference in the
 whole loaded provider image and are machine-marked
 `excluded_unreachable_orphan`; they are not assigned invented CI owners.  The
 complete machine-readable split is
-`static-callback-thunk-ownership.csv`, guarded by
+`evidence/qr39/static/callback-thunk-ownership.csv`, guarded by
 `tests/check_static_callback_thunk_ownership.py`.  Unique ownership alone was
 not treated as an ABI contract.  Each of the 35 statically recovered gaps was joined
 to its direct named CI caller, full pretty-function/template signature, ARM
 register/stack setup, and QR39.6 target consumer.  Their contracts are in
-`static-callback-contract-manifest.csv`: all 35 have typed dormant seams after
+`contracts/qr39/callbacks/static-contracts.csv`: all 35 have typed dormant seams after
 exact concrete-consumer recovery closed the final three pointer contracts.
 None is emitted.
 
 Seven dispatches have direct named-method provenance and do not overlap the
 61 runtime-observed rows.  They are recorded in
-`static-callback-dispatch-additions.csv`. Scalar-only rows have a fixed AAPCS
+`contracts/qr39/callbacks/dispatch-additions.csv`. Scalar-only rows have a fixed AAPCS
 word count. The GPS map-matched-address and Phone call rows now have exact
 concrete receiver layouts, bounds, and typed dormant seams documented in
-`pointer-callback-contract-recovery.md`.
+`docs/abi/pointer-callbacks.md`.
 
 ## Consequence
 
@@ -87,7 +87,7 @@ orphans.
 
 ## Authoritative QR39.6 proxy surface
 
-`qr39.6-pas-proxy-vtables.csv` is a fresh extraction of every
+`evidence/qr39/static/pas-proxy-vtables.csv` is a fresh extraction of every
 `PanaNav::IF_Server*Proxy` vtable in the QR39.6 executable.  There are 25
 proxy interfaces and 249 true address-point entries: 50 C++ destructor slots
 and 199 abstract application slots.  Every application entry in these base
@@ -101,7 +101,7 @@ InterApplicationDataExchange slot 12 all pointed to the same unrelated
 `tools/DumpServerProxyVtables.java` now requires the application tail to remain
 on the proxy's contiguous pure-virtual target and asserts exactly 25/249.
 
-`pas-callback-proxy-slot-manifest.csv` joins this surface to the recovered
+`contracts/qr39/callbacks/proxy-slot-manifest.csv` joins this surface to the recovered
 contract keys without treating provider callsite provenance as a prerequisite
 for accounting. Its 199 application rows partition into 199 fixed typed
 seams (80 currently emitted surface rows and 119 dormant rows), with no
@@ -110,23 +110,23 @@ and no unknown slot was assigned a word stub. The five safe scalar
 direct-static additions now have fixed dormant seams; the two unsafe
 direct-static pointer rows still have none. The additional 14 keys are bounded
 QR39.6/QR40 `SI_AudioHandling` concrete-consumer matches documented in
-`cross-version-callback-analysis.md`; they are dormant because no independent
+`docs/abi/cross-version.md`; they are dormant because no independent
 provider callsite is yet tied to those slots.
 The additional 63 keys come from the complete identical QR39.6/QR40 concrete
 vtable audit: all 63 have fixed dormant seams.
 None of those dormant seams is emitted by the provider. The pointer-contract
 promotions and their exact extents are documented in
-`pointer-callback-contract-recovery.md`; the four by-value declarations are
-documented in `aggregate-callback-contract-recovery.md`.
+`docs/abi/pointer-callbacks.md`; the four by-value declarations are
+documented in `docs/abi/aggregate-callbacks.md`.
 
 Every one of the 1,740 exact syntactic chains outside that region is now in
-`static-callback-outside-inventory.csv`.  Classification requires callback
+`evidence/qr39/static/callback-outside-inventory.csv`.  Classification requires callback
 object provenance rather than syntax:
 
 - **9 callback-owned** callsites have an audited path in which the registered
   CI callback field supplies both the vtable and call receiver, one CI owner,
   and a slot inside that exact QR39.6 proxy bound.  Seven reconcile to
-  `static-callback-dispatch-additions.csv` and two to the runtime matrix; this
+  `contracts/qr39/callbacks/dispatch-additions.csv` and two to the runtime matrix; this
   pass exposed no new safe contract.
 - **498 excluded** chains have concrete negative evidence: 321 target ABI
   destructor slots 0--1, 59 exceed the maximum slot 35 of all 25
@@ -150,7 +150,7 @@ raw exact chains, finds the `CALLIND`, extracts its actual `r0` receiver and the
 object supplying the loaded vtable, and walks both definition/use graphs
 through copies, casts, loads, constant field offsets, `PTRADD`/`PTRSUB`,
 `MULTIEQUAL` nodes, and direct-call return roots.  It emits the complete
-machine-readable `static-callback-receiver-dataflow.csv`.  A chain is excluded
+machine-readable `evidence/qr39/static/callback-receiver-dataflow.csv`.  A chain is excluded
 only when the two recovered origin sets are nonempty and disjoint; shared
 roots, cycles, or phi ambiguity remain unresolved.  This pass found 107 raw
 disjoint-origin chains.  Seven were already excluded by stronger evidence,
@@ -188,14 +188,14 @@ copy/cast/phi/load/direct-return definitions, and records indirect-entry data
 memberships without interpreting them as ownership. A five-call-depth and
 96-terminal cap are explicit in the script; a capped, cyclic, indirect, or
 decompiler-missing path remains unresolved. The detailed evidence is
-`static-callback-field-origins.csv`: 494 rows have interprocedurally expanded
+`evidence/qr39/static/callback-field-origins.csv`: 494 rows have interprocedurally expanded
 field origins, one large-function row uses the independent 120-second local
 p-code result after the shorter contextual decompile timed out, and 647 retain
 only the independently proven machine receiver because no usable decompiler
 receiver varnode exists at the callsite.
 
 The address-insensitive structural summary in
-`static-callback-field-origin-groups.csv` reduces the 1,142 rows to 132 repeated
+`evidence/qr39/static/callback-field-origin-groups.csv` reduces the 1,142 rows to 132 repeated
 origin shapes while retaining exact per-slot counts and an example callsite.
 The largest group is the 647 machine-only rows. This pass makes **no callback
 ownership promotion**: zero new registered-CI callbacks meet the required
@@ -209,7 +209,7 @@ the remaining work to indirect factories/vtable entries and the 647
 machine-only receiver definitions without turning names, adjacency, or local
 equality into ownership.
 
-`static-callback-unresolved-next-actions.csv` groups those unresolved chains by
+`evidence/qr39/static/callback-unresolved-next-actions.csv` groups those unresolved chains by
 structural category, dataflow relation, and slot, with the exact next proof
 required.  Across relation groups, slot 5 remains largest (327 chains), followed
 by slot 2 (138) and slot 3 (134).  This makes the remaining work bounded and
@@ -221,10 +221,10 @@ The inventory is reproduced from the raw Ghidra outputs with:
 python3 tools/classify_callback_dispatches.py \
   /tmp/exact-callback-dispatches.csv \
   /tmp/attributed-callback-dispatches-v5.csv \
-  static-callback-outside-inventory.csv \
-  --receiver-dataflow static-callback-receiver-dataflow.csv \
-  --arm-slices static-callback-arm-slices.csv \
-  --next-actions static-callback-unresolved-next-actions.csv
+  evidence/qr39/static/callback-outside-inventory.csv \
+  --receiver-dataflow evidence/qr39/static/callback-receiver-dataflow.csv \
+  --arm-slices evidence/qr39/static/callback-arm-slices.csv \
+  --next-actions evidence/qr39/static/callback-unresolved-next-actions.csv
 ```
 
 The receiver dataflow input itself is reproduced against the same imported
@@ -237,7 +237,7 @@ JAVA_HOME=/home/shish/tools/jdk \
   -scriptPath /mnt/d/open_navicore/tools \
   -postScript RecoverCallbackReceiverDataflow.java \
   /tmp/exact-callback-dispatches.csv \
-  /mnt/d/open_navicore/static-callback-receiver-dataflow.csv
+  /mnt/d/open_navicore/evidence/qr39/static/callback-receiver-dataflow.csv
 ```
 
 The machine-level companion is reproduced in the same project with:
@@ -249,7 +249,7 @@ JAVA_HOME=/home/shish/tools/jdk \
   -scriptPath /mnt/d/open_navicore/tools \
   -postScript RecoverArmCallbackReceiverSlices.java \
   /tmp/exact-callback-dispatches.csv \
-  /mnt/d/open_navicore/static-callback-arm-slices.csv
+  /mnt/d/open_navicore/evidence/qr39/static/callback-arm-slices.csv
 ```
 
 The interprocedural field-origin evidence and its repeated-shape summary are
@@ -261,14 +261,14 @@ JAVA_HOME=/home/shish/tools/jdk \
   /tmp callback-stock -process libNaviCore.stock.so -noanalysis \
   -scriptPath /mnt/d/open_navicore/tools \
   -postScript RecoverCallbackFieldOrigins.java \
-  /mnt/d/open_navicore/static-callback-outside-inventory.csv \
-  /mnt/d/open_navicore/static-callback-arm-slices.csv \
-  /mnt/d/open_navicore/static-callback-receiver-dataflow.csv \
-  /mnt/d/open_navicore/static-callback-field-origins.csv
+  /mnt/d/open_navicore/evidence/qr39/static/callback-outside-inventory.csv \
+  /mnt/d/open_navicore/evidence/qr39/static/callback-arm-slices.csv \
+  /mnt/d/open_navicore/evidence/qr39/static/callback-receiver-dataflow.csv \
+  /mnt/d/open_navicore/evidence/qr39/static/callback-field-origins.csv
 
 python3 tools/summarize_callback_field_origins.py \
-  static-callback-field-origins.csv \
-  static-callback-field-origin-groups.csv
+  evidence/qr39/static/callback-field-origins.csv \
+  evidence/qr39/static/callback-field-origin-groups.csv
 ```
 
 The two raw inputs come from `FindExactCallbackDispatches.java` and

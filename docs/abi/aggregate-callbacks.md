@@ -45,12 +45,12 @@ and the independent QNX compiler oracle.
 
 ## Compiler oracle
 
-[`tools/qnx_aggregate_abi_oracle.py`](tools/qnx_aggregate_abi_oracle.py)
+[`tools/qnx_aggregate_abi_oracle.py`](../../tools/qnx_aggregate_abi_oracle.py)
 compiles the four exact caller/callee pairs with QNX 6.6 ARM using the same
 flags as the general ABI oracle. Compile-time assertions enforce the 16-byte
 location, 48-byte MBR, and eight-byte MBR alignment. Normalized caller and
 callee fingerprints are checked into
-[`aggregate-callback-abi-oracle.csv`](aggregate-callback-abi-oracle.csv).
+[`evidence/qr39/oracles/aggregate-callback-abi.csv`](../../evidence/qr39/oracles/aggregate-callback-abi.csv).
 `--verify` recompiles and rejects stale output. The compiler evidence confirms
 placement and padding; the stock message builders establish semantic field
 extent and synchronous ownership.

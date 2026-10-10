@@ -126,7 +126,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sdk", default=DEFAULT_SDK)
     parser.add_argument("--host-libs", default=DEFAULT_HOST_LIBS)
-    parser.add_argument("--output", default="aggregate-callback-abi-oracle.csv")
+    parser.add_argument("--output", default="evidence/qr39/oracles/aggregate-callback-abi.csv")
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
     actual = build(args.sdk, args.host_libs)

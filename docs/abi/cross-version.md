@@ -29,7 +29,7 @@ The broader `0x0812d320..0x08130b00` range is 14,304 identical bytes, SHA-256
 `1cbd4d296f7eef9f1b2569d0901d51ec3e3a5de232d05dbd08f3bd5da1b4a6be`.
 
 Concrete vtable index equals proxy application slot plus two. The exact
-machine evidence is in `cross-version-callback-contracts.csv`:
+machine evidence is in `evidence/qr39/cross-version/callback-contracts.csv`:
 
 | Slot | Target | Receiver method | Scalar words after `self` |
 |---:|---:|---|---:|
@@ -76,7 +76,7 @@ their same-slot QR40 targets. More importantly, bounded
 listings are identical after the provenance line; this is not a name/order
 match.
 
-[`cross-version-concrete-vtable-audit.csv`](cross-version-concrete-vtable-audit.csv)
+[`evidence/qr39/cross-version/concrete-vtable-audit.csv`](../../evidence/qr39/cross-version/concrete-vtable-audit.csv)
 records the concrete table, target, recovered method name, incoming ABI width,
 consumer access, and ownership/layout class for each row. Its independent
 checker fixes the 63-row identity digest, reconciles it exactly to the
@@ -86,7 +86,7 @@ integrated production keys, requires same-target/same-body evidence, checks the
 The evidence partition is 63 fixed typed-capable dormant contracts. A bounded
 machine-level follow-up recovered exact signatures, input extents, synchronous
 lifetime, and AAPCS alignment for all eight formerly fail-closed pointer rows;
-[`pointer-callback-contract-recovery.md`](pointer-callback-contract-recovery.md)
+[`pointer-callbacks.md`](pointer-callbacks.md)
 records those proofs and the five related static rows. The typed set
 includes bounded synchronous pointer inputs whose consumers prove their
 extent: 10-byte EWS area, 0x30-byte TPEG station, 0x180-byte VICS alert,
@@ -100,6 +100,6 @@ and the one opaque pointer row forwards only during the call and never retains
 or dereferences it. Host smoke covers each newly typed pointer ABI, including
 the aligned 64-bit transfers and rejected invalid extents. The four by-value
 aggregate rows are independently confirmed by exact message-builder copies
-and the QNX compiler oracle in `aggregate-callback-contract-recovery.md`. The
+and the QNX compiler oracle in `docs/abi/aggregate-callbacks.md`. The
 resulting 199-slot application surface contains 199 typed, zero fail-closed,
 and zero ABI-unrecovered rows.
