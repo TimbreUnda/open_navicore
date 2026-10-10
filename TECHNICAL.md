@@ -604,7 +604,7 @@ protocol sequence.
 ## Versioned map-backend seam
 
 [`include/open_navicore/backend.h`](include/open_navicore/backend.h) is the stable C
-boundary intended for the future in-process OsmAnd adapter. `MockNavBackendV1`
+boundary used by the optional in-process OsmAnd adapter. `MockNavBackendV1`
 and every payload start with `abi_version` and `struct_size`; descriptors are
 copied at registration, and all event payloads are owned copies. The v1
 contract covers backend start/stop, render-surface availability and geometry,
@@ -780,10 +780,12 @@ to prove that the radio routes physical input to the recreated `NAV_main`
 application context and that its source coordinates match the rendered
 800-by-480 buffer under the installed Screen class policy.
 
-Workstation-local OsmAnd build evidence proves that the pinned OsmAnd Core
-static archive and a QNX ARM smoke binary build, but not a map-renderer/EGL
-integration. This change intentionally stops at the backend boundary: no
-OsmAnd object is constructed or linked yet.
+The optional OsmAnd backend introduced by PR #2 rendered a fixed Kyiv map
+through the provider-owned EGL surface in the stock UI. The foundation
+refactor separates its C entry points, session policy and concrete engine;
+see [the backend runtime contract](backends/osmand/README.md) for failure,
+context-loss and pending-frame behavior. Offline tests do not requalify that
+refactored binary set on the bench.
 
 ## Process-lifetime backend plugin
 
@@ -898,11 +900,11 @@ root-owned directory that is not group/world writable. The build identifier is
 an ABI/deployment pin, not a cryptographic signature; deployment tooling must
 continue to verify the full artifact hash.
 
-This proves that an independently built C backend can be placed behind the
-stock provider lifecycle. It does not prove OsmAnd rendering. The current QNX
-OsmAnd archive omits its OpenGL/OpenGLES renderer objects, and a real adapter
-still needs renderer-enabled OsmAnd, deterministic map/style assets, conversion
-of GPS and pointer events, context-loss handling, and on-radio EGL/GLES tests.
+The reference-plugin result proves that an independently built C backend can
+be placed behind the stock provider lifecycle. Separately, PR #2's optional
+renderer-enabled OsmAnd binary set proved fixed Kyiv rendering in that UI.
+Live positioning, pan/zoom, routing and guidance remain unimplemented. Repeat
+lifecycle/context-loss tests for the foundation refactor remain a bench task.
 
 ## Observable startup trace
 
@@ -966,10 +968,10 @@ known vehicle-speed float remains a real typed `float`, with its soft-float
 Many fixed-word methods deliberately provide only lifecycle/status acceptance
 and diagnostics. Their domain state machines, enum meanings, callback/reply
 requirements, timing, and payload semantics are not recovered, the three stock
-unavailable adapters remain unavailable, and the current OsmAnd archive still
-lacks its GLES renderer. Consequently this build does not claim stock feature
-parity or production navigation readiness. The solid-color native surface is
-only a rendering-contract probe.
+unavailable adapters remain unavailable. The reference backend's solid-color
+surface is a rendering-contract probe, while the optional OsmAnd backend
+renders a fixed map. Neither claims stock feature parity or production
+navigation readiness.
 
 This project performs no deployment and makes no changes to a radio. Preserve
 the production provider and establish an independent rollback path before any

@@ -1,47 +1,240 @@
 # OsmAnd backend
 
-This optional backend renders OsmAnd map data into the EGL surface owned by
-Open NaviCore. It is intentionally kept behind the stable C plugin ABI so the
-QNX/C++ runtime used by OsmAnd never crosses into the proprietary provider
-boundary.
+This optional ARM/QNX backend renders a fixed Kyiv viewport into Open NaviCore's
+borrowed EGL target. PR #2 (`9d87881624ad1609449dc9200dcef582e297a2ed`) proved that
+map in the stock UI on an unlocked stationary bench unit. The foundation
+refactor has host and cross-build verification; it still needs the bench
+qualification below. GPS, pan/zoom, routing, guidance, audio and cluster output
+are not implemented.
 
-The first milestone uses a fixed Kyiv viewport and deliberately ignores live
-GPS updates. Position tracking belongs to the next navigation-state milestone.
-Map data and the OsmAnd binary/resource bundles are runtime assets and are not
-committed to this repository.
+## Components and ownership
 
-## Build
+| Component | Responsibility |
+|---|---|
+| `osmand_backend.cpp` | Query-V1/backend-V2 C entry points, ABI validation, exception containment, EGL current-context query |
+| `config.*` | Owned environment snapshot at start |
+| `session.*` | Lifecycle, attachment generations, worker wakeups, frame policy and rollback decisions |
+| `engine.h` | Small injectable engine interface; no Qt/OsmAnd types |
+| `osmand_engine.cpp` | Core, resource bundle, map pipeline and renderer ownership |
+| `diagnostics.*` | Nonthrowing, best-effort trace to `/tmp/open-navicore-osmand.log` |
 
-Set these variables to the corresponding outputs of an ARMv7 QNX OsmAnd build:
+The provider owns Screen/EGL display, window, surface and context. The backend
+never creates, destroys, binds or swaps those objects. Callbacks execute on the
+renderer thread; only the engine's frame wakeup may arrive from a worker.
+The C boundary hides C++ types from the provider API, but does **not** isolate
+the C++ runtime within the process. The plugin, OsmAnd core, PIC Qt and compiler
+runtime are one qualified binary set. In the local build, undefined C++ symbols
+in the plugin resolve from the core even with `-static-libstdc++`,
+`-static-libgcc` and `-Bsymbolic`.
 
-- `OSMAND_QNX_ROOT`: build workspace containing `source`, `gcc-out`, and the
-  PIC Qt prefix;
-- `OSMAND_CORE_LIB_DIR`: directory containing `libOsmAndCore_shared.so`;
-- `OSMAND_QT_PREFIX`: PIC Qt installation used to build OsmAnd.
+## Runtime contract
 
-Then run:
+The plugin's public ABI, query sizes and build identifier are unchanged.
+Each input must have the expected ABI version and sufficient structure size
+before any payload field is read. An accessible two-word header remains the
+caller's responsibility. Unknown tail fields are ignored. All exported and
+callback entry points contain C++ exceptions; a void cleanup callback records
+quarantine instead of propagating a failure.
+
+| State | Accepted transition |
+|---|---|
+| Stopped | `start` snapshots config/services and enters Started |
+| Started | `surface_created` enters Attaching; duplicate start is rejected |
+| Attaching | Success enters Attached; safe rollback returns to Started; unsafe rollback enters Quarantined |
+| Attached | Frames return Pending, Presented or Fault; duplicate attach is rejected |
+| Faulted | Rendering stops; normal surface teardown still releases the engine |
+| Quarantined | Absorbing state; no new engine/core initialization until process restart |
+
+`surface_destroyed` is idempotent and returns a safely released Attached or
+Faulted session to Started. `stop` is idempotent and enters Stopped unless the
+session is quarantined. A successful teardown permits another attach or
+stop/start, but these restart paths still need testing with the real bundle.
+
+At attach and render, the supplied EGL context must be current. At detach,
+the adapter compares `eglGetCurrentContext()` with the attached context.
+Only an exact nonzero match permits `releaseRendering(false)`. No context or
+a different current context selects `releaseRendering(true)`, OsmAnd's
+context-loss path. Stop has no current-context guarantee and also uses that
+path if surface teardown was omitted.
+
+The runtime calls `surface_destroyed` only for a successful attach, so failure
+rollback happens inside attach while its expected context is still current.
+The loader defers teardown following a render fault until the ordinary
+surface-destroyed/stop sequence. The backend does not tear down GL inside render.
+
+Each attachment creates a new reference-counted wakeup gate with an immutable
+service snapshot and generation. Workers capture that gate, never the session.
+Detach, stop, initialization failure and frame fault revoke it before cleanup.
+Old callbacks cannot read a later session's services. A callback already racing
+with revocation may finish one request using the old runtime token; the runtime
+rejects stale lifecycle tokens. Within the same start it is only a coalesced
+frame request and carries no old engine state.
+
+### Frame policy
+
+The concrete engine preserves the proven order and settings: embedded default
+style, Ukrainian labels, 256-pixel primitives/symbol providers, software raster
+provider, Kyiv 50.4501/30.5234, zoom 13.5, azimuth 0, elevation 90, and no GPU
+worker thread. Camera, symbols and raster providers are installed before
+`initializeRendering(true)`. Each frame runs update, prepare, then render.
+
+| Engine observation | Internal outcome | Plugin return / wakeup |
+|---|---|---|
+| `update() == false` or exception | Fault | Nonzero; loader selects fallback |
+| `prepareFrame() == false` | Pending (prepare) | Zero; request again if renderer is not idle |
+| `renderFrame() == false` | Pending (render) | Zero; request again |
+| `renderFrame() == true` | Presented | Zero; request again if renderer is not idle |
+
+The core's bool render API collapses both `StageResult::Wait` and
+`StageResult::Fail`. A false is therefore **not proof of a harmless wait**.
+The session logs each pending stage once per attachment and a persistent
+warning after every 1024 consecutive pending frames. Presentation resets the
+consecutive counter. There is no arbitrary failure timeout: it would break
+resource loading proven by the bench run. Consult core stage diagnostics when
+pending persists; explicit stage results require a future core API change.
+
+Query V1 has no separate pending/no-swap result. Zero causes the runtime to
+swap even if the engine is pending; nonzero causes permanent loader fallback
+for that lifecycle. This PR retains that behavior. Internal Presented means
+the engine rendered successfully, not that the runtime's later swap succeeded.
+A future no-swap result would need an append-only ABI negotiated with the
+runtime and loader.
+
+### Partial initialization and release failures
+
+The inspected external core is a locally patched source tree without a Git
+checkout. The following source semantics govern the conservative cleanup:
+
+- `src/OsmAndCore.cpp`, `InitializeCore`: assigns the global resources provider,
+  adds logging and starts/initializes the Qt application before SKIA/ICU failure
+  returns. `ReleaseCore` has no matching partial-init status or documented
+  partial rollback API.
+- `src/Map/MapRenderer.cpp`, `initializeRendering`: initializes GPU API,
+  resource manager and renderer stages before `postInitializeRendering` sets
+  `_isRenderingInitialized`. `releaseRendering` returns false when that flag is
+  unset; it cannot unwind these earlier failures.
+- `releaseRendering` may return false between release stages. Ignoring that
+  result and destroying the graph risks destructors/workers using partial
+  state. The adapter checks the result and retains the graph on failure.
+
+Resource-load failures and failures after a successful core initialization but
+before entering rendering initialization can roll back normally. An exception
+or false return **during** either initialization boundary quarantines the
+session. A false/exception during release also quarantines it.
+
+Quarantine revokes wakeups, stops further engine dispatch and retains the
+dependency graph for process lifetime; it does not claim that workers or
+globals were cleaned up. Stop cannot make it reusable. The runtime retains the
+plugin DSO for process lifetime; unloading an active or quarantined plugin is
+unsupported. This is a deliberate bounded-to-one-graph leak requiring process
+restart, not an upstream rollback fix. It cannot protect against core crashes,
+assertions, hangs, or dependency destructors that terminate the process.
+
+A core follow-up needs stage-aware, idempotent partial initialization rollback,
+worker draining/callback revocation, and a trustworthy release completion result.
+Until that exists, do not retry initialization in a poisoned process.
+
+For source identification, the inspected files had these SHA-256 values:
+
+| Source | SHA-256 |
+|---|---|
+| `src/OsmAndCore.cpp` | `9b764a3fd4a15d292108739d8b874954988ec0633bf8fd18d001184df1e19f7d` |
+| `src/Map/MapRenderer.cpp` | `984a834482cf781a8a69449d859024dc7f78b212500498cd3d21337e4b591224` |
+| `src/Map/OpenGL/AtlasMapRenderer_OpenGL.cpp` | `dd97dd83104a54f98fc3624e209d0d8636620a5f33287dba36b7b6a0de0c4cd2` |
+
+These identify inspected semantics, not a reproducible source release or a
+claim that a different core has identical behavior.
+
+## Build and dependency bundle
+
+The optional Make targets need:
+
+- `OSMAND_QNX_ROOT`: workspace with `source/core`, `gcc-out` and PIC Qt;
+- `OSMAND_CORE_LIB_DIR`: renderer-enabled `libOsmAndCore_shared.so` and resource
+  bundle (default `source/binaries/qnx/gcc-armv7/Release` below the root);
+- `OSMAND_QT_PREFIX`: the PIC Qt build used by that core (default `qt-pic-prefix`);
+- `OSMAND_CXX`: its matching C++17 ARM/QNX compiler (default under `gcc-out/bin`);
+- `QNX_SDK` and `QNX_HOST_LIBS`: licensed SDK and required host libraries;
+- `OSMAND_BUNDLE_ID`: a versioned external-bundle identity; defaults to
+  `local-unqualified` for exploration.
 
 ```sh
-make osmand-backend \
+make osmand-check osmand-obf-smoke osmand-plugin-smoke osmand-manifest \
   QNX_SDK=/path/to/qnx660-sdk \
   QNX_HOST_LIBS=/path/to/qnx-host-libs \
-  OSMAND_QNX_ROOT=/path/to/osmand-qnx-build
+  OSMAND_QNX_ROOT=/path/to/osmand-qnx-build \
+  OSMAND_BUNDLE_ID=reviewed-bundle-001
 ```
 
-No workstation path is compiled into the plugin. On the target, the defaults
-are:
+Objects and linked artifacts live in `build/osmand/<configuration-key>/`,
+independent of the shared legacy `BUILD_DIR`. The key includes worktree,
+toolchain/SDK roots, flags, dependency paths and bundle ID. Override
+`OSMAND_BUILD_ROOT` to relocate that tree. Header dependency files are generated;
+the core binary and compiler executable are explicit prerequisites.
+Every requested public build target copies its selected artifact to `dist/`,
+so switching back to an earlier configuration cannot leave a newer, unrelated
+artifact selected there.
 
-| Asset | Target path |
+Change `OSMAND_BUNDLE_ID` when replacing a dependency bundle in place.
+Dependency files and timestamps cannot detect all compiler-internal, archived
+source or timestamp-preserving changes. This is configuration isolation and
+invalidation, not a hermetic build of external dependencies.
+
+`make osmand-check` checks ELF32 ARM EABI5 soft-float, exact export/dependency
+sets, SONAME, absence of TEXTREL/RUNPATH and the sole permitted target RPATH.
+It has a separate checker; the strict reference-plugin checker remains unchanged.
+`make osmand-session-test` runs the fake-engine/C-entry tests without Qt, EGL,
+OsmAnd or QNX. It is also part of `make test-host`.
+
+`make osmand-manifest` writes `bundle-manifest.json` beside the build artifacts.
+It inventories plugin/core/resources, installed Qt archives, compiler, runtime
+archives, selected SDK libraries/tools and the inspected core source files.
+Generated paths are local evidence and are not committed. Preserve alongside it
+the complete source archives/revisions, patches, build scripts, Qt configuration,
+compiler recipe, SDK version and link flags. This repository does not build or
+supply those external dependencies; the generated inventory alone cannot
+reproduce them.
+
+The plugin still uses the existing query build ID expected by the provider.
+That handshake is an ABI/deployment label, not a unique content identity.
+Record the manifest and deployed provider/plugin/core set together.
+
+### Runtime assets
+
+| Asset | Default target path |
 |---|---|
-| backend | `/datastore/navicore-backend/libMockNavBackendOsmAnd.so` |
-| core | `/datastore/navicore-backend/libOsmAndCore_shared.so` |
-| resources | `/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so` |
-| map | `/datastore/navicore-backend/maps/kyiv.obf` |
-| fonts | `/datastore/navicore-backend/fonts/` |
+| Backend | `/datastore/navicore-backend/libMockNavBackendOsmAnd.so` |
+| Core | `/datastore/navicore-backend/libOsmAndCore_shared.so` |
+| Resources and embedded default style | `/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so` |
+| Map | `/datastore/navicore-backend/maps/kyiv.obf` |
+| Fonts | `/datastore/navicore-backend/fonts/` |
 
-The resources, map, and font paths can be overridden for a one-shot test with
-`OPEN_NAVICORE_OSMAND_RESOURCES`, `OPEN_NAVICORE_OSMAND_MAP`, and
-`OPEN_NAVICORE_OSMAND_FONTS` in the navigation process environment.
+`OPEN_NAVICORE_OSMAND_RESOURCES`, `OPEN_NAVICORE_OSMAND_MAP` and
+`OPEN_NAVICORE_OSMAND_FONTS` are copied at start; environment changes affect
+the next start only. The sole runtime search path is
+`/datastore/navicore-backend`. Record map region/date/source/license and font
+files/licenses with the bundle. Map data, fonts and binary/resource bundles
+are not committed. SDK library hashes identify offline link inputs; they do
+not establish equivalence to the radio's graphics implementation.
 
-The backend carries a QNX RPATH only for the fixed target asset directory
-`/datastore/navicore-backend`; it never embeds a workstation or SDK path.
+## Stationary bench qualification checklist
+
+1. Preserve stock/active-file backups and recovery access. Record the complete
+   provider/plugin/core/resources/map/font bundle and target graphics versions.
+2. Run the OBF and plugin-query smoke executables; verify query selection and
+   expected resources before rendering. Cross-building them does not run them.
+3. Start navigation, verify the fixed Kyiv map and Ukrainian labels in the stock
+   tile, then confirm hide/show and normal teardown/start cycles.
+4. Observe prepare/render pending followed by `frame_rendered=kyiv`; check core
+   logs if the persistent-pending warning repeats.
+5. Exercise normal context-current teardown and, with a controlled harness,
+   no-context/context-loss teardown. Verify no backend-owned EGL destruction.
+6. Test missing assets (safe rollback) and controlled initialization/release
+   failures. A quarantined session must reject restart until process restart;
+   do not claim that an injected failure reproduces every real core failure.
+7. Check late worker wakeups, repeated attachments, lifecycle restart, worker
+   drainage and memory behavior across cycles.
+
+This change performs no live deployment. Host tests establish session policy
+and C-entry validation, cross-build/ELF checks establish artifact properties,
+and only the bench can establish this binary set's rendering/lifecycle behavior.

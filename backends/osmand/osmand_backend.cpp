@@ -1,340 +1,93 @@
 #include <open_navicore/backend_plugin.h>
+#include "session.h"
+#include "diagnostics.h"
 
-#include <OsmAndCore.h>
-#include <OsmAndCore/CoreResourcesEmbeddedBundle.h>
-#include <OsmAndCore/LatLon.h>
-#include <OsmAndCore/ObfsCollection.h>
-#include <OsmAndCore/Utilities.h>
-#include <OsmAndCore/Map/AtlasMapRendererConfiguration.h>
-#include <OsmAndCore/Map/IMapRenderer.h>
-#include <OsmAndCore/Map/MapObjectsSymbolsProvider.h>
-#include <OsmAndCore/Map/MapPresentationEnvironment.h>
-#include <OsmAndCore/Map/MapPrimitivesProvider.h>
-#include <OsmAndCore/Map/MapPrimitiviser.h>
-#include <OsmAndCore/Map/MapRasterLayerProvider_Software.h>
-#include <OsmAndCore/Map/MapStylesCollection.h>
-#include <OsmAndCore/Map/ObfMapObjectsProvider.h>
-
-#include <QByteArray>
-#include <QString>
-
-#include <cstdlib>
+#include <EGL/egl.h>
+#include <climits>
 #include <cstring>
-#include <fcntl.h>
-#include <memory>
-#include <unistd.h>
 
 namespace {
+using namespace navicore_osmand;
 
-constexpr const char* kDefaultResources =
-    "/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so";
-constexpr const char* kDefaultMap =
-    "/datastore/navicore-backend/maps/kyiv.obf";
-constexpr const char* kDefaultFonts =
-    "/datastore/navicore-backend/fonts";
-constexpr const char* kTracePath = "/tmp/open-navicore-osmand.log";
-constexpr double kKyivLatitude = 50.4501;
-constexpr double kKyivLongitude = 30.5234;
-constexpr float kInitialZoom = 13.5f;
-
-const char* configured_path(const char* variable, const char* fallback)
+Session& session()
 {
-    const char* value = std::getenv(variable);
-    return value != nullptr && value[0] != '\0' ? value : fallback;
-}
-
-void trace(const char* message)
-{
-    const int descriptor = open(kTracePath, O_WRONLY | O_CREAT | O_APPEND,
-                                0600);
-    if (descriptor < 0)
-        return;
-    const size_t length = std::strlen(message);
-    (void)write(descriptor, message, length);
-    (void)write(descriptor, "\n", 1u);
-    (void)close(descriptor);
-}
-
-struct OsmAndBackend {
-    MockNavBackendServicesV1 services{};
-    bool started = false;
-    bool core_initialized = false;
-    bool rendering_initialized = false;
-    bool waiting_for_frame_traced = false;
-    bool waiting_for_resources_traced = false;
-    bool first_frame_rendered = false;
-    uint32_t width = 0;
-    uint32_t height = 0;
-
-    std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources;
-    std::shared_ptr<OsmAnd::MapStylesCollection> styles;
-    std::shared_ptr<OsmAnd::ObfsCollection> obfs;
-    std::shared_ptr<OsmAnd::MapPresentationEnvironment> presentation;
-    std::shared_ptr<OsmAnd::MapPrimitiviser> primitiviser;
-    std::shared_ptr<OsmAnd::ObfMapObjectsProvider> map_objects;
-    std::shared_ptr<OsmAnd::MapPrimitivesProvider> primitives;
-    std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> symbols;
-    std::shared_ptr<OsmAnd::MapRasterLayerProvider_Software> raster;
-    std::shared_ptr<OsmAnd::IMapRenderer> renderer;
-
-    void request_frame() const
-    {
-        if (services.request_frame != nullptr)
-            (void)services.request_frame(services.runtime_context);
-    }
-
-    void release_surface()
-    {
-        if (renderer && rendering_initialized)
-            (void)renderer->releaseRendering(false);
-        rendering_initialized = false;
-        waiting_for_frame_traced = false;
-        waiting_for_resources_traced = false;
-        first_frame_rendered = false;
-        renderer.reset();
-        raster.reset();
-        symbols.reset();
-        primitives.reset();
-        map_objects.reset();
-        primitiviser.reset();
-        presentation.reset();
-        obfs.reset();
-        styles.reset();
-        if (core_initialized) {
-            OsmAnd::ReleaseCore();
-            core_initialized = false;
-        }
-        resources.reset();
-        trace("surface_released");
-    }
-};
-
-OsmAndBackend g_backend;
-
-int backend_start(void* context, const MockNavBackendServicesV1* services)
-{
-    auto* backend = static_cast<OsmAndBackend*>(context);
-    if (backend == nullptr || services == nullptr ||
-        services->request_frame == nullptr)
-        return -1;
-    backend->services = *services;
-    backend->started = true;
-    trace("start");
-    return 0;
-}
-
-void backend_stop(void* context)
-{
-    auto* backend = static_cast<OsmAndBackend*>(context);
-    if (backend == nullptr)
-        return;
-    if (backend->renderer || backend->core_initialized)
-        backend->release_surface();
-    backend->started = false;
-    backend->services = {};
-    trace("stop");
-}
-
-int backend_surface_created(void* context,
-                            const MockNavBackendRenderTargetV1* target)
-{
-    auto* backend = static_cast<OsmAndBackend*>(context);
-    if (backend == nullptr || target == nullptr || !backend->started ||
-        target->width == 0u || target->height == 0u)
-        return -1;
-
-    try {
-        backend->width = target->width;
-        backend->height = target->height;
-        backend->resources = OsmAnd::CoreResourcesEmbeddedBundle::loadFromLibrary(
-            QString::fromLocal8Bit(configured_path(
-                "OPEN_NAVICORE_OSMAND_RESOURCES", kDefaultResources)));
-        if (!backend->resources) {
-            trace("error=resources");
-            return -2;
-        }
-
-        const char* fonts = configured_path("OPEN_NAVICORE_OSMAND_FONTS",
-                                            kDefaultFonts);
-        if (OsmAnd::InitializeCore(backend->resources, fonts) == 0) {
-            trace("error=initialize_core");
-            backend->resources.reset();
-            return -3;
-        }
-        backend->core_initialized = true;
-
-        bool resource_ok = false;
-        const QByteArray default_style = backend->resources->getResource(
-            QStringLiteral("map/styles/default.render.xml"), &resource_ok);
-        backend->styles = std::make_shared<OsmAnd::MapStylesCollection>();
-        if (!resource_ok || default_style.isEmpty() ||
-            !backend->styles->addStyleFromByteArray(
-                default_style, QStringLiteral("default.render.xml"))) {
-            trace("error=default_style");
-            backend->release_surface();
-            return -4;
-        }
-        const auto style = backend->styles->getResolvedStyleByName(
-            QStringLiteral("default"));
-        if (!style) {
-            trace("error=resolve_style");
-            backend->release_surface();
-            return -5;
-        }
-
-        backend->obfs = std::make_shared<OsmAnd::ObfsCollection>();
-        backend->obfs->addFile(QString::fromLocal8Bit(configured_path(
-            "OPEN_NAVICORE_OSMAND_MAP", kDefaultMap)));
-        if (backend->obfs->getObfFiles().isEmpty()) {
-            trace("error=map");
-            backend->release_surface();
-            return -6;
-        }
-
-        backend->presentation =
-            std::make_shared<OsmAnd::MapPresentationEnvironment>(
-                style, 1.0f, 1.0f, 1.0f);
-        backend->presentation->setLocaleLanguageId(QStringLiteral("uk"));
-        backend->primitiviser = std::make_shared<OsmAnd::MapPrimitiviser>(
-            backend->presentation);
-        backend->map_objects =
-            std::make_shared<OsmAnd::ObfMapObjectsProvider>(backend->obfs);
-        backend->primitives = std::make_shared<OsmAnd::MapPrimitivesProvider>(
-            backend->map_objects, backend->primitiviser, 256u);
-        backend->symbols =
-            std::make_shared<OsmAnd::MapObjectsSymbolsProvider>(
-                backend->primitives, 256u);
-        backend->raster =
-            std::make_shared<OsmAnd::MapRasterLayerProvider_Software>(
-                backend->primitives);
-
-        backend->renderer = OsmAnd::createMapRenderer(
-            OsmAnd::MapRendererClass::AtlasMapRenderer_OpenGLES2plus);
-        if (!backend->renderer) {
-            trace("error=create_renderer");
-            backend->release_surface();
-            return -7;
-        }
-        OsmAnd::MapRendererSetupOptions setup;
-        setup.gpuWorkerThreadEnabled = false;
-        setup.frameUpdateRequestCallback = [backend](const OsmAnd::IMapRenderer*) {
-            backend->request_frame();
-        };
-        if (!backend->renderer->setup(setup)) {
-            trace("error=setup_renderer");
-            backend->release_surface();
-            return -8;
-        }
-
-        const auto configuration =
-            std::static_pointer_cast<OsmAnd::AtlasMapRendererConfiguration>(
-                backend->renderer->getConfiguration());
-        configuration->referenceTileSizeOnScreenInPixels = 256u;
-        backend->renderer->setConfiguration(configuration);
-        backend->renderer->setWindowSize(
-            OsmAnd::PointI(static_cast<int32_t>(target->width),
-                           static_cast<int32_t>(target->height)));
-        backend->renderer->setViewport(
-            OsmAnd::AreaI(0, 0, static_cast<int32_t>(target->height),
-                          static_cast<int32_t>(target->width)));
-        backend->renderer->setTarget(OsmAnd::Utilities::convertLatLonTo31(
-            OsmAnd::LatLon(kKyivLatitude, kKyivLongitude)));
-        backend->renderer->setZoom(kInitialZoom);
-        backend->renderer->setAzimuth(0.0f);
-        backend->renderer->setElevationAngle(90.0f);
-        backend->renderer->addSymbolsProvider(backend->symbols);
-        backend->renderer->setMapLayerProvider(0, backend->raster);
-        if (!backend->renderer->initializeRendering(true)) {
-            trace("error=initialize_rendering");
-            backend->release_surface();
-            return -9;
-        }
-        backend->rendering_initialized = true;
-        trace("surface_created=kyiv");
-        backend->request_frame();
-        return 0;
-    } catch (...) {
-        trace("error=exception_surface_created");
-        backend->release_surface();
-        return -10;
-    }
-}
-
-void backend_surface_destroyed(void* context)
-{
-    auto* backend = static_cast<OsmAndBackend*>(context);
-    if (backend != nullptr)
-        backend->release_surface();
+    static Session instance(make_engine);
+    return instance;
 }
 
 template <typename T>
-int accept_event(void*, const T*)
+bool valid(const T* payload, uint32_t version = MOCK_NAV_BACKEND_ABI_V1) noexcept
 {
-    return 0;
+    // The caller must supply an accessible two-word header. Validate it
+    // before copying or reading any payload fields; ignore unknown tails.
+    return payload && payload->abi_version == version &&
+           payload->struct_size >= sizeof(T);
 }
 
-int backend_gps(void* context, const MockNavBackendGpsV1* gps)
+bool valid_target(const MockNavBackendRenderTargetV1* target) noexcept
 {
-    auto* backend = static_cast<OsmAndBackend*>(context);
-    if (backend == nullptr || gps == nullptr)
+    return valid(target) && target->width > 0 && target->height > 0 &&
+           target->width <= INT32_MAX && target->height <= INT32_MAX &&
+           target->native_pointer_bytes == sizeof(void*) &&
+           target->native_egl_context != 0;
+}
+
+uintptr_t current_context() noexcept
+{
+    return reinterpret_cast<uintptr_t>(eglGetCurrentContext());
+}
+
+int backend_start(void* context, const MockNavBackendServicesV1* services) noexcept
+{
+    if (!context || !valid(services) || !services->request_frame)
         return -1;
-    /* Keep the first integration milestone pinned to Kyiv. Live positioning
-       belongs to the navigation-state layer, after rendering is proven. */
-    return 0;
+    try {
+        return static_cast<Session*>(context)->start(*services, Config::from_environment());
+    } catch (...) {
+        trace("error=exception_start");
+        return -1;
+    }
+}
+
+void backend_stop(void* context) noexcept
+{
+    if (context)
+        static_cast<Session*>(context)->stop();
+}
+
+int backend_surface_created(void* context,
+                            const MockNavBackendRenderTargetV1* target) noexcept
+{
+    if (!context || !valid_target(target) ||
+        current_context() != target->native_egl_context)
+        return -1;
+    return static_cast<Session*>(context)->attach(*target);
+}
+
+void backend_surface_destroyed(void* context) noexcept
+{
+    if (context)
+        static_cast<Session*>(context)->detach(current_context());
+}
+
+template <typename T, uint32_t Version = MOCK_NAV_BACKEND_ABI_V1>
+int accept_event(void* context, const T* event) noexcept
+{
+    // GPS/camera, input, vehicle and audio remain intentionally unimplemented.
+    return context && valid(event, Version) &&
+           static_cast<Session*>(context)->accepts_events() ? 0 : -1;
 }
 
 int backend_render(void* context, const MockNavBackendRenderTargetV1* target,
-                   const MockNavBackendFrameV1*)
+                   const MockNavBackendFrameV1* frame) noexcept
 {
-    auto* backend = static_cast<OsmAndBackend*>(context);
-    if (backend == nullptr || target == nullptr || !backend->renderer ||
-        !backend->rendering_initialized)
+    if (!context || !valid_target(target) || !valid(frame) ||
+        current_context() != target->native_egl_context)
         return -1;
-    try {
-        if (target->width != backend->width || target->height != backend->height) {
-            backend->width = target->width;
-            backend->height = target->height;
-            backend->renderer->setWindowSize(OsmAnd::PointI(
-                static_cast<int32_t>(target->width),
-                static_cast<int32_t>(target->height)));
-            backend->renderer->setViewport(OsmAnd::AreaI(
-                0, 0, static_cast<int32_t>(target->height),
-                static_cast<int32_t>(target->width)));
-        }
-        if (!backend->renderer->update()) {
-            trace("error=update");
-            return -2;
-        }
-        const bool prepared = backend->renderer->prepareFrame();
-        if (!prepared) {
-            if (!backend->waiting_for_frame_traced) {
-                trace("frame_waiting");
-                backend->waiting_for_frame_traced = true;
-            }
-            if (!backend->renderer->isIdle())
-                backend->request_frame();
-            return 0;
-        }
-        const bool rendered = backend->renderer->renderFrame();
-        if (!rendered) {
-            if (!backend->waiting_for_resources_traced) {
-                trace("frame_waiting_resources");
-                backend->waiting_for_resources_traced = true;
-            }
-            backend->request_frame();
-            return 0;
-        }
-        if (!backend->renderer->isIdle())
-            backend->request_frame();
-        if (!backend->first_frame_rendered) {
-            trace("frame_rendered=kyiv");
-            backend->first_frame_rendered = true;
-        }
-        return 0;
-    } catch (...) {
-        trace("error=exception_render");
-        return -4;
-    }
+    const auto result = static_cast<Session*>(context)->frame(*target);
+    // Query V1 has no no-swap/pending result. Both Pending and Presented must
+    // remain zero: nonzero permanently selects the loader's fallback.
+    return result.outcome == FrameOutcome::Fault ? -1 : 0;
 }
 
 void fill_v1_query(MockNavBackendPluginV1* output)
@@ -365,7 +118,7 @@ void fill_v1_query(MockNavBackendPluginV1* output)
     std::memcpy(output->build_id, build_id, sizeof(build_id));
     output->backend.v1.abi_version = MOCK_NAV_BACKEND_ABI_V2;
     output->backend.v1.struct_size = sizeof(MockNavBackendV2);
-    output->backend.v1.backend_context = &g_backend;
+    output->backend.v1.backend_context = &session();
     output->backend.v1.start = backend_start;
     output->backend.v1.stop = backend_stop;
     output->backend.v1.surface_created = backend_surface_created;
@@ -373,13 +126,13 @@ void fill_v1_query(MockNavBackendPluginV1* output)
     output->backend.v1.visibility_changed =
         accept_event<MockNavBackendVisibilityV1>;
     output->backend.v1.screen_changed = accept_event<MockNavBackendScreenV1>;
-    output->backend.v1.gps_changed = backend_gps;
+    output->backend.v1.gps_changed = accept_event<MockNavBackendGpsV1>;
     output->backend.v1.pointer_changed = accept_event<MockNavBackendPointerV1>;
     output->backend.v1.render_frame = backend_render;
-    output->backend.vehicle_changed = accept_event<MockNavBackendVehicleV2>;
+    output->backend.vehicle_changed = accept_event<MockNavBackendVehicleV2, MOCK_NAV_BACKEND_ABI_V2>;
     output->backend.gps_interval_changed =
-        accept_event<MockNavBackendGpsIntervalV2>;
-    output->backend.audio_changed = accept_event<MockNavBackendAudioV2>;
+        accept_event<MockNavBackendGpsIntervalV2, MOCK_NAV_BACKEND_ABI_V2>;
+    output->backend.audio_changed = accept_event<MockNavBackendAudioV2, MOCK_NAV_BACKEND_ABI_V2>;
 }
 
 }  // namespace
@@ -391,6 +144,11 @@ extern "C" MOCK_NAV_PLUGIN_EXPORT int mock_nav_backend_query_v1(
     if (requested_query_abi != MOCK_NAV_PLUGIN_QUERY_ABI_V1 ||
         output_size != sizeof(*output) || output == nullptr)
         return -1;
-    fill_v1_query(output);
-    return 0;
+    try {
+        fill_v1_query(output);
+        return 0;
+    } catch (...) {
+        trace("error=exception_query");
+        return -1;
+    }
 }

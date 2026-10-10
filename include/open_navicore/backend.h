@@ -188,6 +188,9 @@ typedef struct {
  * begins; calls through a stale copied service deterministically fail.
  * A zero return means accepted. Nonzero start aborts renderer creation;
  * nonzero event/render statuses drop that event/frame but keep the loop live.
+ * The process-lifetime plugin loader adds a stricter policy: a nonzero plugin
+ * render status permanently selects its fallback for that lifecycle. Zero
+ * causes the runtime to swap buffers; V1 has no distinct pending/no-swap status.
  * surface_created and render_frame run with the target EGL context current.
  * Before surface_destroyed the runtime tries to make that context current so
  * GL resources can be released. The callback is guaranteed even if this fails;
