@@ -89,7 +89,7 @@ $(TARGET): $(OBJECTS) | $(DIST_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(LDFLAGS) -o $@ $^ -lscreen -lEGL -lGLESv2
 
-$(BUILD_DIR)/mock_navicore.o: src/mock_navicore.c src/mock_static_provider_slots.def src/mock_backend_loader.h include/mock_navicore.h include/mock_api_telemetry.h include/mock_callback_backend.h include/mock_cluster_backend.h include/mock_gps_backend.h include/mock_pointer_backend.h include/mock_scalar_backend.h include/mock_renderer.h include/mock_nav_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_navicore.o: src/mock_navicore.c src/mock_static_provider_slots.def src/mock_backend_loader.h include/mock_navicore.h include/mock_api_telemetry.h include/mock_callback_backend.h include/open_navicore/cluster.h include/mock_gps_backend.h include/mock_pointer_backend.h include/mock_scalar_backend.h include/mock_renderer.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
@@ -101,11 +101,11 @@ $(BUILD_DIR)/mock_callback_backend.o: src/mock_callback_backend.c src/mock_count
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_backend_loader.o: src/mock_backend_loader.c src/mock_backend_loader.h src/mock_default_backend.h include/mock_nav_backend_plugin.h include/mock_nav_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_backend_loader.o: src/mock_backend_loader.c src/mock_backend_loader.h src/mock_default_backend.h include/open_navicore/backend_plugin.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_cluster_backend.o: src/mock_cluster_backend.c include/mock_cluster_backend.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_cluster_backend.o: src/mock_cluster_backend.c include/open_navicore/cluster.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
@@ -125,19 +125,19 @@ $(BUILD_DIR)/mock_scalar_backend.o: src/mock_scalar_backend.c src/mock_counter.h
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_renderer.o: src/mock_renderer.c src/mock_renderer_platform.h src/mock_default_backend.h include/mock_renderer.h include/mock_nav_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_renderer.o: src/mock_renderer.c src/mock_renderer_platform.h src/mock_default_backend.h include/mock_renderer.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_screen_input.o: src/mock_screen_input.c src/mock_screen_input.h include/mock_nav_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_screen_input.o: src/mock_screen_input.c src/mock_screen_input.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_default_backend.o: src/mock_default_backend.c src/mock_default_backend.h include/mock_nav_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_default_backend.o: src/mock_default_backend.c src/mock_default_backend.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_renderer_qnx.o: src/mock_renderer_qnx.c src/mock_renderer_platform.h src/mock_screen_input.h include/mock_nav_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_renderer_qnx.o: src/mock_renderer_qnx.c src/mock_renderer_platform.h src/mock_screen_input.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
@@ -149,25 +149,25 @@ $(SMOKE_OBJECT): tests/qnx_dlopen_smoke.c include/mock_navicore.h Makefile | $(B
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(PLUGIN_TARGET): $(PLUGIN_OBJECT) plugins/reference_backend.map | $(DIST_DIR)
+$(PLUGIN_TARGET): $(PLUGIN_OBJECT) backends/reference/reference_backend.map | $(DIST_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) -Vgcc_ntoarmv7le -shared -Wl,-soname,libMockNavBackendReference.so \
-		-Wl,--version-script=$(CURDIR)/plugins/reference_backend.map \
+		-Wl,--version-script=$(CURDIR)/backends/reference/reference_backend.map \
 		-Wl,--no-undefined -Wl,--gc-sections -o $@ $(PLUGIN_OBJECT) -lGLESv2
 
-$(PLUGIN_OBJECT): plugins/reference_backend.c include/mock_nav_backend_plugin.h include/mock_nav_backend.h Makefile | $(BUILD_DIR)
+$(PLUGIN_OBJECT): backends/reference/reference_backend.c include/open_navicore/backend_plugin.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(OUTBOUND_PLUGIN_TARGET): $(OUTBOUND_PLUGIN_OBJECT) plugins/reference_backend.map | $(DIST_DIR)
+$(OUTBOUND_PLUGIN_TARGET): $(OUTBOUND_PLUGIN_OBJECT) backends/reference/reference_backend.map | $(DIST_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) -Vgcc_ntoarmv7le -shared \
 		-Wl,-soname,libMockNavBackendOutboundTest.so \
-		-Wl,--version-script=$(CURDIR)/plugins/reference_backend.map \
+		-Wl,--version-script=$(CURDIR)/backends/reference/reference_backend.map \
 		-Wl,--no-undefined -Wl,--gc-sections -o $@ \
 		$(OUTBOUND_PLUGIN_OBJECT) -lGLESv2
 
-$(OUTBOUND_PLUGIN_OBJECT): plugins/reference_backend.c include/mock_nav_backend_plugin.h include/mock_nav_backend.h Makefile | $(BUILD_DIR)
+$(OUTBOUND_PLUGIN_OBJECT): backends/reference/reference_backend.c include/open_navicore/backend_plugin.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) \
 		-DMOCK_REF_PLUGIN_OUTBOUND_TEST=1 -c $< -o $@
@@ -290,13 +290,13 @@ test-host: check-contracts
 		-o $(BUILD_DIR)/screen-input-smoke
 	$(BUILD_DIR)/screen-input-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
-		-Iinclude -Isrc -Itests/fake_gles \
+		-Iinclude -Isrc -Itests/fixtures/fake_gles \
 		src/mock_default_backend.c tests/default_backend_gl_smoke.c \
 		-o $(BUILD_DIR)/default-backend-gl-smoke
 	$(BUILD_DIR)/default-backend-gl-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
-		-pthread -Iinclude -Itests/fake_gles \
-		plugins/reference_backend.c tests/reference_backend_gl_smoke.c \
+		-pthread -Iinclude -Itests/fixtures/fake_gles \
+		backends/reference/reference_backend.c tests/reference_backend_gl_smoke.c \
 		-o $(BUILD_DIR)/reference-backend-gl-smoke
 	$(BUILD_DIR)/reference-backend-gl-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \

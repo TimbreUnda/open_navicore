@@ -1,4 +1,4 @@
-#include "mock_nav_backend_plugin.h"
+#include <open_navicore/backend_plugin.h>
 
 #include <assert.h>
 #include <GLES2/gl2.h>

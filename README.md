@@ -87,7 +87,7 @@ contracts, ownership rules, and runtime behavior.
 |---|---|
 | [`src/`](src) | Provider, lifecycle, renderer, backend loader, and callback code |
 | [`include/`](include) | Public and internal ABI declarations |
-| [`plugins/`](plugins) | Reference backend and negative-test plugins |
+| [`backends/`](backends) | Reference backend and negative-test plugins |
 | [`contracts/`](contracts) | Checked provider and callback compatibility contracts |
 | [`evidence/`](evidence) | Static, cross-version, and compiler-oracle evidence |
 | [`tests/`](tests) | Host, ARM ABI, lifecycle, stress, and manifest checks |

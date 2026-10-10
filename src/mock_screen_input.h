@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include "mock_nav_backend.h"
+#include <open_navicore/backend.h>
 
 enum MockScreenRawType {
     MOCK_SCREEN_RAW_POINTER = 1,

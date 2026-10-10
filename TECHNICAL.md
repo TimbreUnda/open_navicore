@@ -340,7 +340,7 @@ mock has no corresponding backend instead of synthesizing stale settings.
 
 ## Instrument-cluster backend and OsmAnd mapping
 
-[`include/mock_cluster_backend.h`](include/mock_cluster_backend.h) is the
+[`include/open_navicore/cluster.h`](include/open_navicore/cluster.h) is the
 public producer boundary for a future OsmAnd adapter. It exposes route and
 navigation state, numeric destination and maneuver distances plus recovered
 units, ETA/RTA bytes, bounded road text, lane-active state, bar fill, compass,
@@ -603,7 +603,7 @@ protocol sequence.
 
 ## Versioned map-backend seam
 
-[`include/mock_nav_backend.h`](include/mock_nav_backend.h) is the stable C
+[`include/open_navicore/backend.h`](include/open_navicore/backend.h) is the stable C
 boundary intended for the future in-process OsmAnd adapter. `MockNavBackendV1`
 and every payload start with `abi_version` and `struct_size`; descriptors are
 copied at registration, and all event payloads are owned copies. The v1

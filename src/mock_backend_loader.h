@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "mock_nav_backend_plugin.h"
+#include <open_navicore/backend_plugin.h>
 
 enum MockBackendFallbackReason {
     MOCK_BACKEND_FALLBACK_NONE = 0,

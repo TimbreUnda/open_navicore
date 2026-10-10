@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-#include "mock_nav_backend.h"
+#include <open_navicore/backend.h>
 
 int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                                   char *diagnostic,

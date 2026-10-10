@@ -1,5 +1,5 @@
-#include "mock_nav_backend.h"
-#include "mock_nav_backend_plugin.h"
+#include <open_navicore/backend.h>
+#include <open_navicore/backend_plugin.h>
 
 #include <stddef.h>
 #include <stdint.h>

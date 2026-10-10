@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200112L
 
-#include "mock_nav_backend_plugin.h"
+#include <open_navicore/backend_plugin.h>
 
 #include <fcntl.h>
 #include <pthread.h>

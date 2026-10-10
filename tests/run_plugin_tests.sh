@@ -18,9 +18,9 @@ build_plugin() {
         -DMOCK_REF_PLUGIN_FAILURE="$failure" \
         -DMOCK_REF_PLUGIN_INVALID="$invalid" \
         -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-        -Wl,--version-script=plugins/reference_backend.map \
+        -Wl,--version-script=backends/reference/reference_backend.map \
         -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-        plugins/reference_backend.c -o "$output"
+        backends/reference/reference_backend.c -o "$output"
 }
 
 build_plugin "$build_dir/plugins/success.so" 0 0
@@ -28,30 +28,30 @@ $cc $common_flags -shared \
     -DMOCK_REF_PLUGIN_FAILURE=0 -DMOCK_REF_PLUGIN_INVALID=0 \
     -DMOCK_REF_PLUGIN_MAX_QUERY_ABI=2 \
     -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-    -Wl,--version-script=plugins/reference_backend.map \
+    -Wl,--version-script=backends/reference/reference_backend.map \
     -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-    plugins/reference_backend.c -o "$build_dir/plugins/query-v2-only.so"
+    backends/reference/reference_backend.c -o "$build_dir/plugins/query-v2-only.so"
 $cc $common_flags -shared \
     -DMOCK_REF_PLUGIN_FAILURE=0 -DMOCK_REF_PLUGIN_INVALID=0 \
     -DMOCK_REF_PLUGIN_MAX_QUERY_ABI=3 \
     -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-    -Wl,--version-script=plugins/reference_backend.map \
+    -Wl,--version-script=backends/reference/reference_backend.map \
     -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-    plugins/reference_backend.c -o "$build_dir/plugins/query-v3-only.so"
+    backends/reference/reference_backend.c -o "$build_dir/plugins/query-v3-only.so"
 $cc $common_flags -shared \
     -DMOCK_REF_PLUGIN_FAILURE=0 -DMOCK_REF_PLUGIN_INVALID=0 \
     -DMOCK_REF_PLUGIN_QUERY_V1_ONLY=1 \
     -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-    -Wl,--version-script=plugins/reference_backend.map \
+    -Wl,--version-script=backends/reference/reference_backend.map \
     -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-    plugins/reference_backend.c -o "$build_dir/plugins/query-v1-only.so"
+    backends/reference/reference_backend.c -o "$build_dir/plugins/query-v1-only.so"
 $cc $common_flags -shared \
     -DMOCK_REF_PLUGIN_FAILURE=0 -DMOCK_REF_PLUGIN_INVALID=0 \
     -DMOCK_REF_PLUGIN_OUTBOUND_TEST=1 \
     -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-    -Wl,--version-script=plugins/reference_backend.map \
+    -Wl,--version-script=backends/reference/reference_backend.map \
     -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-    plugins/reference_backend.c -o "$build_dir/plugins/outbound.so"
+    backends/reference/reference_backend.c -o "$build_dir/plugins/outbound.so"
 build_plugin "$build_dir/plugins/start-fail.so" 1 0
 build_plugin "$build_dir/plugins/surface-fail.so" 2 0
 build_plugin "$build_dir/plugins/render-fail.so" 3 0
@@ -62,13 +62,13 @@ build_plugin "$build_dir/plugins/bad-build-id.so" 0 4
 build_plugin "$build_dir/plugins/query-fail.so" 0 5
 
 $cc $common_flags -shared -Wl,-z,now \
-    plugins/no_query_backend.c -o "$build_dir/plugins/no-query.so"
+    tests/fixtures/plugins/no_query_backend.c -o "$build_dir/plugins/no-query.so"
 
 $cc $common_flags -shared -Wl,-soname,libmocknav-missing.so -Wl,-z,defs \
-    plugins/missing_dependency.c \
+    tests/fixtures/plugins/missing_dependency.c \
     -o "$build_dir/plugins/libmocknav-missing.so"
 $cc $common_flags -shared -Wl,-z,now -Wl,-z,defs -Wl,--no-as-needed \
-    plugins/unresolved_dependency_backend.c \
+    tests/fixtures/plugins/unresolved_dependency_backend.c \
     -L"$build_dir/plugins" -lmocknav-missing \
     -o "$build_dir/plugins/missing-needed.so"
 needed=$($readelf_bin -d "$build_dir/plugins/missing-needed.so" | \
@@ -83,7 +83,7 @@ rm -f "$build_dir/plugins/libmocknav-missing.so"
 # not require host multilib runtime packages. The host linker must support the
 # standard i386 emulation for this mandatory negative test.
 $cc -m32 -shared -nostdlib -fPIC -fvisibility=hidden \
-    plugins/wrong_class_backend.c \
+    tests/fixtures/plugins/wrong_class_backend.c \
     -o "$build_dir/plugins/wrong-class.so"
 
 $cc $common_flags \
