@@ -163,7 +163,8 @@ drift from looking like compatibility.
 - [x] Establish a versioned rendering/data backend seam
 - [x] Validate initialization and HMI lifecycle on a bench unit
 - [ ] Rename internal `mock_*` implementation identifiers in ABI-safe stages
-- [ ] Add an OsmAnd rendering/navigation backend
+- [x] Add an OsmAnd rendering backend
+- [x] Validate the initial OsmAnd Kyiv-map backend on the bench radio
 - [ ] Map remaining raw vehicle and cluster enum semantics
 - [ ] Expand route guidance, audio prompts, and cluster presentation
 
