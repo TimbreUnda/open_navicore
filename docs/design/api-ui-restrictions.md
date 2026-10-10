@@ -74,6 +74,22 @@ Consequently, the current API cannot provide:
 - stock keyboard/IME input, hardware-key events, accessibility focus, haptics,
   rotary input or steering-wheel input.
 
+This is a restriction of `MockNavBackendPointerV1`, not proof of a hardware
+limit. Open NaviCore owns this backend seam and can extend it append-only. The
+preferred path to multi-touch is to capture the original QNX Screen event
+before `mock_screen_input` reduces it, verify which contact fields the radio
+actually delivers, and introduce a versioned touch payload with contact ID,
+phase, coordinates and timestamp. Pressure or device information should be
+added only if observed on the bench.
+
+If the stock HMI or `nv_navigation` has already discarded additional contacts
+before the event reaches our process, extending the backend payload alone will
+not recover them. A bounded raw-event trace is therefore required before
+claiming multi-touch support. Reading the Screen queue directly from the
+OsmAnd plugin or interposing Screen calls may help discovery, but is not the
+preferred product architecture: it can compete with stock event ownership,
+routing, coordinate transforms and visibility policy.
+
 Tap, drag/pan, on-canvas buttons and timer-derived long press are feasible with
 the single pointer stream. Zoom can use on-canvas buttons or another
 single-pointer interaction. An on-canvas keyboard is technically possible,
@@ -164,7 +180,7 @@ architecture and resource-budget decision.
 |---|---|---|
 | Custom map, panels, buttons and markers | Available | Implement inside the GLES canvas |
 | Tap, one-finger pan and UI buttons | Available | Implement pointer handling |
-| Pinch zoom or two-finger rotate | Hard restriction | Extend input ABI with contact IDs/count |
+| Pinch zoom or two-finger rotate | Blocked by Pointer V1; hardware path unverified | Capture raw QNX events, then extend input ABI with contact IDs/count |
 | Stock keyboard or text input | Hard restriction | Recover a text/IME service, or ship our own keyboard |
 | Route search and guidance in our canvas | Implementation gap | Add OsmAnd navigation/application layers |
 | Stock UI starts or edits our route | Hard restriction | Recover and qualify destination/route request contracts |
