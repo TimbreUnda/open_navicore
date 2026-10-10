@@ -2,12 +2,15 @@
 /build/
 /dist/
 /compile_commands.json
+/.cache/
+/.clangd/
 
 # Python cache and coverage output
 __pycache__/
 *.py[cod]
 .coverage
 .pytest_cache/
+htmlcov/
 
 # Editor and operating-system files
 .idea/
@@ -15,3 +18,8 @@ __pycache__/
 *.swp
 *~
 .DS_Store
+
+# Local configuration and logs
+.env
+.env.*
+*.log

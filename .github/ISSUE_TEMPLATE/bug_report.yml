@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible build, ABI, lifecycle, or backend problem
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach proprietary firmware, credentials, personal data, or location history.
+  - type: input
+    id: revision
+    attributes:
+      label: Revision
+      description: Commit SHA or branch where the problem occurs.
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Host tests only
+        - QNX cross-build
+        - Authorized stationary bench unit
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide commands and inputs that do not contain restricted material.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste sanitized compiler, test, or trace output.
+      render: text
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I did not test this on a moving vehicle or an unauthorized device.
+          required: true
+        - label: This report contains no proprietary binaries, secrets, or personal/location data.
+          required: true
