@@ -19,7 +19,11 @@ def main():
         if not raw_name:
             continue
         relative = raw_name.decode("utf-8", "surrogateescape")
-        data = (root / relative).read_bytes()
+        path = root / relative
+        # Gitlinks name a checked-out directory rather than a regular file.
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
         if b"\0" in data:
             continue
         for number, line in enumerate(

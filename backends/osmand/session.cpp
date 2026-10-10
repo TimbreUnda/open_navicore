@@ -148,6 +148,18 @@ FrameResult Session::frame(const MockNavBackendRenderTargetV1& target) noexcept
     return result;
 }
 
+int Session::pointer(const MockNavBackendPointerV1& event) noexcept
+{
+    if (state_ != State::Attached || !engine_)
+        return -1;
+    try {
+        return engine_->pointer(event);
+    } catch (...) {
+        trace("error=exception_pointer");
+        return -1;
+    }
+}
+
 void Session::detach(uintptr_t current_context) noexcept
 {
     if (state_ == State::Attached || state_ == State::Faulted)
