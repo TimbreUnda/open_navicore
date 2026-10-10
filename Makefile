@@ -6,9 +6,9 @@ QCC := $(QNX_HOST)/usr/bin/qcc
 QNX_READELF := $(QNX_HOST)/usr/bin/ntoarmv7-readelf
 QNX_OBJDUMP := $(QNX_HOST)/usr/bin/ntoarmv7-objdump
 QNX_STRINGS := $(QNX_HOST)/usr/bin/ntoarmv7-strings
-CALLBACK_MATRIX ?= /mnt/d/analysis/navicore_interposer_runtime/stage1-v11-20261008-attempt1/callback-api-matrix.csv
-PROVIDER_MATRIX ?= /mnt/d/analysis/navicore_interposer_runtime/stage1-v11-20261008-attempt1/provider-api-matrix.csv
-POINTER_MATRIX ?= /mnt/d/analysis/navicore_interposer_runtime/stage1-v11-20261008-attempt1/pointer-api-matrix.csv
+CALLBACK_MATRIX ?= $(CURDIR)/contracts/qr39/observations/callback-api-matrix.csv
+PROVIDER_MATRIX ?= $(CURDIR)/contracts/qr39/observations/provider-api-matrix.csv
+POINTER_MATRIX ?= $(CURDIR)/contracts/qr39/observations/pointer-api-matrix.csv
 
 BUILD_DIR ?= /tmp/mock-navicore-build
 DIST_DIR ?= $(CURDIR)/dist
@@ -50,7 +50,12 @@ CFLAGS := -Vgcc_ntoarmv7le -std=c99 -O2 -g -Wall -Wextra -Werror \
 LDFLAGS := -Vgcc_ntoarmv7le -shared -Wl,-soname,libNaviCore.so \
 	-Wl,--gc-sections -Wl,--no-undefined
 
-.PHONY: all verify test contract-check provider-coverage-selftest static-provider-coverage-selftest static-callback-coverage-selftest pas-proxy-coverage-selftest qnx-arm-abi-oracle-selftest arm-snapshot-replay-selftest raw-callback-capture raw-callback-capture-selftest clean
+.PHONY: all verify verify-qnx verify-bench test test-host check-contracts \
+	contract-check full-check replay-stock provider-coverage-selftest \
+	static-provider-coverage-selftest static-callback-coverage-selftest \
+	pas-proxy-coverage-selftest qnx-arm-abi-oracle-selftest \
+	arm-snapshot-replay-selftest raw-callback-capture \
+	raw-callback-capture-selftest clean
 
 all: $(TARGET) $(SMOKE_TARGET) $(PLUGIN_TARGET) $(OUTBOUND_PLUGIN_TARGET) \
 	$(PLUGIN_SMOKE_TARGET)
@@ -178,10 +183,11 @@ $(PLUGIN_SMOKE_OBJECT): tests/qnx_plugin_dlopen_smoke.c include/mock_navicore.h 
 $(BUILD_DIR) $(DIST_DIR):
 	mkdir -p $@
 
-# Both host tests and the ARM build validate the same recovered contracts.
-contract-check: pas-proxy-coverage-selftest qnx-arm-abi-oracle-selftest \
-	arm-snapshot-replay-selftest raw-callback-capture-selftest
+# Self-contained checks available from a public source checkout. These consume
+# only committed source, contracts, and evidence; no QNX SDK or stock ELF.
+check-contracts: pas-proxy-coverage-selftest
 	sh tests/check_plugin_elf.sh --self-test
+	python3 tests/check_raw_callback_capture.py
 	sh tests/check_callback_coverage.sh $(CALLBACK_MATRIX) callback-coverage.csv src/mock_navicore.c
 	python3 tests/check_static_callback_additions.py callback-coverage.csv \
 		static-callback-dispatch-additions.csv
@@ -208,8 +214,14 @@ contract-check: pas-proxy-coverage-selftest qnx-arm-abi-oracle-selftest \
 	python3 tests/check_static_provider_slots.py static-provider-slot-manifest.csv \
 		src/mock_navicore.c src/mock_static_provider_slots.def
 
-verify: $(TARGET) $(SMOKE_TARGET) $(PLUGIN_TARGET) $(OUTBOUND_PLUGIN_TARGET) \
-	$(PLUGIN_SMOKE_TARGET) contract-check
+# Backwards-compatible full contract target. The explicit targets below make
+# proprietary SDK and stock-image requirements visible to public contributors.
+contract-check: check-contracts qnx-arm-abi-oracle-selftest replay-stock \
+	raw-callback-capture-selftest
+
+verify-qnx: $(TARGET) $(SMOKE_TARGET) $(PLUGIN_TARGET) $(OUTBOUND_PLUGIN_TARGET) \
+	$(PLUGIN_SMOKE_TARGET) check-contracts qnx-arm-abi-oracle-selftest \
+	raw-callback-capture-selftest
 	LD_LIBRARY_PATH=$(HOST_LIBS) READELF=$(QNX_READELF) \
 		sh tests/check_elf.sh $(TARGET)
 	LD_LIBRARY_PATH=$(HOST_LIBS) $(QNX_READELF) -h $(SMOKE_TARGET) | \
@@ -233,7 +245,16 @@ verify: $(TARGET) $(SMOKE_TARGET) $(PLUGIN_TARGET) $(OUTBOUND_PLUGIN_TARGET) \
 	! LD_LIBRARY_PATH=$(HOST_LIBS) $(QNX_STRINGS) $(PLUGIN_TARGET) | \
 		grep -Fq 'outbound_test_trigger'
 
-test: contract-check
+verify: verify-qnx replay-stock
+
+full-check: test-host verify
+
+replay-stock: arm-snapshot-replay-selftest
+
+verify-bench:
+	@echo "Bench verification is operator-run; see docs/development/validation-tiers.md"
+
+test-host: check-contracts
 	mkdir -p $(BUILD_DIR)
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-pthread \
@@ -297,6 +318,9 @@ test: contract-check
 		-ldl -o $(BUILD_DIR)/host-trace-smoke
 	$(BUILD_DIR)/host-trace-smoke
 	CC='$(CC)' sh tests/run_plugin_tests.sh $(BUILD_DIR)
+
+# Preserve the established command while making its portable scope explicit.
+test: test-host
 
 provider-coverage-selftest:
 	python3 tests/check_provider_coverage.py $(PROVIDER_MATRIX) $(POINTER_MATRIX) \

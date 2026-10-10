@@ -113,9 +113,16 @@ overridden with `QNX_SDK`, `HOST_LIBS`, `BUILD_DIR`, and `DIST_DIR`.
 git clone https://github.com/TimbreUnda/open_navicore.git
 cd open_navicore
 
-make
 make test
-make verify
+```
+
+`make test` is the portable host suite and requires no QNX SDK or stock
+firmware. Target verification is intentionally explicit:
+
+```sh
+make verify-qnx    # licensed QNX SDP 6.6 and target graphics libraries
+make replay-stock  # locally supplied stock ELF plus Unicorn/Capstone
+make verify        # both target and replay verification
 ```
 
 Useful focused checks:
@@ -128,7 +135,8 @@ make raw-callback-capture-selftest
 ```
 
 Target artifacts are written to `dist/`, which is intentionally ignored by
-Git.
+Git. See [validation tiers](docs/development/validation-tiers.md) for the exact
+claims and inputs of every check.
 
 ## Evidence model
 

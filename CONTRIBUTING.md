@@ -21,11 +21,13 @@ ABI compatibility and still-unknown product semantics.
 4. Run the relevant focused test, followed by:
 
    ```sh
-   make test
-   make -B -j2 verify
-   make pas-proxy-coverage-selftest
-   make qnx-arm-abi-oracle-selftest
+   make test-host
+   make check-contracts
    ```
+
+   Changes to target ABI code additionally require maintainer-recorded
+   `make -B -j2 verify-qnx`; changes to replay fixtures require
+   `make replay-stock` with the identified local stock image.
 
 5. Explain the evidence class, ownership/lifetime behavior, and any remaining
    limitations in the pull request.

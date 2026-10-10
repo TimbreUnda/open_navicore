@@ -1,0 +1,37 @@
+adapter,si_name,domain,slot,count,first_seq,last_seq,caller_lr,caller_function,target_thumb,target_offset,prototype,abi_class,observed_callbacks,priority
+1,SI_HMIIntegration,HMI,9,1,836,836,0x08105f2b,SI_HMIIntegration::OnScreenChangeRequest,0x7a36bf09,0x26bf08,"status(self,handle,display,screen_type,animation,reserved)",already_typed,"10",critical
+6,SI_Logging,logging,3,1,86,86,0x08114187,SI_Logging::onRequestLogBufferSizes,0x7a3e9d51,0x2e9d50,"status(self,u32 handle,u32 count,const u8 *levels,const u32 *sizes)",input_pointers,"3;4",optional
+7,SI_Internationalization,settings,3,1,415,415,0x0814621d,SI_Internationalization::onClient_requestInternationalizationSettings,0x7a376331,0x276330,"status(self,u32 handle,const IntlSettings *settings)",input_pointer,"3;4;6",optional
+8,SI_VehicleData,vehicle,3,1,71,71,0x0812c987,SI_VehicleData::onSelfRequestDayNightStatusCB,0x7a36f6b5,0x26f6b4,"status(self,u32 handle,u8 day_night_status)",scalar_input,"3;5;6;11",high
+8,SI_VehicleData,vehicle,4,1,64,64,0x0812b2ad,SI_VehicleData::notifyClientAdapter,0x7a363155,0x263154,"status(self,u8 day_night_status)",scalar_input,"3;5;6;11",high
+8,SI_VehicleData,vehicle,5,1,90,90,0x0812c6eb,SI_VehicleData::onSelfRequestDayNightSettingsCB,0x7a351415,0x251414,"status(self,u32 handle,u8 day_night_setting)",scalar_input,"3;5;6;11",high
+8,SI_VehicleData,vehicle,6,1,66,66,0x0812b2f1,SI_VehicleData::notifyClientAdapter,0x7a363051,0x263050,"status(self,u8 day_night_setting)",scalar_input,"3;5;6;11",high
+8,SI_VehicleData,vehicle,8,1,68,68,0x0812b3d3,SI_VehicleData::notifyClientAdapter,0x7a378e71,0x278e70,"status(self,float displayed_vehicle_speed)",scalar_input,"3;5;6;11",high
+8,SI_VehicleData,vehicle,12,1,74,74,0x0812c5b7,SI_VehicleData::onSelfRequestVIN,0x7a36c841,0x26c840,"status(self,u32 handle,const char *vin)",input_pointer,"3;5;6;11",optional
+9,SI_GPSData,GPS/map,6,1,768,768,0x0810d285,SI_GPSData::subscribe,0x7a3a0e7d,0x2a0e7c,"status(self,u32 map_matched_feedback_interval_ms)",scalar_input,"3",critical
+10,SI_AudioHandling,audio,17,1,371,371,0x0812f09f,SI_AudioHandling::onRequestAudioSourceVolume,0x7a3eaf4d,0x2eaf4c,"status(self,u32 handle,u32 audio_source,u8 volume)",scalar_input,"3;19",high
+10,SI_AudioHandling,audio,19,1,832,832,0x0812e5c5,SI_AudioHandling::syncNaviCoreVolume,0x7a3eae19,0x2eae18,"status(self,u32 audio_source,u8 volume)",scalar_input,"3;19",high
+12,SI_Diagnosis,diagnosis,5,1,1170,1170,0x081159cf,SI_Diagnosis::OnRequestSoftwareComponentVersion,0x7a3a08e1,0x2a08e0,"status(self,u32 handle)",scalar_input,"5;6;8",optional
+12,SI_Diagnosis,diagnosis,6,1,1167,1167,0x08115843,SI_Diagnosis::OnRequestSoftwareComponentSupplierIdentification,0x7a3bcabd,0x2bcabc,"status(self,u32 handle)",scalar_input,"5;6;8",optional
+12,SI_Diagnosis,diagnosis,7,1,79,79,0x0811637f,SI_Diagnosis::OnRequestVehicleBrand,0x7a3633cd,0x2633cc,"status(self,u32 handle,u32 vehicle_brand,u32 vehicle_id)",scalar_input,"5;6;8",optional
+13,SI_Diagnosis_Navigation,diagnosis/map,3,1,369,369,0x0813e2b9,SI_Diagnosis_Navigation::OnRequestDiagnosisNavigationDriverDistractionStatus,0x7a388941,0x288940,"status(self,u32 handle,u32 distraction_status)",scalar_input,"3;4;5;6;7;8;9;11;13",optional
+13,SI_Diagnosis_Navigation,diagnosis/map,4,1,366,366,0x0813e527,SI_Diagnosis_Navigation::OnSubscribeDiagnosisNavigationDriverDistractionStatus,0x7a3a0bed,0x2a0bec,"status(self,u32 distraction_status)",scalar_input,"3;4;5;6;7;8;9;11;13",optional
+13,SI_Diagnosis_Navigation,diagnosis/map,12,2,364,1649,0x0813d74b,SI_Diagnosis_Navigation::OnRequestActualVersionNavigationDatabase,0x7a3a0b39,0x2a0b38,"status(self,u32 handle)",scalar_input,"3;4;5;6;7;8;9;11;13",optional
+13,SI_Diagnosis_Navigation,diagnosis/map,13,1,1656,1656,0x0813d43d,SI_Diagnosis_Navigation::OnRequestStatusNavigationDatabase,0x7a388955,0x288954,"status(self,u32 handle)",scalar_input,"3;4;5;6;7;8;9;11;13",optional
+13,SI_Diagnosis_Navigation,diagnosis/map,14,1,1652,1652,0x0813e633,SI_Diagnosis_Navigation::OnMapDataVersionNumberRequest,0x7a3bc86d,0x2bc86c,"status(self,u32 handle)",scalar_input,"3;4;5;6;7;8;9;11;13",optional
+17,SI_InstrumentCluster,cluster/TBT,6,1,629,629,0x080e18f7,SI_InstrumentCluster::onRequestTBTSettingsEnableStatus,0x7a388a1d,0x288a1c,"status(self,u32 handle,u8 enabled)",scalar_input,"3;5;6;7",medium
+19,SI_InterApplicationDataExchange,data_exchange,3,1,547,547,0x0811f501,SI_InterApplicationDataExchange::onClient_RequestTransportMeans,0x7a36fdb5,0x26fdb4,"status(self,u32 handle,u32 count,const TransportMeans *items)",input_pointer,"3;4;5",optional
+20,SI_Connectivity,connectivity,3,1,491,491,0x080e6697,SI_Connectivity::onConnectivityStatusRequest,0x7a3518c9,0x2518c8,"status(self,u32 handle,u32 service,u8 connection_status,u32 extended_status)",scalar_input,"3;4;8;9",optional
+20,SI_Connectivity,connectivity,4,1,498,498,0x080e4c29,SI_Connectivity::OnSubscriptionStatusInfo,0x7a37a001,0x27a000,"status(self,u32 service,u8 connection_status,u32 extended_status)",scalar_input,"3;4;8;9",optional
+20,SI_Connectivity,connectivity,6,1,501,501,0x080e50c3,SI_Connectivity::OnModemDeviceInfo,0x7a379c69,0x279c68,"status(self,u32 handle,u32 service,const ConnectionDeviceInfo *info)",input_pointer,"3;4;8;9",optional
+20,SI_Connectivity,connectivity,7,1,487,487,0x080e63ab,SI_Connectivity::OnClient_requestSignalStrength,0x7a365c79,0x265c78,"status(self,u32 handle,u32 service,u8 strength_percent)",scalar_input,"3;4;8;9",optional
+20,SI_Connectivity,connectivity,8,2,495,1542,0x080e4ea9,SI_Connectivity::OnSignalStrengthInfo,0x7a365be5,0x265be4,"status(self,u32 handle_or_subscription,u32 service,u8 strength_percent)",scalar_input,"3;4;8;9",optional
+25,SI_VoiceRecognition,voice,19,38,877,2108,0x080e99f3,SI_VoiceRecognition::OnRouteGuidanceRepeatTimer,0x7a3acff5,0x2acff4,"status(self,u32 handle)",scalar_input,"3;4;23;25",medium
+25,SI_VoiceRecognition,voice,21,1,840,840,0x080ed74f,SI_VoiceRecognition::OnVR_GetTEFFileRequest,0x7a3ad48d,0x2ad48c,"status(self,u32 handle,u32 category,const char *filename)",input_pointer,"3;4;23;25",optional
+26,SI_Phone,phone,5,1,463,463,0x08131bd7,SI_Phone::onPhoneCallAvailability,0x7a351461,0x251460,"status(self,u32 handle,u8 available)",scalar_input,"3;5",optional
+29,SI_TTI_SXM_Parking,traffic/parking,3,2,690,693,"0x08137b01;0x08138025","SI_TTI_SXM_Parking::onParkingSubscriptionStatusEvent;SI_TTI_SXM_Parking::subscribe",0x7a3a4159,0x2a4158,"status(self,u32 subscription_status)",scalar_input,"3",optional
+29,SI_TTI_SXM_Parking,traffic/parking,4,1,692,692,0x08137fc9,SI_TTI_SXM_Parking::subscribe,0x7a3a411d,0x2a411c,"status(self)",scalar_input,"3",optional
+30,SI_TTI_SXM_Apogee,traffic,3,1,797,797,0x0813304f,SI_TTI_SXM_Apogee::subscribe,0x7a3a3ead,0x2a3eac,"status(self,u32 subscription_status)",scalar_input,"3",optional
+30,SI_TTI_SXM_Apogee,traffic,4,1,794,794,0x081330cf,SI_TTI_SXM_Apogee::subscribe,0x7a3a3dfd,0x2a3dfc,"status(self,u32 service_ready)",scalar_input,"3",optional
+31,SI_TTI_SXM_AGW,traffic,3,2,448,466,"0x080f69e3;0x080f6fd1","SI_TTI_SXM_AGW::OnAGWServiceAvailabilityEvent;SI_TTI_SXM_AGW::subscribe",0x7a365db5,0x265db4,"status(self,u8 agw_service_state)",scalar_input,"3",optional
+31,SI_TTI_SXM_AGW,traffic,5,2,452,482,"0x080f6c7b;0x080f6f87","SI_TTI_SXM_AGW::OnWSAServiceAvailabilityEvent;SI_TTI_SXM_AGW::subscribe",0x7a365d0d,0x265d0c,"status(self,u8 wsa_service_state)",scalar_input,"3",optional

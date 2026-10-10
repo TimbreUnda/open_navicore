@@ -12,10 +12,10 @@ Describe the problem and the smallest coherent change that solves it.
 ## Verification
 
 - [ ] Focused tests added or updated
-- [ ] `make test`
-- [ ] `make -B -j2 verify`
-- [ ] `make pas-proxy-coverage-selftest`
-- [ ] `make qnx-arm-abi-oracle-selftest`
+- [ ] `make test-host`
+- [ ] `make check-contracts`
+- [ ] QNX verification recorded when target ABI code changed
+- [ ] Stock replay recorded when replay code or fixtures changed
 - [ ] No proprietary binaries, SDK files, credentials, or personal data added
 - [ ] No live test was performed on a moving or unauthorized device
 
