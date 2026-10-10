@@ -12,8 +12,8 @@
 
 Open NaviCore replaces the proprietary `libNaviCore.so` provider while keeping
 its native integration with the stock navigation process and HMI. It exposes a
-versioned backend seam intended to host an OsmAnd-based renderer and navigation
-engine without replacing the surrounding vehicle UI.
+versioned backend seam hosting an optional OsmAnd renderer without replacing
+the surrounding vehicle UI. Navigation behavior remains future work.
 
 [Status](#current-status) · [Architecture](#architecture) · [Build](#building) ·
 [Contributing](CONTRIBUTING.md) · [Technical reference](TECHNICAL.md)
@@ -51,6 +51,11 @@ provider initialization, all requested adapters, recurrent HMI replies, GPS
 updates, GLES rendering, and Apps → Navigation hide/show all passed without a
 radio reboot.
 
+The optional [OsmAnd backend](backends/osmand/README.md) has rendered a fixed
+Kyiv map in the stock UI on that bench. Its architecture refactor is verified
+offline; repeat rendering, restart and context-loss qualification is still
+required before treating the refactored binary set as bench-qualified.
+
 ABI completeness is not feature parity. Of the 199 application callbacks, 80
 are currently emitted and 119 are typed dormant seams awaiting meaningful
 backend data. Optional phone, traffic, voice, diagnosis, and satellite-radio
@@ -64,7 +69,7 @@ flowchart LR
     NAV -->|140-call provider ABI| CORE[Open NaviCore<br/>libNaviCore.so]
     CORE -->|199 typed PAS callbacks| PAS[Stock PAS services]
     CORE <-->|Backend API v5| ENGINE[Navigation backend]
-    ENGINE --> OSM[Future OsmAnd integration]
+    ENGINE --> OSM[Optional OsmAnd Kyiv renderer]
     CORE --> EGL[Screen / EGL / GLES2]
     CORE --> DATA[GPS · vehicle · input · audio · cluster]
 ```
@@ -76,7 +81,7 @@ The provider is intentionally split into three layers:
 2. **State and lifecycle layer** — owned copies, asynchronous request/reply
    correlation, rendering lifecycle, and bounded telemetry.
 3. **Backend plugin API** — a versioned C interface that can be implemented by
-   the reference renderer today and OsmAnd later.
+   the reference renderer and optional OsmAnd map renderer.
 
 See [TECHNICAL.md](TECHNICAL.md) for the complete object model, recovered
 contracts, ownership rules, and runtime behavior.
@@ -87,7 +92,7 @@ contracts, ownership rules, and runtime behavior.
 |---|---|
 | [`src/`](src) | Provider, lifecycle, renderer, backend loader, and callback code |
 | [`include/`](include) | Public and internal ABI declarations |
-| [`backends/`](backends) | Reference backend and negative-test plugins |
+| [`backends/`](backends) | Reference backend and optional OsmAnd backend |
 | [`contracts/`](contracts) | Checked provider and callback compatibility contracts |
 | [`evidence/`](evidence) | Static, cross-version, and compiler-oracle evidence |
 | [`tests/`](tests) | Host, ARM ABI, lifecycle, stress, and manifest checks |
@@ -103,7 +108,7 @@ versioned. Verification compares regenerated output against them.
 
 ### Requirements
 
-- Linux host with `make`, a C99 compiler, Python 3, and POSIX threads
+- Linux host with `make`, C99 and C++17 compilers, Python 3, and POSIX threads
 - QNX SDP 6.6 ARMv7 toolchain for target artifacts
 - Target headers/libraries for Screen, EGL, and GLES2
 - Ghidra only when regenerating static-analysis evidence

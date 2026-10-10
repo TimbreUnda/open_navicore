@@ -30,18 +30,6 @@ OUTBOUND_PLUGIN_TARGET := $(DIST_DIR)/libMockNavBackendOutboundTest.so
 OUTBOUND_PLUGIN_OBJECT := $(BUILD_DIR)/reference_backend_outbound_test.o
 PLUGIN_SMOKE_TARGET := $(DIST_DIR)/mock_nav_backend_plugin_smoke
 PLUGIN_SMOKE_OBJECT := $(BUILD_DIR)/qnx_plugin_dlopen_smoke.o
-OSMAND_PLUGIN_TARGET := $(DIST_DIR)/libMockNavBackendOsmAnd.so
-OSMAND_PLUGIN_OBJECT := $(BUILD_DIR)/osmand_backend.o
-OSMAND_OBF_SMOKE_TARGET := $(DIST_DIR)/qnx-osmand-obf-smoke
-OSMAND_OBF_SMOKE_OBJECT := $(BUILD_DIR)/qnx_osmand_obf_smoke.o
-OSMAND_PLUGIN_SMOKE_TARGET := $(DIST_DIR)/qnx-osmand-plugin-smoke
-OSMAND_PLUGIN_SMOKE_OBJECT := $(BUILD_DIR)/qnx_osmand_plugin_smoke.o
-OSMAND_QNX_ROOT ?=
-OSMAND_CORE_LIB_DIR ?= $(OSMAND_QNX_ROOT)/source/binaries/qnx/gcc-armv7/Release
-OSMAND_QT_PREFIX ?= $(OSMAND_QNX_ROOT)/qt-pic-prefix
-OSMAND_CXX ?= $(OSMAND_QNX_ROOT)/gcc-out/bin/arm-unknown-nto-qnx6.6.0eabi-g++
-OSMAND_BINUTILS_DIR := $(BUILD_DIR)/osmand-binutils
-OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 RAW_CAPTURE_TARGET := $(DIST_DIR)/libMockRawCallbackCapture.so
 RAW_CAPTURE_OBJECTS := $(BUILD_DIR)/mock_raw_callback_capture.o \
 	$(BUILD_DIR)/mock_raw_callback_trampolines_arm.o \
@@ -77,99 +65,7 @@ all: $(TARGET) $(SMOKE_TARGET) $(PLUGIN_TARGET) $(OUTBOUND_PLUGIN_TARGET) \
 
 raw-callback-capture: $(RAW_CAPTURE_TARGET)
 
-osmand-backend: $(OSMAND_PLUGIN_TARGET)
-
-osmand-obf-smoke: $(OSMAND_OBF_SMOKE_TARGET)
-
-osmand-plugin-smoke: $(OSMAND_PLUGIN_SMOKE_TARGET)
-
-$(OSMAND_PLUGIN_TARGET): $(OSMAND_PLUGIN_OBJECT) $(OSMAND_BINUTILS_STAMP) \
-		backends/osmand/osmand_backend.map | $(DIST_DIR)
-	test -n "$(OSMAND_QNX_ROOT)"
-	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
-		$(OSMAND_CXX) --sysroot=$(QNX_TARGET) -B$(OSMAND_BINUTILS_DIR)/ -shared \
-		-static-libstdc++ -static-libgcc -Wl,-Bsymbolic \
-		-Wl,-soname,libMockNavBackendOsmAnd.so \
-		-Wl,-rpath,/datastore/navicore-backend \
-		-Wl,--version-script=$(CURDIR)/backends/osmand/osmand_backend.map \
-		-Wl,--gc-sections -Wl,--no-undefined -Wl,-z,text -o $@ $< \
-		-L$(OSMAND_CORE_LIB_DIR) -lOsmAndCore_shared -lEGL -lGLESv2 -lc
-
-$(OSMAND_PLUGIN_OBJECT): backends/osmand/osmand_backend.cpp \
-		backends/osmand/osmand_backend.map include/open_navicore/backend.h \
-		include/open_navicore/backend_plugin.h Makefile \
-		$(OSMAND_BINUTILS_STAMP) | $(BUILD_DIR)
-	test -n "$(OSMAND_QNX_ROOT)"
-	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
-		$(OSMAND_CXX) --sysroot=$(QNX_TARGET) -B$(OSMAND_BINUTILS_DIR)/ \
-			-std=c++17 -O2 -g -Wall -Wextra -Werror \
-			-Wno-error=ignored-attributes -Wno-error=deprecated-declarations \
-			-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=softfp \
-			-D_HAS_C9X=1 -D_NO_CPP_INLINES=1 \
-			-D_HAS_GENERIC_TEMPLATES=0 \
-			-DOSMAND_COMPILER_FAMILY_gcc -DOSMAND_TARGET_OS_qnx \
-			-DOSMAND_TARGET_CPU_ARCH_armv7 \
-			-DOSMAND_TARGET_CPU_ARCH_FAMILY_arm \
-			-DOSMAND_OPENGLES2PLUS_RENDERER_SUPPORTED \
-			-fPIC -fvisibility=hidden -ffunction-sections -fdata-sections \
-			-I$(CURDIR)/include -I$(OSMAND_QNX_ROOT)/source/core/include \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/glm/upstream.patched \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/boost/upstream.patched \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched/include/core \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/harfbuzz/upstream.patched/src \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/freetype/upstream.patched/include \
-			-I$(OSMAND_QT_PREFIX)/include \
-			-I$(OSMAND_QT_PREFIX)/include/QtCore \
-			-I$(OSMAND_QT_PREFIX)/include/QtNetwork \
-			-c $< -o $@
-
-$(OSMAND_OBF_SMOKE_TARGET): $(OSMAND_OBF_SMOKE_OBJECT) \
-		$(OSMAND_BINUTILS_STAMP) | $(DIST_DIR)
-	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
-		$(QCC) -Vgcc_ntoarmv7le -Wl,--no-undefined -o $@ $< \
-		-L$(OSMAND_CORE_LIB_DIR) -lOsmAndCore_shared \
-		-lsocket -lEGL -lGLESv2 -lslog2 -lz -lpps -lm
-
-$(OSMAND_OBF_SMOKE_OBJECT): tests/qnx_osmand_obf_smoke.cpp Makefile \
-		$(OSMAND_BINUTILS_STAMP) | $(BUILD_DIR)
-	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
-		$(OSMAND_CXX) --sysroot=$(QNX_TARGET) -B$(OSMAND_BINUTILS_DIR)/ \
-			-std=c++17 -O2 -g -Wall -Wextra -Werror \
-			-Wno-error=ignored-attributes -Wno-error=deprecated-declarations \
-			-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=softfp \
-			-D_HAS_C9X=1 -D_NO_CPP_INLINES=1 \
-			-D_HAS_GENERIC_TEMPLATES=0 \
-			-DOSMAND_COMPILER_FAMILY_gcc -DOSMAND_TARGET_OS_qnx \
-			-DOSMAND_TARGET_CPU_ARCH_armv7 \
-			-DOSMAND_TARGET_CPU_ARCH_FAMILY_arm \
-			-fPIC -I$(OSMAND_QNX_ROOT)/source/core/include \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/glm/upstream.patched \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/boost/upstream.patched \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched \
-			-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched/include/core \
-			-I$(OSMAND_QT_PREFIX)/include \
-			-I$(OSMAND_QT_PREFIX)/include/QtCore \
-			-I$(OSMAND_QT_PREFIX)/include/QtNetwork \
-			-c $< -o $@
-
-$(OSMAND_PLUGIN_SMOKE_TARGET): $(OSMAND_PLUGIN_SMOKE_OBJECT) | $(DIST_DIR)
-	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
-		$(QCC) -Vgcc_ntoarmv7le -o $@ $<
-
-$(OSMAND_PLUGIN_SMOKE_OBJECT): tests/qnx_osmand_plugin_smoke.c \
-		include/open_navicore/backend.h include/open_navicore/backend_plugin.h \
-		Makefile | $(BUILD_DIR)
-	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
-		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-
-$(OSMAND_BINUTILS_STAMP): | $(BUILD_DIR)
-	mkdir -p $(OSMAND_BINUTILS_DIR)
-	ln -sf $(QNX_HOST)/usr/bin/arm-unknown-nto-qnx6.6.0eabi-as \
-		$(OSMAND_BINUTILS_DIR)/as
-	ln -sf $(QNX_HOST)/usr/bin/arm-unknown-nto-qnx6.6.0eabi-ld \
-		$(OSMAND_BINUTILS_DIR)/ld
-	touch $@
+include backends/osmand/osmand.mk
 
 $(RAW_CAPTURE_TARGET): $(RAW_CAPTURE_OBJECTS) src/capture/mock_raw_callback_capture.map | $(DIST_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
@@ -364,7 +260,7 @@ replay-stock: arm-snapshot-replay-selftest
 verify-bench:
 	@echo "Bench verification is operator-run; see docs/development/validation-tiers.md"
 
-test-host: check-contracts
+test-host: check-contracts osmand-session-test
 	mkdir -p $(BUILD_DIR)
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-pthread \
