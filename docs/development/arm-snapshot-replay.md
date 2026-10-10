@@ -1,6 +1,6 @@
 # Bounded ARM snapshot replay oracle
 
-`tools/arm_snapshot_replay.py` executes a small original ARM/Thumb fragment
+`tools/replay/arm_snapshot_replay.py` executes a small original ARM/Thumb fragment
 from a SHA-256-guarded ELF under Unicorn. It is an ABI experiment harness, not
 a QNX process emulator. Snapshot schema `mock-nav-arm-snapshot/v1` records:
 
@@ -29,14 +29,14 @@ returns the callback status.
 Run the baseline:
 
 ```sh
-python3 tools/arm_snapshot_replay.py \
+python3 tools/replay/arm_snapshot_replay.py \
   fixtures/arm-replay/hmi-signal-state-v1.json
 ```
 
 Run a falsifiable counterfactual:
 
 ```sh
-python3 tools/arm_snapshot_replay.py \
+python3 tools/replay/arm_snapshot_replay.py \
   fixtures/arm-replay/hmi-signal-state-v1.json \
   --set-reg r1=0x01020304 --set-reg r2=0xfedcba98 \
   --stub-return hmi_slot8=0x13579bdf
@@ -50,7 +50,7 @@ in `r0`. Relocating `hmi` also proves the thunk follows pointers rather than
 depending on the fixture addresses:
 
 ```sh
-python3 tools/arm_snapshot_replay.py \
+python3 tools/replay/arm_snapshot_replay.py \
   fixtures/arm-replay/hmi-signal-state-v1.json --relocate hmi=0x00100000
 ```
 

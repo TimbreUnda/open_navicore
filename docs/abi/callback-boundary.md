@@ -98,7 +98,7 @@ The earlier stop-on-non-code extraction reported 252 rows.  Three were not
 vtable entries: RotaryKnob slot 4, Hardkey slot 4, and
 InterApplicationDataExchange slot 12 all pointed to the same unrelated
 `std::ios_base::Init::~Init` address in adjacent data.  The reproducible
-`tools/DumpServerProxyVtables.java` now requires the application tail to remain
+`tools/ghidra/DumpServerProxyVtables.java` now requires the application tail to remain
 on the proxy's contiguous pure-virtual target and asserts exactly 25/249.
 
 `contracts/qr39/callbacks/proxy-slot-manifest.csv` joins this surface to the recovered
@@ -145,7 +145,7 @@ because the base target was pure virtual.  Four have independent receiver
 mismatch evidence; the other 138 now remain unresolved until ownership is
 proved.
 
-`tools/RecoverCallbackReceiverDataflow.java` decompiles every one of the 1,799
+`tools/ghidra/RecoverCallbackReceiverDataflow.java` decompiles every one of the 1,799
 raw exact chains, finds the `CALLIND`, extracts its actual `r0` receiver and the
 object supplying the loaded vtable, and walks both definition/use graphs
 through copies, casts, loads, constant field offsets, `PTRADD`/`PTRSUB`,
@@ -158,7 +158,7 @@ leaving exactly 100 newly excluded outside-dense candidates.  It promoted no
 callback: receiver equality is necessary but does not prove a registered CI
 field or an `IF_Server*Proxy` type.
 
-`tools/RecoverArmCallbackReceiverSlices.java` independently slices actual
+`tools/ghidra/RecoverArmCallbackReceiverSlices.java` independently slices actual
 ARM/Thumb instructions around every chain.  It is guarded by the provider
 SHA-256 and Ghidra image base `0x10000` (Ghidra addresses are file/ELF VMAs plus
 `0x10000`).  Its CFG walk tracks machine registers through `MOV`, `LDR`, `ADD`,
@@ -180,7 +180,7 @@ object ownership, not slot syntax.  In particular, the 12 ambiguous callers
 cannot be assigned between multiple CI reachability classes merely because
 their local receivers match.
 
-`tools/RecoverCallbackFieldOrigins.java` takes those 1,142 equal-receiver rows
+`tools/ghidra/RecoverCallbackFieldOrigins.java` takes those 1,142 equal-receiver rows
 and performs a context-sensitive interprocedural pass. It preserves constant
 object-field offsets while expanding decompiler `HighParam` values through the
 actual arguments at each direct incoming callsite, follows
@@ -218,7 +218,7 @@ prioritizable without turning absence of evidence into an exclusion.
 The inventory is reproduced from the raw Ghidra outputs with:
 
 ```text
-python3 tools/classify_callback_dispatches.py \
+python3 tools/analysis/classify_callback_dispatches.py \
   /tmp/exact-callback-dispatches.csv \
   /tmp/attributed-callback-dispatches-v5.csv \
   evidence/qr39/static/callback-outside-inventory.csv \
@@ -266,7 +266,7 @@ JAVA_HOME=/home/shish/tools/jdk \
   /mnt/d/open_navicore/evidence/qr39/static/callback-receiver-dataflow.csv \
   /mnt/d/open_navicore/evidence/qr39/static/callback-field-origins.csv
 
-python3 tools/summarize_callback_field_origins.py \
+python3 tools/analysis/summarize_callback_field_origins.py \
   evidence/qr39/static/callback-field-origins.csv \
   evidence/qr39/static/callback-field-origin-groups.csv
 ```

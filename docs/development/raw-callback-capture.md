@@ -69,9 +69,9 @@ Drain records to a binary file as consecutive `MockRawCallbackRecord` values,
 then combine one with a hash-matched replay template:
 
 ```sh
-python3 tools/raw_callback_to_replay.py capture.raw template.json replay.json \
+python3 tools/replay/raw_callback_to_replay.py capture.raw template.json replay.json \
   --sequence 17 --manifest contracts/qr39/callbacks/proxy-slot-manifest.csv
-python3 tools/arm_snapshot_replay.py replay.json
+python3 tools/replay/arm_snapshot_replay.py replay.json
 ```
 
 The converter maps the captured stack words, selects ARM/Thumb from target PC,

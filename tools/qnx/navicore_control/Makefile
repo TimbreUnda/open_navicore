@@ -6,7 +6,7 @@ QCC := $(QNX_HOST)/usr/bin/QCC
 READELF := $(QNX_HOST)/usr/bin/ntoarmv7-readelf
 
 BUILD_DIR ?= /tmp/navicore-reload-build
-DIST_DIR ?= ../dist
+DIST_DIR ?= ../../../dist
 TARGET := $(DIST_DIR)/navicore_reload
 OBJECT := $(BUILD_DIR)/navicore_reload.o
 

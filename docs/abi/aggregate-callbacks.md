@@ -45,7 +45,7 @@ and the independent QNX compiler oracle.
 
 ## Compiler oracle
 
-[`tools/qnx_aggregate_abi_oracle.py`](../../tools/qnx_aggregate_abi_oracle.py)
+[`tools/abi/qnx_aggregate_abi_oracle.py`](../../tools/abi/qnx_aggregate_abi_oracle.py)
 compiles the four exact caller/callee pairs with QNX 6.6 ARM using the same
 flags as the general ABI oracle. Compile-time assertions enforce the 16-byte
 location, 48-byte MBR, and eight-byte MBR alignment. Normalized caller and

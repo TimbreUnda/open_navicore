@@ -359,7 +359,7 @@ static-callback-coverage-selftest: pas-proxy-coverage-selftest
 
 pas-proxy-coverage-selftest:
 	mkdir -p $(BUILD_DIR)
-	python3 tools/build_pas_proxy_slot_manifest.py \
+	python3 tools/generators/build_pas_proxy_slot_manifest.py \
 		evidence/qr39/static/pas-proxy-vtables.csv $(CALLBACK_MATRIX) \
 		contracts/qr39/callbacks/runtime-coverage.csv contracts/qr39/callbacks/dispatch-additions.csv \
 		contracts/qr39/callbacks/static-contracts.csv \
@@ -387,8 +387,8 @@ pas-proxy-coverage-selftest:
 		tests/pas_callbacks_smoke.c src/compat/qr39/mock_navicore.c
 
 qnx-arm-abi-oracle-selftest:
-	python3 tools/qnx_arm_abi_oracle.py --verify
-	python3 tools/qnx_aggregate_abi_oracle.py --verify
+	python3 tools/abi/qnx_arm_abi_oracle.py --verify
+	python3 tools/abi/qnx_aggregate_abi_oracle.py --verify
 	python3 tests/check_qnx_arm_abi_oracle.py \
 		evidence/qr39/oracles/qnx-arm-catalog.csv \
 		evidence/qr39/oracles/qnx-arm-assessment.csv \

@@ -12,7 +12,7 @@ call boundary. Pointer extent and ownership require separate consumer evidence.
 No local `decomp-permuter` installation was present in `/mnt/d/tools`,
 `/home/shish/tools`, or `/mnt/d`. Rather than install unreviewed software, the
 repository contains a bounded deterministic declaration/wrapper permuter in
-[`tools/qnx_arm_abi_oracle.py`](../../tools/qnx_arm_abi_oracle.py).
+[`tools/abi/qnx_arm_abi_oracle.py`](../../tools/abi/qnx_arm_abi_oracle.py).
 
 ## Reproduction
 
@@ -25,7 +25,7 @@ The exact compiler flags recorded in every catalog row are:
 The script additionally uses `-std=c99` for C and `-lang-c++` for C++. Run:
 
 ```sh
-python3 tools/qnx_arm_abi_oracle.py
+python3 tools/abi/qnx_arm_abi_oracle.py
 make qnx-arm-abi-oracle-selftest
 ```
 
@@ -47,7 +47,7 @@ preceding the selected `bl`/`blx`, the call itself, and its relocation. Normaliz
 an independently extracted objdump function/call window with:
 
 ```sh
-python3 tools/qnx_arm_abi_oracle.py \
+python3 tools/abi/qnx_arm_abi_oracle.py \
   --normalize-objdump target.objdump --function FUNCTION --call-index 0
 ```
 

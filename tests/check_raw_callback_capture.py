@@ -24,7 +24,7 @@ if len(rows) != 199 or len({r["interface"] for r in rows}) != 25:
 
 with tempfile.TemporaryDirectory() as directory:
     temp = pathlib.Path(directory)
-    subprocess.run([sys.executable, str(root / "tools/generate_raw_callback_trampolines.py"),
+    subprocess.run([sys.executable, str(root / "tools/generators/generate_raw_callback_trampolines.py"),
                     str(manifest), str(temp / "slots.S"), str(temp / "table.c")],
                    check=True, stdout=subprocess.DEVNULL)
     for generated, checked in ((temp / "slots.S", root / "src/capture/generated/mock_raw_callback_slots_arm.S"),
@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory() as directory:
         "registers": {}, "allocations": [], "stubs": [],
     }
     (temp / "template.json").write_text(json.dumps(template), encoding="utf-8")
-    subprocess.run([sys.executable, str(root / "tools/raw_callback_to_replay.py"),
+    subprocess.run([sys.executable, str(root / "tools/replay/raw_callback_to_replay.py"),
                     str(temp / "capture.raw"), str(temp / "template.json"),
                     str(temp / "replay.json"), "--manifest", str(manifest)],
                    check=True)
