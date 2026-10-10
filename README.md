@@ -86,6 +86,10 @@ The provider is intentionally split into three layers:
 See [TECHNICAL.md](TECHNICAL.md) for the complete object model, recovered
 contracts, ownership rules, and runtime behavior.
 
+For product and UI work, read the
+[current API/UI restrictions](docs/design/api-ui-restrictions.md) before
+treating a recovered callback or stock-looking control as an available feature.
+
 ## Repository map
 
 | Path | Purpose |
@@ -99,7 +103,7 @@ contracts, ownership rules, and runtime behavior.
 | [`tools/`](tools) | Ghidra scripts, ABI oracles, generators, and replay tooling |
 | [`fixtures/`](fixtures) | Deterministic original-code replay fixtures |
 | [`deploy/`](deploy) | Bench deployment and control helpers |
-| [`docs/`](docs) | ABI, development, and validation documentation |
+| [`docs/`](docs) | ABI, design constraints, development, and validation documentation |
 
 Generated ARM callback tables and checked CSV manifests are intentionally
 versioned. Verification compares regenerated output against them.
