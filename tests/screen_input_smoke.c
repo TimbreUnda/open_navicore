@@ -1,4 +1,4 @@
-#include "../src/mock_screen_input.h"
+#include "../src/renderer/mock_screen_input.h"
 
 #include <assert.h>
 #include <string.h>

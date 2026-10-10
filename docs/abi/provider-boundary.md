@@ -37,7 +37,7 @@ QR39.6.
 
 There are 140 reachable root/adapter slots. Each has either an existing
 semantic typed method or a generated fixed-arity method from
-`src/mock_static_provider_slots.def`. The checker expands the actual vtables
+`src/compat/qr39/mock_static_provider_slots.def`. The checker expands the actual vtables
 and rejects a reachable binding to `mock_generic_virtual`, a variadic
 prototype, an arity mismatch, or a method without the shared ACTIVE lifecycle
 gate.

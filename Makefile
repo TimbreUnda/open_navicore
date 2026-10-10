@@ -37,14 +37,16 @@ RAW_CAPTURE_OBJECTS := $(BUILD_DIR)/mock_raw_callback_capture.o \
 	$(BUILD_DIR)/mock_raw_callback_slot_table.o
 
 # Keep the host provider composition and renderer seam shared by smoke tests.
-HOST_RENDERER_SOURCES := src/mock_renderer.c src/mock_screen_input.c \
-	src/mock_default_backend.c src/mock_renderer_stub.c
-HOST_PROVIDER_SOURCES := src/mock_navicore.c src/mock_api_telemetry.c \
-	src/mock_callback_backend.c src/mock_cluster_backend.c \
-	src/mock_backend_loader.c src/mock_pas_callbacks.c src/mock_gps_backend.c \
-	src/mock_pointer_backend.c src/mock_scalar_backend.c $(HOST_RENDERER_SOURCES)
+HOST_RENDERER_SOURCES := src/renderer/mock_renderer.c src/renderer/mock_screen_input.c \
+	src/backend/mock_default_backend.c src/platform/host/mock_renderer_stub.c
+HOST_PROVIDER_SOURCES := src/compat/qr39/mock_navicore.c src/runtime/mock_api_telemetry.c \
+	src/runtime/mock_callback_backend.c src/runtime/mock_cluster_backend.c \
+	src/backend/mock_backend_loader.c src/compat/qr39/mock_pas_callbacks.c src/runtime/mock_gps_backend.c \
+	src/runtime/mock_pointer_backend.c src/runtime/mock_scalar_backend.c $(HOST_RENDERER_SOURCES)
 
-CPPFLAGS := -I$(CURDIR)/include
+PRIVATE_INCLUDE_DIRS := -Isrc/compat/qr39 -Isrc/runtime -Isrc/backend \
+	-Isrc/renderer -Isrc/capture
+CPPFLAGS := -I$(CURDIR)/include $(PRIVATE_INCLUDE_DIRS)
 CFLAGS := -Vgcc_ntoarmv7le -std=c99 -O2 -g -Wall -Wextra -Werror \
 	-D_REENTRANT -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections
 LDFLAGS := -Vgcc_ntoarmv7le -shared -Wl,-soname,libNaviCore.so \
@@ -62,82 +64,82 @@ all: $(TARGET) $(SMOKE_TARGET) $(PLUGIN_TARGET) $(OUTBOUND_PLUGIN_TARGET) \
 
 raw-callback-capture: $(RAW_CAPTURE_TARGET)
 
-$(RAW_CAPTURE_TARGET): $(RAW_CAPTURE_OBJECTS) src/mock_raw_callback_capture.map | $(DIST_DIR)
+$(RAW_CAPTURE_TARGET): $(RAW_CAPTURE_OBJECTS) src/capture/mock_raw_callback_capture.map | $(DIST_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) -Vgcc_ntoarmv7le -shared \
 		-Wl,-soname,libMockRawCallbackCapture.so \
-		-Wl,--version-script=$(CURDIR)/src/mock_raw_callback_capture.map \
+		-Wl,--version-script=$(CURDIR)/src/capture/mock_raw_callback_capture.map \
 		-Wl,--no-undefined -o $@ $(RAW_CAPTURE_OBJECTS)
 
-$(BUILD_DIR)/mock_raw_callback_capture.o: src/mock_raw_callback_capture.c src/mock_raw_callback_capture_internal.h include/mock_raw_callback_capture.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_raw_callback_capture.o: src/capture/mock_raw_callback_capture.c src/capture/mock_raw_callback_capture_internal.h include/mock_raw_callback_capture.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
-		$(QCC) $(CPPFLAGS) -Isrc $(filter-out -fvisibility=hidden,$(CFLAGS)) -c $< -o $@
+		$(QCC) $(CPPFLAGS) $(filter-out -fvisibility=hidden,$(CFLAGS)) -c $< -o $@
 
-$(BUILD_DIR)/mock_raw_callback_trampolines_arm.o: src/mock_raw_callback_trampolines_arm.S Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_raw_callback_trampolines_arm.o: src/capture/mock_raw_callback_trampolines_arm.S Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) -Vgcc_ntoarmv7le -fPIC -c $< -o $@
 
-$(BUILD_DIR)/mock_raw_callback_slots_arm.o: src/mock_raw_callback_slots_arm.S Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_raw_callback_slots_arm.o: src/capture/generated/mock_raw_callback_slots_arm.S Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) -Vgcc_ntoarmv7le -fPIC -c $< -o $@
 
-$(BUILD_DIR)/mock_raw_callback_slot_table.o: src/mock_raw_callback_slot_table.c src/mock_raw_callback_capture_internal.h include/mock_raw_callback_capture.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_raw_callback_slot_table.o: src/capture/generated/mock_raw_callback_slot_table.c src/capture/mock_raw_callback_capture_internal.h include/mock_raw_callback_capture.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
-		$(QCC) $(CPPFLAGS) -Isrc $(filter-out -fvisibility=hidden,$(CFLAGS)) -c $< -o $@
+		$(QCC) $(CPPFLAGS) $(filter-out -fvisibility=hidden,$(CFLAGS)) -c $< -o $@
 
 $(TARGET): $(OBJECTS) | $(DIST_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(LDFLAGS) -o $@ $^ -lscreen -lEGL -lGLESv2
 
-$(BUILD_DIR)/mock_navicore.o: src/mock_navicore.c src/mock_static_provider_slots.def src/mock_backend_loader.h include/mock_navicore.h include/mock_api_telemetry.h include/mock_callback_backend.h include/open_navicore/cluster.h include/mock_gps_backend.h include/mock_pointer_backend.h include/mock_scalar_backend.h include/mock_renderer.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_navicore.o: src/compat/qr39/mock_navicore.c src/compat/qr39/mock_static_provider_slots.def src/backend/mock_backend_loader.h include/mock_navicore.h include/mock_api_telemetry.h include/mock_callback_backend.h include/open_navicore/cluster.h include/mock_gps_backend.h include/mock_pointer_backend.h include/mock_scalar_backend.h include/mock_renderer.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_api_telemetry.o: src/mock_api_telemetry.c src/mock_counter.h include/mock_api_telemetry.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_api_telemetry.o: src/runtime/mock_api_telemetry.c src/runtime/mock_counter.h include/mock_api_telemetry.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_callback_backend.o: src/mock_callback_backend.c src/mock_counter.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_callback_backend.o: src/runtime/mock_callback_backend.c src/runtime/mock_counter.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_backend_loader.o: src/mock_backend_loader.c src/mock_backend_loader.h src/mock_default_backend.h include/open_navicore/backend_plugin.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_backend_loader.o: src/backend/mock_backend_loader.c src/backend/mock_backend_loader.h src/backend/mock_default_backend.h include/open_navicore/backend_plugin.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_cluster_backend.o: src/mock_cluster_backend.c include/open_navicore/cluster.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_cluster_backend.o: src/runtime/mock_cluster_backend.c include/open_navicore/cluster.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_pas_callbacks.o: src/mock_pas_callbacks.c include/mock_pas_callbacks.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_pas_callbacks.o: src/compat/qr39/mock_pas_callbacks.c include/mock_pas_callbacks.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_gps_backend.o: src/mock_gps_backend.c src/mock_counter.h include/mock_gps_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_gps_backend.o: src/runtime/mock_gps_backend.c src/runtime/mock_counter.h include/mock_gps_backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_pointer_backend.o: src/mock_pointer_backend.c src/mock_counter.h include/mock_pointer_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_pointer_backend.o: src/runtime/mock_pointer_backend.c src/runtime/mock_counter.h include/mock_pointer_backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_scalar_backend.o: src/mock_scalar_backend.c src/mock_counter.h include/mock_scalar_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_scalar_backend.o: src/runtime/mock_scalar_backend.c src/runtime/mock_counter.h include/mock_scalar_backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_renderer.o: src/mock_renderer.c src/mock_renderer_platform.h src/mock_default_backend.h include/mock_renderer.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_renderer.o: src/renderer/mock_renderer.c src/renderer/mock_renderer_platform.h src/backend/mock_default_backend.h include/mock_renderer.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_screen_input.o: src/mock_screen_input.c src/mock_screen_input.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_screen_input.o: src/renderer/mock_screen_input.c src/renderer/mock_screen_input.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_default_backend.o: src/mock_default_backend.c src/mock_default_backend.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_default_backend.o: src/backend/mock_default_backend.c src/backend/mock_default_backend.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_renderer_qnx.o: src/mock_renderer_qnx.c src/mock_renderer_platform.h src/mock_screen_input.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_renderer_qnx.o: src/platform/qnx/mock_renderer_qnx.c src/renderer/mock_renderer_platform.h src/renderer/mock_screen_input.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
@@ -188,7 +190,7 @@ $(BUILD_DIR) $(DIST_DIR):
 check-contracts: pas-proxy-coverage-selftest
 	sh tests/check_plugin_elf.sh --self-test
 	python3 tests/check_raw_callback_capture.py
-	sh tests/check_callback_coverage.sh $(CALLBACK_MATRIX) contracts/qr39/callbacks/runtime-coverage.csv src/mock_navicore.c
+	sh tests/check_callback_coverage.sh $(CALLBACK_MATRIX) contracts/qr39/callbacks/runtime-coverage.csv src/compat/qr39/mock_navicore.c
 	python3 tests/check_static_callback_additions.py contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv
 	python3 tests/check_static_callback_thunk_ownership.py \
@@ -197,7 +199,7 @@ check-contracts: pas-proxy-coverage-selftest
 	python3 tests/check_static_callback_contracts.py \
 		contracts/qr39/callbacks/static-contracts.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv include/mock_pas_callbacks.h \
-		src/mock_pas_callbacks.c src/mock_navicore.c
+		src/compat/qr39/mock_pas_callbacks.c src/compat/qr39/mock_navicore.c
 	python3 tests/check_static_callback_outside_inventory.py \
 		evidence/qr39/static/callback-outside-inventory.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
@@ -210,9 +212,9 @@ check-contracts: pas-proxy-coverage-selftest
 		evidence/qr39/static/callback-outside-inventory.csv \
 		evidence/qr39/static/callback-arm-slices.csv
 	python3 tests/check_provider_coverage.py $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
-		contracts/qr39/provider/api-coverage.csv src/mock_navicore.c
+		contracts/qr39/provider/api-coverage.csv src/compat/qr39/mock_navicore.c
 	python3 tests/check_static_provider_slots.py contracts/qr39/provider/slot-manifest.csv \
-		src/mock_navicore.c src/mock_static_provider_slots.def
+		src/compat/qr39/mock_navicore.c src/compat/qr39/mock_static_provider_slots.def
 
 # Backwards-compatible full contract target. The explicit targets below make
 # proprietary SDK and stock-image requirements visible to public contributors.
@@ -261,7 +263,7 @@ test-host: check-contracts
 		-DMOCK_NAVICORE_DISABLE_LOG \
 		-DMOCK_NAVICORE_TESTING \
 		-DMOCK_NAVICORE_RENDERER_STUB \
-		-Iinclude \
+		$(CPPFLAGS) \
 		$(HOST_PROVIDER_SOURCES) \
 		tests/smoke.c \
 		-ldl -o $(BUILD_DIR)/host-smoke
@@ -271,42 +273,42 @@ test-host: check-contracts
 		-DMOCK_NAVICORE_DISABLE_LOG \
 		-DMOCK_NAVICORE_TESTING \
 		-DMOCK_NAVICORE_RENDERER_STUB \
-		-Iinclude \
+		$(CPPFLAGS) \
 		$(HOST_PROVIDER_SOURCES) \
 		tests/lifecycle_smoke.c \
 		-ldl -o $(BUILD_DIR)/lifecycle-smoke
 	$(BUILD_DIR)/lifecycle-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
-		-pthread -DMOCK_NAVICORE_TESTING -Iinclude \
-		src/mock_callback_backend.c src/mock_pas_callbacks.c \
+		-pthread -DMOCK_NAVICORE_TESTING $(CPPFLAGS) \
+		src/runtime/mock_callback_backend.c src/compat/qr39/mock_pas_callbacks.c \
 		tests/pas_callbacks_smoke.c -o $(BUILD_DIR)/pas-callbacks-smoke
 	$(BUILD_DIR)/pas-callbacks-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
-		-pthread -Iinclude src/mock_cluster_backend.c \
+		-pthread $(CPPFLAGS) src/runtime/mock_cluster_backend.c \
 		tests/cluster_backend_smoke.c -o $(BUILD_DIR)/cluster-backend-smoke
 	$(BUILD_DIR)/cluster-backend-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
-		-Iinclude src/mock_screen_input.c tests/screen_input_smoke.c \
+		$(CPPFLAGS) src/renderer/mock_screen_input.c tests/screen_input_smoke.c \
 		-o $(BUILD_DIR)/screen-input-smoke
 	$(BUILD_DIR)/screen-input-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
-		-Iinclude -Isrc -Itests/fixtures/fake_gles \
-		src/mock_default_backend.c tests/default_backend_gl_smoke.c \
+		$(CPPFLAGS) -Itests/fixtures/fake_gles \
+		src/backend/mock_default_backend.c tests/default_backend_gl_smoke.c \
 		-o $(BUILD_DIR)/default-backend-gl-smoke
 	$(BUILD_DIR)/default-backend-gl-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
-		-pthread -Iinclude -Itests/fixtures/fake_gles \
+		-pthread $(CPPFLAGS) -Itests/fixtures/fake_gles \
 		backends/reference/reference_backend.c tests/reference_backend_gl_smoke.c \
 		-o $(BUILD_DIR)/reference-backend-gl-smoke
 	$(BUILD_DIR)/reference-backend-gl-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-pthread -DMOCK_NAVICORE_TESTING -DMOCK_NAVICORE_RENDERER_STUB \
-		-Iinclude $(HOST_RENDERER_SOURCES) tests/backend_seam_smoke.c \
+		$(CPPFLAGS) $(HOST_RENDERER_SOURCES) tests/backend_seam_smoke.c \
 		-o $(BUILD_DIR)/backend-seam-smoke
 	$(BUILD_DIR)/backend-seam-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-pthread -DMOCK_NAVICORE_TESTING -DMOCK_NAVICORE_RENDERER_STUB \
-		-Iinclude $(HOST_RENDERER_SOURCES) tests/backend_runtime_stress.c \
+		$(CPPFLAGS) $(HOST_RENDERER_SOURCES) tests/backend_runtime_stress.c \
 		-o $(BUILD_DIR)/backend-runtime-stress
 	$(BUILD_DIR)/backend-runtime-stress
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
@@ -314,7 +316,7 @@ test-host: check-contracts
 		-DMOCK_NAVICORE_TRACE_PATH='"/tmp/mock-navicore-host-test.log"' \
 		-DMOCK_NAVICORE_DISABLE_SYSLOG \
 		-DMOCK_NAVICORE_RENDERER_STUB \
-		-Iinclude $(HOST_PROVIDER_SOURCES) tests/trace_smoke.c \
+		$(CPPFLAGS) $(HOST_PROVIDER_SOURCES) tests/trace_smoke.c \
 		-ldl -o $(BUILD_DIR)/host-trace-smoke
 	$(BUILD_DIR)/host-trace-smoke
 	CC='$(CC)' sh tests/run_plugin_tests.sh $(BUILD_DIR)
@@ -324,11 +326,11 @@ test: test-host
 
 provider-coverage-selftest:
 	python3 tests/check_provider_coverage.py $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
-		contracts/qr39/provider/api-coverage.csv src/mock_navicore.c --self-test
+		contracts/qr39/provider/api-coverage.csv src/compat/qr39/mock_navicore.c --self-test
 
 static-provider-coverage-selftest:
 	python3 tests/check_static_provider_slots.py contracts/qr39/provider/slot-manifest.csv \
-		src/mock_navicore.c src/mock_static_provider_slots.def --self-test
+		src/compat/qr39/mock_navicore.c src/compat/qr39/mock_static_provider_slots.def --self-test
 
 static-callback-coverage-selftest: pas-proxy-coverage-selftest
 	python3 tests/check_static_callback_additions.py contracts/qr39/callbacks/runtime-coverage.csv \
@@ -340,7 +342,7 @@ static-callback-coverage-selftest: pas-proxy-coverage-selftest
 	python3 tests/check_static_callback_contracts.py \
 		contracts/qr39/callbacks/static-contracts.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv include/mock_pas_callbacks.h \
-		src/mock_pas_callbacks.c src/mock_navicore.c
+		src/compat/qr39/mock_pas_callbacks.c src/compat/qr39/mock_navicore.c
 	python3 tests/check_static_callback_outside_inventory.py \
 		evidence/qr39/static/callback-outside-inventory.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
@@ -373,16 +375,16 @@ pas-proxy-coverage-selftest:
 		contracts/qr39/callbacks/static-contracts.csv \
 		evidence/qr39/cross-version/callback-contracts.csv \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
-		include/mock_pas_callbacks.h src/mock_pas_callbacks.c \
-		src/mock_navicore.c
+		include/mock_pas_callbacks.h src/compat/qr39/mock_pas_callbacks.c \
+		src/compat/qr39/mock_navicore.c
 	python3 tests/check_cross_version_concrete_vtable_audit.py \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv
 	python3 tests/check_concrete_callback_integration.py \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv \
-		include/mock_pas_callbacks.h src/mock_pas_callbacks.c \
-		tests/pas_callbacks_smoke.c src/mock_navicore.c
+		include/mock_pas_callbacks.h src/compat/qr39/mock_pas_callbacks.c \
+		tests/pas_callbacks_smoke.c src/compat/qr39/mock_navicore.c
 
 qnx-arm-abi-oracle-selftest:
 	python3 tools/qnx_arm_abi_oracle.py --verify
@@ -403,8 +405,8 @@ raw-callback-capture-selftest: $(RAW_CAPTURE_TARGET)
 	python3 tests/check_raw_callback_capture.py
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-DMOCK_RAW_CALLBACK_TESTING -DMOCK_RAW_CALLBACK_HOST_TEST \
-		-Iinclude -Isrc src/mock_raw_callback_capture.c \
-		src/mock_raw_callback_slot_table.c tests/raw_callback_capture_smoke.c \
+		$(CPPFLAGS) src/capture/mock_raw_callback_capture.c \
+		src/capture/generated/mock_raw_callback_slot_table.c tests/raw_callback_capture_smoke.c \
 		-o $(BUILD_DIR)/raw-callback-capture-smoke
 	$(BUILD_DIR)/raw-callback-capture-smoke
 	LD_LIBRARY_PATH=$(HOST_LIBS) python3 tests/check_raw_callback_arm.py \

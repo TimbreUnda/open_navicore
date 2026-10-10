@@ -6,7 +6,7 @@ readelf_bin=${READELF:-readelf}
 build_dir=${1:?usage: run_plugin_tests.sh build-dir}
 mkdir -p "$build_dir/plugins"
 
-common_flags="-std=c99 -O2 -g -Wall -Wextra -Werror -pthread -fPIC -fvisibility=hidden -DMOCK_REF_PLUGIN_HEADLESS -Iinclude -Isrc ${EXTRA_CFLAGS:-}"
+common_flags="-std=c99 -O2 -g -Wall -Wextra -Werror -pthread -fPIC -fvisibility=hidden -DMOCK_REF_PLUGIN_HEADLESS -Iinclude -Isrc/compat/qr39 -Isrc/runtime -Isrc/backend -Isrc/renderer -Isrc/capture ${EXTRA_CFLAGS:-}"
 plugin_path="$build_dir/plugins/active.so"
 trace_path="$build_dir/reference-plugin.log"
 
@@ -92,17 +92,17 @@ $cc $common_flags \
     -DMOCK_NAVICORE_RENDERER_STUB \
     -DMOCK_NAV_BACKEND_PLUGIN_PATH='"'"$plugin_path"'"' \
     -DEXPECT_TRACE_PATH='"'"$trace_path"'"' \
-    src/mock_navicore.c src/mock_api_telemetry.c src/mock_callback_backend.c \
-    src/mock_cluster_backend.c src/mock_backend_loader.c \
-    src/mock_pas_callbacks.c src/mock_gps_backend.c \
-    src/mock_pointer_backend.c src/mock_scalar_backend.c \
-    src/mock_renderer.c src/mock_screen_input.c src/mock_default_backend.c \
-    src/mock_renderer_stub.c tests/plugin_lifecycle_smoke.c \
+    src/compat/qr39/mock_navicore.c src/runtime/mock_api_telemetry.c src/runtime/mock_callback_backend.c \
+    src/runtime/mock_cluster_backend.c src/backend/mock_backend_loader.c \
+    src/compat/qr39/mock_pas_callbacks.c src/runtime/mock_gps_backend.c \
+    src/runtime/mock_pointer_backend.c src/runtime/mock_scalar_backend.c \
+    src/renderer/mock_renderer.c src/renderer/mock_screen_input.c src/backend/mock_default_backend.c \
+    src/platform/host/mock_renderer_stub.c tests/plugin_lifecycle_smoke.c \
     -ldl -o "$build_dir/plugin-lifecycle-smoke"
 
 $cc $common_flags -DMOCK_NAVICORE_TESTING -DMOCK_NAVICORE_RENDERER_STUB \
-    src/mock_backend_loader.c src/mock_renderer.c src/mock_screen_input.c \
-    src/mock_default_backend.c src/mock_renderer_stub.c \
+    src/backend/mock_backend_loader.c src/renderer/mock_renderer.c src/renderer/mock_screen_input.c \
+    src/backend/mock_default_backend.c src/platform/host/mock_renderer_stub.c \
     tests/plugin_handshake_smoke.c -ldl \
     -o "$build_dir/plugin-handshake-smoke"
 "$build_dir/plugin-handshake-smoke"

@@ -104,7 +104,7 @@ static void exercise_generated_static_slots(PanaRootObject *root,
         assert(TEST_STATIC_CALL_##words(vtable[slot], object) ==              \
                expected_status);                                             \
     } while (0);
-#include "../src/mock_static_provider_slots.def"
+#include "../src/compat/qr39/mock_static_provider_slots.def"
 #undef MOCK_STATIC_SLOT
 }
 
