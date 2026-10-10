@@ -162,6 +162,11 @@ drift from looking like compatibility.
 
 ## Roadmap
 
+The [navigation feature landscape](docs/research/navigation-feature-landscape.md)
+compares official product capabilities with the stock integration evidence and
+proposes design priorities. It describes possible future capabilities, not
+current implementation parity.
+
 - [x] Replace the provider without replacing the stock UI
 - [x] Recover all stock-reachable provider slots
 - [x] Recover all application callback ABIs
