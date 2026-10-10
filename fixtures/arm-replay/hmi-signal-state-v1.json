@@ -1,0 +1,98 @@
+{
+  "schema": "mock-nav-arm-snapshot/v1",
+  "name": "stock-libnavicore-hmi-signal-state-slot8-v1",
+  "description": "QR39 stock CI_HMIIntegration forwarding thunk at Ghidra 0x00298138 (ELF VMA 0x00288138); proves callback self/r1/r2 lanes and status return propagation.",
+  "binary": {
+    "path": "../../../analysis/mock_navicore_runtime/final-mock-transaction-20261008-attempt1/live.before/libNaviCore.stock.so",
+    "sha256": "fd1e931430cca61116c533cdf617dc805548e312a9131e972f55a7d30ab64842",
+    "elf_machine": 40,
+    "elf_image_base": "0x0",
+    "load_bias": "0x0"
+  },
+  "execution": {
+    "entry": "0x00288138",
+    "isa": "thumb",
+    "stop_pc": "0x23000000",
+    "instruction_budget": 32,
+    "timeout_us": 100000
+  },
+  "registers": {
+    "r0": {"pointer": "wrapper"},
+    "r1": "0x11111111",
+    "r2": "0x22222222",
+    "r3": "0x33333333",
+    "r4": "0x44444444",
+    "r5": "0x55555555",
+    "r6": "0x66666666",
+    "r7": "0x77777777",
+    "r8": "0x88888888",
+    "r9": "0x99999999",
+    "r10": "0xaaaaaaaa",
+    "r11": "0xbbbbbbbb",
+    "r12": "0xcccccccc",
+    "sp": {"pointer": "stack", "offset": "0x8000"},
+    "lr": "0x23000001"
+  },
+  "allocations": [
+    {
+      "name": "wrapper",
+      "graph": "hmi",
+      "address": "0x20000000",
+      "size": "0x1000",
+      "permissions": "rw",
+      "fill": "0xa5",
+      "words": [
+        {"offset": "0x4", "value": {"pointer": "callback"}}
+      ]
+    },
+    {
+      "name": "callback",
+      "graph": "hmi",
+      "address": "0x20001000",
+      "size": "0x1000",
+      "permissions": "rw",
+      "fill": "0x5a",
+      "words": [
+        {"offset": "0x0", "value": {"pointer": "vtable"}}
+      ]
+    },
+    {
+      "name": "vtable",
+      "graph": "hmi",
+      "address": "0x20002000",
+      "size": "0x1000",
+      "permissions": "r",
+      "fill": "0x00",
+      "words": [
+        {"offset": "0x20", "value": {"stub": "hmi_slot8", "thumb": true}}
+      ]
+    },
+    {
+      "name": "stack",
+      "graph": "stack",
+      "address": "0x22000000",
+      "size": "0x10000",
+      "permissions": "rw",
+      "fill": "0xcc",
+      "words": []
+    },
+    {
+      "name": "return_sentinel",
+      "graph": "sentinel",
+      "address": "0x23000000",
+      "size": "0x1000",
+      "permissions": "rx",
+      "fill": "0x00",
+      "words": []
+    }
+  ],
+  "stubs": [
+    {
+      "name": "hmi_slot8",
+      "address": "0x21000000",
+      "isa": "thumb",
+      "return": "0x5a5aa55a",
+      "capture_stack_words": 4
+    }
+  ]
+}

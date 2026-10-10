@@ -1,0 +1,64 @@
+structural_category,dataflow_relation,slot,candidate_count,next_action
+ambiguous_shared_caller,receiver_matches_vtable_object,2,1,split shared helper by incoming constructor/member-pointer path and prove the concrete receiver field
+ambiguous_shared_caller,receiver_matches_vtable_object,3,1,split shared helper by incoming constructor/member-pointer path and prove the concrete receiver field
+ambiguous_shared_caller,receiver_matches_vtable_object,8,10,split shared helper by incoming constructor/member-pointer path and prove the concrete receiver field
+no_callback_object_provenance,callind_receiver_unavailable,2,60,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,3,42,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,4,18,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,5,187,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,6,20,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,7,70,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,8,10,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,9,7,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,10,8,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,11,12,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,12,7,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,13,15,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,14,18,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,15,14,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,16,4,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,17,42,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,18,1,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,19,2,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,20,4,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,21,3,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,22,1,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,23,60,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,24,3,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,25,3,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,26,1,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,28,1,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,29,1,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,30,22,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,31,11,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,callind_receiver_unavailable,32,1,machine receiver relation recovered; trace the matching object through callers/constructors to a registered CI field
+no_callback_object_provenance,receiver_matches_vtable_object,2,77,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,3,91,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,4,18,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,5,139,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,6,10,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,7,17,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,8,58,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,9,19,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,10,27,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,11,12,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,12,12,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,13,6,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,14,10,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,15,14,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,16,5,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,17,2,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,18,3,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,19,1,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,22,3,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,23,3,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,25,1,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,27,2,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,28,1,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,29,6,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,30,13,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,31,13,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,32,2,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,33,5,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_matches_vtable_object,35,2,trace the matching object through callers/wrappers to its constructor field; accept only a registered CI callback field and exact proxy bound
+no_callback_object_provenance,receiver_vtable_relation_unresolved,5,1,split phi/control-flow paths and prove receiver/vtable relation before tracing any surviving object origin

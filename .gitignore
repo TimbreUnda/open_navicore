@@ -1,0 +1,17 @@
+# Local build products
+/build/
+/dist/
+/compile_commands.json
+
+# Python cache and coverage output
+__pycache__/
+*.py[cod]
+.coverage
+.pytest_cache/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

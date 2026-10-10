@@ -1,0 +1,6 @@
+{
+    global:
+        mock_nav_backend_query_v1;
+    local:
+        *;
+};
