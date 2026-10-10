@@ -5,7 +5,7 @@
 #include "mock_callback_backend.h"
 #include "mock_backend_loader.h"
 #include <open_navicore/cluster.h>
-#include "mock_pas_callbacks.h"
+#include <open_navicore/host_callbacks.h>
 #include "mock_gps_backend.h"
 #include "mock_pointer_backend.h"
 #include "mock_renderer.h"
@@ -59,7 +59,7 @@ typedef struct {
 } MockLifecycleLease;
 
 static uint32_t mock_generic_virtual(void *self, ...);
-static uint32_t mock_get_adapter(void *self,
+static uint32_t nc_provider_get_adapter(void *self,
                                  uint32_t adapter,
                                  void **interface_out);
 static uint32_t mock_signal_start(void *self);
@@ -79,7 +79,7 @@ static uint32_t mock_hmi_screen_change(void *self,
 static uint32_t mock_hmi_screen_theme_change(void *self,
                                              uint32_t handle,
                                              const void *theme_name);
-static uint32_t mock_gps_data(void *self, const void *gps_record);
+static uint32_t nc_provider_gps_data(void *self, const void *gps_record);
 static uint32_t mock_vehicle_day_night_status(void *self, uint8_t value);
 static uint32_t mock_vehicle_day_night_setting(void *self, uint8_t value);
 static uint32_t mock_vehicle_speed(void *self, float value);
@@ -87,8 +87,8 @@ static uint32_t mock_gps_interval(void *self, uint32_t interval_ms);
 static uint32_t mock_audio_volume(void *self,
                                   uint32_t audio_source,
                                   uint8_t volume);
-static uint32_t mock_8_3(void *, uint32_t, uint8_t);
-static uint32_t mock_8_5(void *, uint32_t, uint8_t);
+static uint32_t nc_provider_vehicle_day_night_status_reply(void *, uint32_t, uint8_t);
+static uint32_t nc_provider_vehicle_day_night_setting_reply(void *, uint32_t, uint8_t);
 static uint32_t mock_10_17(void *, uint32_t, uint32_t, uint8_t);
 static uint32_t mock_12_5(void *, uint32_t);
 static uint32_t mock_12_6(void *, uint32_t);
@@ -111,9 +111,9 @@ static uint32_t mock_30_3(void *, uint32_t);
 static uint32_t mock_30_4(void *, uint32_t);
 static uint32_t mock_31_3(void *, uint8_t);
 static uint32_t mock_31_5(void *, uint8_t);
-static uint32_t mock_6_3(void *, uint32_t, uint32_t,
+static uint32_t nc_provider_logging_config(void *, uint32_t, uint32_t,
                          const uint8_t *, const uint32_t *);
-static uint32_t mock_7_3(void *, uint32_t, const MockIntlSettingsInput *);
+static uint32_t nc_provider_i18n_settings_reply(void *, uint32_t, const MockIntlSettingsInput *);
 static uint32_t mock_8_12(void *, uint32_t, const char *);
 static uint32_t mock_19_3(void *, uint32_t, uint32_t,
                           const MockTransportMeansObservedInput *);
@@ -145,7 +145,7 @@ static void mock_lifecycle_release(MockLifecycleLease *lease);
                          uintptr_t, uintptr_t, uintptr_t)
 #define MOCK_STATIC_SLOT(adapter, slot, words) \
     DECLARE_STATIC_##words(mock_static_##adapter##_##slot);
-#include "mock_static_provider_slots.def"
+#include "provider_slots.def"
 #undef MOCK_STATIC_SLOT
 #undef DECLARE_STATIC_0
 #undef DECLARE_STATIC_1
@@ -205,17 +205,17 @@ typedef uint32_t (*MockProviderWord7)(void *, uintptr_t, uintptr_t, uintptr_t,
         __builtin_types_compatible_p(__typeof__(&(symbol)), type) ? 1 : -1]
 
 MOCK_PROVIDER_TYPECHECK(1, 9, mock_hmi_screen_change, MockProviderSelf5U32);
-MOCK_PROVIDER_TYPECHECK(6, 3, mock_6_3, MockProviderLogging);
-MOCK_PROVIDER_TYPECHECK(7, 3, mock_7_3, MockProviderIntl);
-MOCK_PROVIDER_TYPECHECK(8, 3, mock_8_3, MockProviderSelfU32U8);
+MOCK_PROVIDER_TYPECHECK(6, 3, nc_provider_logging_config, MockProviderLogging);
+MOCK_PROVIDER_TYPECHECK(7, 3, nc_provider_i18n_settings_reply, MockProviderIntl);
+MOCK_PROVIDER_TYPECHECK(8, 3, nc_provider_vehicle_day_night_status_reply, MockProviderSelfU32U8);
 MOCK_PROVIDER_TYPECHECK(8, 4, mock_vehicle_day_night_status,
                         MockProviderSelfU8);
-MOCK_PROVIDER_TYPECHECK(8, 5, mock_8_5, MockProviderSelfU32U8);
+MOCK_PROVIDER_TYPECHECK(8, 5, nc_provider_vehicle_day_night_setting_reply, MockProviderSelfU32U8);
 MOCK_PROVIDER_TYPECHECK(8, 6, mock_vehicle_day_night_setting,
                         MockProviderSelfU8);
 MOCK_PROVIDER_TYPECHECK(8, 8, mock_vehicle_speed, MockProviderSelfFloat);
 MOCK_PROVIDER_TYPECHECK(8, 12, mock_8_12, MockProviderU32ConstChar);
-MOCK_PROVIDER_TYPECHECK(9, 4, mock_gps_data, MockProviderSelfConstVoid);
+MOCK_PROVIDER_TYPECHECK(9, 4, nc_provider_gps_data, MockProviderSelfConstVoid);
 MOCK_PROVIDER_TYPECHECK(9, 6, mock_gps_interval, MockProviderSelfU32);
 MOCK_PROVIDER_TYPECHECK(10, 17, mock_10_17, MockProviderSelfU32U32U8);
 MOCK_PROVIDER_TYPECHECK(10, 19, mock_audio_volume, MockProviderSelfU32U8);
@@ -253,7 +253,7 @@ MOCK_PROVIDER_TYPECHECK(31, 5, mock_31_5, MockProviderSelfU8);
             MockProviderWord##words) ? 1 : -1]
 #define MOCK_STATIC_SLOT(adapter, slot, words) \
     MOCK_STATIC_TYPECHECK(adapter, slot, words);
-#include "mock_static_provider_slots.def"
+#include "provider_slots.def"
 #undef MOCK_STATIC_SLOT
 #undef MOCK_STATIC_TYPECHECK
 
@@ -295,13 +295,13 @@ static const PanaGenericVirtual g_hardkey_vtable[MOCK_DUMMY_VTABLE_SLOTS] = {
 
 static const PanaGenericVirtual g_logging_vtable[MOCK_DUMMY_VTABLE_SLOTS] = {
     V2, V1,
-    (PanaGenericVirtual)mock_6_3,
+    (PanaGenericVirtual)nc_provider_logging_config,
     V64, V32, V16, V8, V4
 };
 
 static const PanaGenericVirtual g_internationalization_vtable[MOCK_DUMMY_VTABLE_SLOTS] = {
     V2, V1,
-    (PanaGenericVirtual)mock_7_3,
+    (PanaGenericVirtual)nc_provider_i18n_settings_reply,
     (PanaGenericVirtual)mock_static_7_4,
     (PanaGenericVirtual)mock_static_7_5,
     V64, V32, V16, V8, V2
@@ -309,9 +309,9 @@ static const PanaGenericVirtual g_internationalization_vtable[MOCK_DUMMY_VTABLE_
 
 static const PanaGenericVirtual g_vehicle_vtable[MOCK_DUMMY_VTABLE_SLOTS] = {
     V2, V1,
-    (PanaGenericVirtual)mock_8_3,
+    (PanaGenericVirtual)nc_provider_vehicle_day_night_status_reply,
     (PanaGenericVirtual)mock_vehicle_day_night_status,
-    (PanaGenericVirtual)mock_8_5,
+    (PanaGenericVirtual)nc_provider_vehicle_day_night_setting_reply,
     (PanaGenericVirtual)mock_vehicle_day_night_setting,
     (PanaGenericVirtual)mock_static_8_7,
     (PanaGenericVirtual)mock_vehicle_speed,
@@ -328,7 +328,7 @@ static const PanaGenericVirtual g_vehicle_vtable[MOCK_DUMMY_VTABLE_SLOTS] = {
 static const PanaGenericVirtual g_gps_vtable[MOCK_DUMMY_VTABLE_SLOTS] = {
     V2, V1,
     (PanaGenericVirtual)mock_static_9_3,
-    (PanaGenericVirtual)mock_gps_data,
+    (PanaGenericVirtual)nc_provider_gps_data,
     (PanaGenericVirtual)mock_static_9_5,
     (PanaGenericVirtual)mock_gps_interval,
     V64, V32, V16, V8, V1
@@ -525,7 +525,7 @@ static const PanaRootVtable g_root_vtable = {
         mock_generic_virtual,
         mock_generic_virtual,
         mock_generic_virtual,
-        (PanaGenericVirtual)mock_get_adapter,
+        (PanaGenericVirtual)nc_provider_get_adapter,
         (PanaGenericVirtual)mock_signal_start,
         (PanaGenericVirtual)mock_signal_start_watchdog,
         (PanaGenericVirtual)mock_static_root_6,
@@ -944,7 +944,7 @@ static uint32_t mock_generic_virtual(void *self, ...)
     return 0u;
 }
 
-static uint32_t mock_gps_data(void *self, const void *gps_record)
+static uint32_t nc_provider_gps_data(void *self, const void *gps_record)
 {
     MockInterfaceObject *adapter = (MockInterfaceObject *)self;
     MockLifecycleLease lease;
@@ -1201,7 +1201,7 @@ static uint32_t mock_static_provider_accept(void *self,
           self, slot, 7u, a0, a1, a2, a3); }
 #define MOCK_STATIC_SLOT(adapter, slot, words) \
     DEFINE_STATIC_##words(mock_static_##adapter##_##slot, slot)
-#include "mock_static_provider_slots.def"
+#include "provider_slots.def"
 #undef MOCK_STATIC_SLOT
 #undef DEFINE_STATIC_0
 #undef DEFINE_STATIC_1
@@ -1212,7 +1212,7 @@ static uint32_t mock_static_provider_accept(void *self,
 #undef DEFINE_STATIC_6
 #undef DEFINE_STATIC_7
 
-static uint32_t mock_8_3(void *self, uint32_t handle, uint8_t status)
+static uint32_t nc_provider_vehicle_day_night_status_reply(void *self, uint32_t handle, uint8_t status)
 {
     MockLifecycleLease lease;
     int retained;
@@ -1227,7 +1227,7 @@ static uint32_t mock_8_3(void *self, uint32_t handle, uint8_t status)
     return retained != 0 ? 0u : 1u;
 }
 
-static uint32_t mock_8_5(void *self, uint32_t handle, uint8_t setting)
+static uint32_t nc_provider_vehicle_day_night_setting_reply(void *self, uint32_t handle, uint8_t setting)
 {
     MockLifecycleLease lease;
     int retained;
@@ -1379,7 +1379,7 @@ static uint32_t mock_25_19(void *self, uint32_t handle)
     mock_callback_get_voice_state(&reply_result,&guidance);
     mock_callback_pending_add(25u,19u,handle);
     if (mock_lifecycle_acquire_proxy(25u, 23u, &outbound, &proxy)) {
-        status = mock_pas_25_23(proxy,handle,reply_result,guidance);
+        status = nc_host_voice_reply_route_guidance_status(proxy,handle,reply_result,guidance);
         if (status == 0u && mock_lifecycle_is_current(&outbound)) {
             (void)mock_callback_pending_complete(25u,19u,handle);
         }
@@ -1399,7 +1399,7 @@ DEFINE_TELEM_1_U32(mock_30_4, 30u, 4u)
 DEFINE_TELEM_1_U8(mock_31_3, 31u, 3u)
 DEFINE_TELEM_1_U8(mock_31_5, 31u, 5u)
 
-static uint32_t mock_6_3(void *self,
+static uint32_t nc_provider_logging_config(void *self,
                          uint32_t handle,
                          uint32_t count,
                          const uint8_t *levels,
@@ -1413,7 +1413,7 @@ static uint32_t mock_6_3(void *self,
     return 0u;
 }
 
-static uint32_t mock_7_3(void *self, uint32_t handle,
+static uint32_t nc_provider_i18n_settings_reply(void *self, uint32_t handle,
                          const MockIntlSettingsInput *settings)
 {
     MockLifecycleLease lease;
@@ -1591,7 +1591,7 @@ static int mock_emit_root_ready(void)
     uint32_t status;
     if (!mock_lifecycle_acquire_proxy(UINT32_MAX, 12u, &lease, &proxy))
         return 0;
-    status = mock_pas_root_12(proxy);
+    status = nc_host_root_adapter_ready(proxy);
     if (!mock_lifecycle_is_current(&lease)) status = 1u;
     mock_lifecycle_release(&lease);
     return status == 0u;
@@ -1603,7 +1603,7 @@ static int mock_emit_hmi0(uint32_t slot)
     void *proxy;
     uint32_t status = 1u;
     if (!mock_lifecycle_acquire_proxy(1u, slot, &lease, &proxy)) return 0;
-    if (slot == 2u) status = mock_pas_1_2(proxy);
+    if (slot == 2u) status = nc_host_hmi_adapter_ready(proxy);
     if (!mock_lifecycle_is_current(&lease)) status = 1u;
     mock_lifecycle_release(&lease);
     return status == 0u;
@@ -1615,8 +1615,8 @@ static int mock_emit_hmi1(uint32_t slot, uint32_t value)
     void *proxy;
     uint32_t status = 1u;
     if (!mock_lifecycle_acquire_proxy(1u, slot, &lease, &proxy)) return 0;
-    if (slot == 3u) status = mock_pas_1_3(proxy, value);
-    else if (slot == 14u) status = mock_pas_1_14(proxy, value);
+    if (slot == 3u) status = nc_host_hmi_subscribe(proxy, value);
+    else if (slot == 14u) status = nc_host_hmi_signal_navigation_hmi_ready(proxy, value);
     if (!mock_lifecycle_is_current(&lease)) status = 1u;
     mock_lifecycle_release(&lease);
     return status == 0u;
@@ -1628,7 +1628,7 @@ static int mock_emit_hmi2(uint32_t slot, uint32_t a, uint32_t b)
     void *proxy;
     uint32_t status = 1u;
     if (!mock_lifecycle_acquire_proxy(1u, slot, &lease, &proxy)) return 0;
-    if (slot == 6u) status = mock_pas_1_6(proxy, a, b);
+    if (slot == 6u) status = nc_host_hmi_request_screen_window_identifier(proxy, a, b);
     if (!mock_lifecycle_is_current(&lease)) status = 1u;
     mock_lifecycle_release(&lease);
     return status == 0u;
@@ -1640,7 +1640,7 @@ static int mock_emit_hmi3(uint32_t slot, uint32_t a, uint32_t b, uint32_t c)
     void *proxy;
     uint32_t status = 1u;
     if (!mock_lifecycle_acquire_proxy(1u, slot, &lease, &proxy)) return 0;
-    if (slot == 7u) status = mock_pas_1_7(proxy, a, b, c);
+    if (slot == 7u) status = nc_host_hmi_request_hmi_state(proxy, a, b, c);
     if (!mock_lifecycle_is_current(&lease)) status = 1u;
     mock_lifecycle_release(&lease);
     return status == 0u;
@@ -1660,7 +1660,7 @@ static int mock_signal_adapter_ready(uint32_t adapter_id)
     mock_log(LOG_NOTICE,
              "adapterReady adapter=%u proxy=%p slot=2 begin",
              adapter_id, proxy);
-    result = mock_pas_all_2(proxy, adapter_id);
+    result = nc_host_adapter_ready(proxy, adapter_id);
     mock_log(LOG_NOTICE,
              "adapterReady adapter=%u complete result=%u",
              adapter_id, result);
@@ -1679,7 +1679,7 @@ static int mock_call_callback0(uint32_t adapter_id, uint32_t slot,
 
     if (mock_lifecycle_acquire_proxy(adapter_id, slot, &lease, &proxy) &&
         adapter_id == 17u && slot == 6u) {
-        result = mock_pas_17_6(proxy);
+        result = nc_host_cluster_request_or_signal_no_args(proxy);
         current = mock_lifecycle_is_current(&lease);
         mock_lifecycle_release(&lease);
     }
@@ -1700,13 +1700,13 @@ static int mock_call_callback1(uint32_t adapter_id, uint32_t slot,
     if (!mock_lifecycle_acquire_proxy(adapter_id, slot, &lease, &proxy)) {
         return kind == MOCK_CALLBACK_OPTIONAL;
     }
-    if(adapter_id==8u&&slot==3u) result=mock_pas_8_3(proxy,value);
-    else if(adapter_id==8u&&slot==5u) result=mock_pas_8_5(proxy,value);
-    else if(adapter_id==8u&&slot==6u) result=mock_pas_8_6(proxy,value);
-    else if(adapter_id==8u&&slot==11u) result=mock_pas_8_11(proxy,value);
-    else if(adapter_id==9u&&slot==3u) result=mock_pas_9_3(proxy,value);
-    else if(adapter_id==17u&&slot==5u) result=mock_pas_17_5(proxy,value);
-    else if(adapter_id==17u&&slot==7u) result=mock_pas_17_7(proxy,value);
+    if(adapter_id==8u&&slot==3u) result=nc_host_vehicle_subscribe(proxy,value);
+    else if(adapter_id==8u&&slot==5u) result=nc_host_vehicle_request_day_night_status(proxy,value);
+    else if(adapter_id==8u&&slot==6u) result=nc_host_vehicle_request_day_night_setting(proxy,value);
+    else if(adapter_id==8u&&slot==11u) result=nc_host_vehicle_request_vehicle_identification_number(proxy,value);
+    else if(adapter_id==9u&&slot==3u) result=nc_host_gps_subscribe(proxy,value);
+    else if(adapter_id==17u&&slot==5u) result=nc_host_cluster_subscribe(proxy,value);
+    else if(adapter_id==17u&&slot==7u) result=nc_host_cluster_request_tbt_settings_enable_status(proxy,value);
     current = mock_lifecycle_is_current(&lease);
     mock_lifecycle_release(&lease);
     return current && (result==0u||kind==MOCK_CALLBACK_OPTIONAL);
@@ -1722,8 +1722,8 @@ static int mock_call_callback2(uint32_t adapter_id, uint32_t slot,
     if (!mock_lifecycle_acquire_proxy(adapter_id, slot, &lease, &proxy)) {
         return kind == MOCK_CALLBACK_OPTIONAL;
     }
-    if(adapter_id==10u&&slot==3u) result=mock_pas_10_3(proxy,a,b);
-    else if(adapter_id==10u&&slot==19u) result=mock_pas_10_19(proxy,a,b);
+    if(adapter_id==10u&&slot==3u) result=nc_host_audio_subscribe_audio_state(proxy,a,b);
+    else if(adapter_id==10u&&slot==19u) result=nc_host_audio_request_audio_source_volume(proxy,a,b);
     current = mock_lifecycle_is_current(&lease);
     mock_lifecycle_release(&lease);
     return current && (result==0u||kind==MOCK_CALLBACK_OPTIONAL);
@@ -1742,10 +1742,10 @@ static int mock_request1(uint32_t adapter, uint32_t callback_slot,
         return kind == MOCK_CALLBACK_OPTIONAL;
     handle=mock_callback_allocate_handle();
     mock_callback_pending_add(adapter,provider_slot,handle);
-    if(adapter==8u&&callback_slot==5u) status=mock_pas_8_5(proxy,handle);
-    else if(adapter==8u&&callback_slot==6u) status=mock_pas_8_6(proxy,handle);
-    else if(adapter==8u&&callback_slot==11u) status=mock_pas_8_11(proxy,handle);
-    else if(adapter==17u&&callback_slot==7u) status=mock_pas_17_7(proxy,handle);
+    if(adapter==8u&&callback_slot==5u) status=nc_host_vehicle_request_day_night_status(proxy,handle);
+    else if(adapter==8u&&callback_slot==6u) status=nc_host_vehicle_request_day_night_setting(proxy,handle);
+    else if(adapter==8u&&callback_slot==11u) status=nc_host_vehicle_request_vehicle_identification_number(proxy,handle);
+    else if(adapter==17u&&callback_slot==7u) status=nc_host_cluster_request_tbt_settings_enable_status(proxy,handle);
     current = mock_lifecycle_is_current(&lease);
     ok = status == 0u && current;
     if(!ok && current)
@@ -1769,7 +1769,7 @@ static int mock_request2(uint32_t adapter, uint32_t callback_slot,
     handle=mock_callback_allocate_handle();
     mock_callback_pending_add(adapter,provider_slot,handle);
     if(adapter==10u&&callback_slot==19u)
-        status=mock_pas_10_19(proxy,handle,extra);
+        status=nc_host_audio_request_audio_source_volume(proxy,handle,extra);
     current=mock_lifecycle_is_current(&lease);
     ok=status==0u && current;
     if(!ok && current)
@@ -1818,7 +1818,7 @@ uint32_t mock_callback_signal_audio_availability(uint32_t state)
         mock_lifecycle_release(&lease);
         return 0u;
     }
-    status=mock_pas_10_10(proxy,state);
+    status=nc_host_audio_signal_audio_source_availability(proxy,state);
     mock_log(LOG_NOTICE,
              "outbound PAS callback adapter=10 slot=10 state=%u status=%u",
              state,status);
@@ -1839,7 +1839,7 @@ uint32_t mock_callback_send_cluster(const void *record_0xa5c)
         return 1u;
     }
     memcpy(owned,record_0xa5c,sizeof(owned));
-    status=mock_pas_17_3(proxy,owned);
+    status=nc_host_cluster_signal_instrument_cluster_display_data(proxy,owned);
     mock_log(LOG_NOTICE,
              "outbound PAS callback adapter=17 slot=3 payload_size=0xa5c route=%u navigation=%u changed=0x%04x valid=0x%04x status=%u",
              (uint32_t)owned[0],(uint32_t)owned[1],
@@ -1878,7 +1878,7 @@ uint32_t mock_callback_signal_thread_status(uint32_t thread_id,
     }
     normalized[i]='\0';
     wide[i]=L'\0';
-    status=mock_pas_root_10(proxy,thread_id,wide,thread_status);
+    status=nc_host_root_signal_thread_status(proxy,thread_id,wide,thread_status);
     mock_log(LOG_NOTICE,
              "outbound PAS callback root slot=10 thread_id=%u name=%.*s thread_status=%u status=%u",
              thread_id,(int)i,normalized,thread_status,status);
@@ -2066,7 +2066,7 @@ static int mock_reply_hmi_event(const MockHMIEvent *event)
                  event->request.transition.display,
                  event->request.transition.visibility,
                  event->request.transition.interactivity);
-        result = mock_pas_1_9(hmi_proxy,
+        result = nc_host_hmi_reply_hmi_state_transition(hmi_proxy,
                               event->request.transition.handle);
         if (result == 0u && mock_lifecycle_is_current(&lease)) {
             (void)pthread_mutex_lock(&g_worker_lock);
@@ -2085,7 +2085,7 @@ static int mock_reply_hmi_event(const MockHMIEvent *event)
                  "handle=%u result=0 screen_type=%u begin",
                  hmi_proxy, event->request.screen_change.handle,
                  event->request.screen_change.screen_type);
-        result = mock_pas_1_10(hmi_proxy,
+        result = nc_host_hmi_reply_screen_change(hmi_proxy,
                                event->request.screen_change.handle, 0u,
                                event->request.screen_change.screen_type);
         mock_log(LOG_NOTICE,
@@ -2096,7 +2096,7 @@ static int mock_reply_hmi_event(const MockHMIEvent *event)
         mock_log(LOG_NOTICE,
                  "HMI replyScreenThemeChange proxy=%p slot=12 handle=%u begin",
                  hmi_proxy, event->request.theme_change.handle);
-        result = mock_pas_1_12(hmi_proxy,
+        result = nc_host_hmi_reply_screen_theme_change(hmi_proxy,
                                event->request.theme_change.handle);
         mock_log(LOG_NOTICE,
                  "HMI replyScreenThemeChange complete handle=%u result=%u",
@@ -2430,7 +2430,7 @@ static uint32_t mock_hmi_screen_theme_change(void *self,
     return accepted != 0 ? 0u : 1u;
 }
 
-static uint32_t mock_get_adapter(void *self,
+static uint32_t nc_provider_get_adapter(void *self,
                                  uint32_t adapter,
                                  void **interface_out)
 {

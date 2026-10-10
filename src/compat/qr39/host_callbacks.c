@@ -1,7 +1,7 @@
 /* Handwritten typed ABI adapters, checked against the callback manifests.
  * The generated raw-capture trampolines are a separate diagnostic path; they
  * do not supply prototypes or decide which callbacks the provider emits. */
-#include "mock_pas_callbacks.h"
+#include <open_navicore/host_callbacks.h>
 
 #include <stddef.h>
 #include <string.h>
@@ -22,26 +22,26 @@ typedef char MockPasSxmLocationSizeMustBe16[
 typedef char MockPasSxmMbrSizeMustBe48[
     sizeof(MockPasSxmMbr) == 48u ? 1 : -1];
 
-static const void *const *mock_pas_vtable(void *proxy)
+static const void *const *nc_host_vtable(void *proxy)
 {
     return proxy != NULL ? *(const void *const *const *)proxy : NULL;
 }
 
-static void *mock_pas_slot(void *proxy, uint32_t slot)
+static void *nc_host_callback_at(void *proxy, uint32_t slot)
 {
-    const void *const *vtable = mock_pas_vtable(proxy);
+    const void *const *vtable = nc_host_vtable(proxy);
 
     return vtable != NULL ? (void *)vtable[slot] : NULL;
 }
 
-static uint32_t mock_pas_status(uint32_t adapter, uint32_t slot,
+static uint32_t nc_host_record_callback_status(uint32_t adapter, uint32_t slot,
                                 uint32_t status, MockCallbackClass kind)
 {
     mock_callback_record_status(adapter, slot, status, kind);
     return status;
 }
 
-static int mock_pas_cstr8_within(const char *text, size_t maximum)
+static int nc_host_cstr8_within(const char *text, size_t maximum)
 {
     size_t index;
 
@@ -56,7 +56,7 @@ static int mock_pas_cstr8_within(const char *text, size_t maximum)
     return 0;
 }
 
-static int mock_pas_cstr16_within(const wchar_t *text, size_t maximum)
+static int nc_host_cstr16_within(const wchar_t *text, size_t maximum)
 {
     size_t index;
 
@@ -74,36 +74,36 @@ static int mock_pas_cstr16_within(const wchar_t *text, size_t maximum)
 #define DEFINE_PAS_0(name, adapter, slot, kind)                               \
     uint32_t name(void *proxy)                                                 \
     {                                                                          \
-        PasCallback0 callback = (PasCallback0)mock_pas_slot(proxy, slot);      \
+        PasCallback0 callback = (PasCallback0)nc_host_callback_at(proxy, slot);      \
         uint32_t status = callback != NULL ? callback(proxy) : 1u;             \
-        return mock_pas_status(adapter, slot, status, kind);                   \
+        return nc_host_record_callback_status(adapter, slot, status, kind);                   \
     }
 
 #define DEFINE_PAS_1(name, adapter, slot, kind)                               \
     uint32_t name(void *proxy, uint32_t value)                                 \
     {                                                                          \
         PasCallback1U32 callback =                                             \
-            (PasCallback1U32)mock_pas_slot(proxy, slot);                       \
+            (PasCallback1U32)nc_host_callback_at(proxy, slot);                       \
         uint32_t status = callback != NULL ? callback(proxy, value) : 1u;      \
-        return mock_pas_status(adapter, slot, status, kind);                   \
+        return nc_host_record_callback_status(adapter, slot, status, kind);                   \
     }
 
 #define DEFINE_PAS_2(name, adapter, slot, kind)                               \
     uint32_t name(void *proxy, uint32_t a, uint32_t b)                         \
     {                                                                          \
         PasCallback2U32 callback =                                             \
-            (PasCallback2U32)mock_pas_slot(proxy, slot);                       \
+            (PasCallback2U32)nc_host_callback_at(proxy, slot);                       \
         uint32_t status = callback != NULL ? callback(proxy, a, b) : 1u;       \
-        return mock_pas_status(adapter, slot, status, kind);                   \
+        return nc_host_record_callback_status(adapter, slot, status, kind);                   \
     }
 
 #define DEFINE_PAS_3(name, adapter, slot, kind)                               \
     uint32_t name(void *proxy, uint32_t a, uint32_t b, uint32_t c)             \
     {                                                                          \
         PasCallback3U32 callback =                                             \
-            (PasCallback3U32)mock_pas_slot(proxy, slot);                       \
+            (PasCallback3U32)nc_host_callback_at(proxy, slot);                       \
         uint32_t status = callback != NULL ? callback(proxy, a, b, c) : 1u;    \
-        return mock_pas_status(adapter, slot, status, kind);                   \
+        return nc_host_record_callback_status(adapter, slot, status, kind);                   \
     }
 
 #define DEFINE_PAS_4(name, adapter, slot, kind)                               \
@@ -111,11 +111,11 @@ static int mock_pas_cstr16_within(const wchar_t *text, size_t maximum)
                   uint32_t d)                                                  \
     {                                                                          \
         PasCallback4U32 callback =                                             \
-            (PasCallback4U32)mock_pas_slot(proxy, slot);                       \
+            (PasCallback4U32)nc_host_callback_at(proxy, slot);                       \
         uint32_t status = callback != NULL                                     \
                               ? callback(proxy, a, b, c, d)                    \
                               : 1u;                                            \
-        return mock_pas_status(adapter, slot, status, kind);                   \
+        return nc_host_record_callback_status(adapter, slot, status, kind);                   \
     }
 
 #define DEFINE_PAS_5(name, adapter, slot, kind)                               \
@@ -123,328 +123,328 @@ static int mock_pas_cstr16_within(const wchar_t *text, size_t maximum)
                   uint32_t d, uint32_t e)                                      \
     {                                                                          \
         PasCallback5U32 callback =                                             \
-            (PasCallback5U32)mock_pas_slot(proxy, slot);                       \
+            (PasCallback5U32)nc_host_callback_at(proxy, slot);                       \
         uint32_t status = callback != NULL                                     \
                               ? callback(proxy, a, b, c, d, e)                 \
                               : 1u;                                            \
-        return mock_pas_status(adapter, slot, status, kind);                   \
+        return nc_host_record_callback_status(adapter, slot, status, kind);                   \
     }
 
-DEFINE_PAS_0(mock_pas_root_12, UINT32_MAX, 12u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_0(mock_pas_root_3, UINT32_MAX, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_root_5_signalInitiateRestartOnce, UINT32_MAX, 5u,
+DEFINE_PAS_0(nc_host_root_adapter_ready, UINT32_MAX, 12u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_0(nc_host_root_no_arg_internal_state_cleanup, UINT32_MAX, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_root_signal_initiate_restart_once, UINT32_MAX, 5u,
              MOCK_CALLBACK_OPTIONAL)
 
-uint32_t mock_pas_all_2(void *proxy, uint32_t adapter)
+uint32_t nc_host_adapter_ready(void *proxy, uint32_t adapter)
 {
-    PasCallback0 callback = (PasCallback0)mock_pas_slot(proxy, 2u);
+    PasCallback0 callback = (PasCallback0)nc_host_callback_at(proxy, 2u);
     uint32_t status = callback != NULL ? callback(proxy) : 1u;
 
-    return mock_pas_status(adapter, 2u, status, MOCK_CALLBACK_CRITICAL);
+    return nc_host_record_callback_status(adapter, 2u, status, MOCK_CALLBACK_CRITICAL);
 }
 
-DEFINE_PAS_0(mock_pas_1_2, 1u, 2u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_1_3, 1u, 3u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_1_4_requestCreateRequestCode, 1u, 4u,
+DEFINE_PAS_0(nc_host_hmi_adapter_ready, 1u, 2u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_hmi_subscribe, 1u, 3u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_hmi_request_create_request_code, 1u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_1_5_requestCreateFingerPrint, 1u, 5u,
+DEFINE_PAS_1(nc_host_hmi_request_create_finger_print, 1u, 5u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_1_6, 1u, 6u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_3(mock_pas_1_7, 1u, 7u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_1_9, 1u, 9u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_3(mock_pas_1_10, 1u, 10u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_1_12, 1u, 12u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_1_14, 1u, 14u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_2(mock_pas_1_8_signalHMIStateChange, 1u, 8u,
+DEFINE_PAS_2(nc_host_hmi_request_screen_window_identifier, 1u, 6u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_3(nc_host_hmi_request_hmi_state, 1u, 7u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_hmi_reply_hmi_state_transition, 1u, 9u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_3(nc_host_hmi_reply_screen_change, 1u, 10u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_hmi_reply_screen_theme_change, 1u, 12u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_hmi_signal_navigation_hmi_ready, 1u, 14u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_2(nc_host_hmi_signal_hmi_state_change, 1u, 8u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_4(mock_pas_1_11_signalScreenChange, 1u, 11u,
+DEFINE_PAS_4(nc_host_hmi_signal_screen_change, 1u, 11u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_4_3, 4u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_6_3, 6u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_7_3, 7u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_7_4, 7u, 4u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_8_3, 8u, 3u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_8_5, 8u, 5u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_8_6, 8u, 6u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_8_11, 8u, 11u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_9_3, 9u, 3u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_2(mock_pas_10_3, 10u, 3u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_2(mock_pas_10_4_requestAudioOutSourceDescriptor, 10u, 4u,
+DEFINE_PAS_1(nc_host_hardkey_subscribe, 4u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_logging_request_log_buffer_sizes, 6u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_i18n_subscribe, 7u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_i18n_request_internationalization_settings, 7u, 4u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_vehicle_subscribe, 8u, 3u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_vehicle_request_day_night_status, 8u, 5u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_vehicle_request_day_night_setting, 8u, 6u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_vehicle_request_vehicle_identification_number, 8u, 11u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_gps_subscribe, 9u, 3u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_2(nc_host_audio_subscribe_audio_state, 10u, 3u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_2(nc_host_audio_request_audio_out_source_descriptor, 10u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_10_5_requestAudioInSourceDescriptor, 10u, 5u,
+DEFINE_PAS_2(nc_host_audio_request_audio_in_source_descriptor, 10u, 5u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_10_6_requestAudioSourceAllocation, 10u, 6u,
+DEFINE_PAS_2(nc_host_audio_request_audio_source_allocation, 10u, 6u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_10_7_requestAudioSourcePreparation, 10u, 7u,
+DEFINE_PAS_2(nc_host_audio_request_audio_source_preparation, 10u, 7u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_10_8_signalDeallocateAudioSource, 10u, 8u,
+DEFINE_PAS_1(nc_host_audio_signal_deallocate_audio_source, 10u, 8u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_10_9_replyAudioSourceDeactivation, 10u, 9u,
+DEFINE_PAS_3(nc_host_audio_reply_audio_source_deactivation, 10u, 9u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_10_10, 10u, 10u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_10_11_requestAudioSourceStatus, 10u, 11u,
+DEFINE_PAS_1(nc_host_audio_signal_audio_source_availability, 10u, 10u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_2(nc_host_audio_request_audio_source_status, 10u, 11u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_10_12_signalEnableServerAudioSource, 10u, 12u,
+DEFINE_PAS_1(nc_host_audio_signal_enable_server_audio_source, 10u, 12u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_10_13_signalDisableServerAudioSource, 10u, 13u,
+DEFINE_PAS_1(nc_host_audio_signal_disable_server_audio_source, 10u, 13u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_10_14_requestAudioSourceEnableStatus, 10u, 14u,
+DEFINE_PAS_2(nc_host_audio_request_audio_source_enable_status, 10u, 14u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_10_15_signalAudioSourceComfortVolume, 10u, 15u,
+DEFINE_PAS_2(nc_host_audio_signal_audio_source_comfort_volume, 10u, 15u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_10_16_signalEnableAudioSourceVolumeSeparation, 10u, 16u,
+DEFINE_PAS_1(nc_host_audio_signal_enable_audio_source_volume_separation, 10u, 16u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_10_17_signalDisableAudioSourceVolumeSeparation, 10u, 17u,
+DEFINE_PAS_1(nc_host_audio_signal_disable_audio_source_volume_separation, 10u, 17u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_10_18_requestAudioSourceVolumeSeparationStatus, 10u, 18u,
+DEFINE_PAS_2(nc_host_audio_request_audio_source_volume_separation_status, 10u, 18u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_10_19, 10u, 19u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_3(mock_pas_10_20_requestAudioSourceVolumeChange, 10u, 20u,
+DEFINE_PAS_2(nc_host_audio_request_audio_source_volume, 10u, 19u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_3(nc_host_audio_request_audio_source_volume_change, 10u, 20u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_12_8, 12u, 8u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_13_3, 13u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_13_4, 13u, 4u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_13_5, 13u, 5u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_13_6, 13u, 6u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_13_7, 13u, 7u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_13_8, 13u, 8u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_13_9, 13u, 9u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_17_5, 17u, 5u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_diagnosis_request_vehicle_brand, 12u, 8u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_nav_diagnosis_subscribe_driver_distraction_status, 13u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_nav_diagnosis_request_driver_distraction_status, 13u, 4u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_nav_diagnosis_request_static_setting_11fc, 13u, 5u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_nav_diagnosis_request_static_setting_11fb, 13u, 6u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_nav_diagnosis_request_static_setting_11fa, 13u, 7u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_nav_diagnosis_request_static_setting_11fe, 13u, 8u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_nav_diagnosis_request_static_setting_11fd, 13u, 9u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_cluster_subscribe, 17u, 5u, MOCK_CALLBACK_CRITICAL)
 DEFINE_PAS_1(mock_pas_17_4_raw, 17u, 4u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_17_6, 17u, 6u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_17_7, 17u, 7u, MOCK_CALLBACK_CRITICAL)
-DEFINE_PAS_1(mock_pas_19_5, 19u, 5u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_0(nc_host_cluster_request_or_signal_no_args, 17u, 6u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_cluster_request_tbt_settings_enable_status, 17u, 7u, MOCK_CALLBACK_CRITICAL)
+DEFINE_PAS_1(nc_host_data_exchange_request_supported_transport_means_and_buffer_sizes, 19u, 5u, MOCK_CALLBACK_OPTIONAL)
 DEFINE_PAS_3(mock_pas_19_6_raw, 19u, 6u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_19_7_requestSendDataExchangeObjectProducedByServer,
+DEFINE_PAS_3(nc_host_data_exchange_request_send_data_exchange_object_produced_by_server,
              19u, 7u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_20_3, 20u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_20_4, 20u, 4u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_20_8, 20u, 8u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_20_9, 20u, 9u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_20_6_releaseConnectionForService, 20u, 6u,
+DEFINE_PAS_1(nc_host_connectivity_subscribe, 20u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_2(nc_host_connectivity_request_connectivity_status, 20u, 4u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_2(nc_host_connectivity_request_connection_device_info, 20u, 8u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_2(nc_host_connectivity_request_signal_strength, 20u, 9u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_connectivity_release_connection_for_service, 20u, 6u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_25_3, 25u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_25_4, 25u, 4u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_25_7_replyAlphabetGet, 25u, 7u,
+DEFINE_PAS_0(nc_host_voice_initialization_no_op, 25u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_0(nc_host_voice_signal_or_request_route_guidance_state, 25u, 4u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_3(nc_host_voice_reply_alphabet_get, 25u, 7u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_8_replyDestinationAdbEntrySet, 25u, 8u,
+DEFINE_PAS_2(nc_host_voice_reply_destination_adb_entry_set, 25u, 8u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_9_replyDestinationHomeSet, 25u, 9u,
+DEFINE_PAS_2(nc_host_voice_reply_destination_home_set, 25u, 9u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_10_replyDestinationWorkSet, 25u, 10u,
+DEFINE_PAS_2(nc_host_voice_reply_destination_work_set, 25u, 10u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_25_11_replyDestinationStatus, 25u, 11u,
+DEFINE_PAS_3(nc_host_voice_reply_destination_status, 25u, 11u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_25_12_replyFileFromDBIDGet, 25u, 12u,
+DEFINE_PAS_3(nc_host_voice_reply_file_from_dbid_get, 25u, 12u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_15_replyGuidanceInstructionsRepeat, 25u, 15u,
+DEFINE_PAS_2(nc_host_voice_reply_guidance_instructions_repeat, 25u, 15u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_16_replyGuidanceStop, 25u, 16u,
+DEFINE_PAS_2(nc_host_voice_reply_guidance_stop, 25u, 16u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_17_replyGuidanceStart, 25u, 17u,
+DEFINE_PAS_2(nc_host_voice_reply_guidance_start, 25u, 17u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_25_18_replyLocationCheck, 25u, 18u,
+DEFINE_PAS_3(nc_host_voice_reply_location_check, 25u, 18u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_25_23, 25u, 23u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_25_24, 25u, 24u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_25, 25u, 25u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_4(mock_pas_25_22_replyPOISet, 25u, 22u,
+DEFINE_PAS_3(nc_host_voice_reply_route_guidance_status, 25u, 23u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_3(nc_host_voice_reply_states_settings, 25u, 24u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_2(nc_host_voice_reply_tef_file, 25u, 25u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_4(nc_host_voice_reply_poi_set, 25u, 22u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_26_replyChangeRouteGuidance, 25u, 26u,
+DEFINE_PAS_2(nc_host_voice_reply_change_route_guidance, 25u, 26u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_27_replyChangeMapDirection, 25u, 27u,
+DEFINE_PAS_2(nc_host_voice_reply_change_map_direction, 25u, 27u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_28_replyChangeMapDimensionalView, 25u, 28u,
+DEFINE_PAS_2(nc_host_voice_reply_change_map_dimensional_view, 25u, 28u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_29_replyZoomIn, 25u, 29u,
+DEFINE_PAS_2(nc_host_voice_reply_zoom_in, 25u, 29u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_30_replyZoomOut, 25u, 30u,
+DEFINE_PAS_2(nc_host_voice_reply_zoom_out, 25u, 30u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_25_34_replySetDestination, 25u, 34u,
+DEFINE_PAS_3(nc_host_voice_reply_set_destination, 25u, 34u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_26_3, 26u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_26_5, 26u, 5u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_24_4_internalDeinitialize, 24u, 4u,
+DEFINE_PAS_1(nc_host_phone_subscribe, 26u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_phone_request_phone_call_availability, 26u, 5u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_tts_internal_deinitialize, 24u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_29_3, 29u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_30_3, 30u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_31_3, 31u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_parking_subscribe, 29u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_apogee_subscribe, 30u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_agw_subscribe, 31u, 3u, MOCK_CALLBACK_OPTIONAL)
 DEFINE_PAS_1(mock_pas_31_6_raw, 31u, 6u, MOCK_CALLBACK_OPTIONAL)
 DEFINE_PAS_5(mock_pas_31_10_raw, 31u, 10u, MOCK_CALLBACK_OPTIONAL)
 DEFINE_PAS_3(mock_pas_31_13_raw, 31u, 13u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_31_8_replyGraphicalWeatherMapMode, 31u, 8u,
+DEFINE_PAS_2(nc_host_agw_reply_graphical_weather_map_mode, 31u, 8u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_root_9_requestUserStorage, UINT32_MAX, 9u,
+DEFINE_PAS_2(nc_host_root_request_user_storage, UINT32_MAX, 9u,
              MOCK_CALLBACK_OPTIONAL)
 
 /* Concrete QR39.6/QR40 fixed-word dormant seams. */
-DEFINE_PAS_1(mock_pas_20_5_signalConnectionNeeded, 20u, 5u,
+DEFINE_PAS_1(nc_host_connectivity_signal_connection_needed, 20u, 5u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_25_5_signalMyDestDeletedEvent, 25u, 5u,
+DEFINE_PAS_0(nc_host_voice_signal_my_dest_deleted_event, 25u, 5u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_25_6_signalGUISelection, 25u, 6u,
+DEFINE_PAS_1(nc_host_voice_signal_gui_selection, 25u, 6u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_25_31_replyRouteGuidanceStatus, 25u, 31u,
+DEFINE_PAS_2(nc_host_voice_reply_route_guidance_status_completion, 25u, 31u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_25_32_signalTerminateVR, 25u, 32u,
+DEFINE_PAS_0(nc_host_voice_signal_terminate_vr, 25u, 32u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_25_33_signalInitiateVR, 25u, 33u,
+DEFINE_PAS_0(nc_host_voice_signal_initiate_vr, 25u, 33u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_31_4_replyEnterGraphicalWeatherMap, 31u, 4u,
+DEFINE_PAS_1(nc_host_agw_reply_enter_graphical_weather_map, 31u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_31_5_replyExitGraphicalWeatherMap, 31u, 5u,
+DEFINE_PAS_1(nc_host_agw_reply_exit_graphical_weather_map, 31u, 5u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_31_7_requestAgwPanningMode, 31u, 7u,
+DEFINE_PAS_2(nc_host_agw_request_agw_panning_mode, 31u, 7u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_31_9_requestAgwSetFilter, 31u, 9u,
+DEFINE_PAS_2(nc_host_agw_request_agw_set_filter, 31u, 9u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_3(mock_pas_31_11_requestAgwSetRadiusOfInterest, 31u, 11u,
+DEFINE_PAS_3(nc_host_agw_request_agw_set_radius_of_interest, 31u, 11u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_31_14_signalExitGraphicalWeatherMap, 31u, 14u,
+DEFINE_PAS_0(nc_host_agw_signal_exit_graphical_weather_map, 31u, 14u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_14_3_subscribe, 14u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_14_4_requestStatus, 14u, 4u,
+DEFINE_PAS_1(nc_host_rds_subscribe, 14u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_rds_request_status, 14u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_14_5_requestSelectionFilterCapabilities, 14u, 5u,
+DEFINE_PAS_1(nc_host_rds_request_selection_filter_capabilities, 14u, 5u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_14_6_requestSelectableFilterList, 14u, 6u,
+DEFINE_PAS_1(nc_host_rds_request_selectable_filter_list, 14u, 6u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_27_2_adapterReady, 27u, 2u,
+DEFINE_PAS_0(nc_host_tpeg_adapter_ready, 27u, 2u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_27_3_subscribe, 27u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_27_4_requestStationList, 27u, 4u,
+DEFINE_PAS_1(nc_host_tpeg_subscribe, 27u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_1(nc_host_tpeg_request_station_list, 27u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_9_4_requestGPSPosition, 9u, 4u,
+DEFINE_PAS_1(nc_host_gps_request_gps_position, 9u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_root_2_subscribe, UINT32_MAX, 2u,
+DEFINE_PAS_1(nc_host_root_subscribe, UINT32_MAX, 2u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_root_4_signalDisableWatchdog, UINT32_MAX, 4u,
+DEFINE_PAS_0(nc_host_root_signal_disable_watchdog, UINT32_MAX, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_root_7_replyShutdown, UINT32_MAX, 7u,
+DEFINE_PAS_1(nc_host_root_reply_shutdown, UINT32_MAX, 7u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_root_8_requestPowerStatus, UINT32_MAX, 8u,
+DEFINE_PAS_1(nc_host_root_request_power_status, UINT32_MAX, 8u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_12_3_subscribeDiagnosisDriverDistractionStatus, 12u, 3u,
+DEFINE_PAS_1(nc_host_diagnosis_subscribe_diagnosis_driver_distraction_status, 12u, 3u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_12_4_requestDiagnosisDriverDistractionStatus, 12u, 4u,
+DEFINE_PAS_1(nc_host_diagnosis_request_diagnosis_driver_distraction_status, 12u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_12_7_signalErrorCode, 12u, 7u,
+DEFINE_PAS_2(nc_host_diagnosis_signal_error_code, 12u, 7u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_23_3_subscribe, 23u, 3u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_21_2_adapterReady, 21u, 2u,
+DEFINE_PAS_1(nc_host_rotary_subscribe, 23u, 3u, MOCK_CALLBACK_OPTIONAL)
+DEFINE_PAS_0(nc_host_live_traffic_adapter_ready, 21u, 2u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_21_3_subscribe, 21u, 3u,
+DEFINE_PAS_1(nc_host_live_traffic_subscribe, 21u, 3u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_21_5_signalStartAuthentication, 21u, 5u,
+DEFINE_PAS_0(nc_host_live_traffic_signal_start_authentication, 21u, 5u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_28_2_adapterReady, 28u, 2u,
+DEFINE_PAS_0(nc_host_vics_adapter_ready, 28u, 2u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_0(mock_pas_28_3_subscribe, 28u, 3u,
+DEFINE_PAS_0(nc_host_vics_subscribe, 28u, 3u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_28_4_requestTuneToFrequency, 28u, 4u,
+DEFINE_PAS_2(nc_host_vics_request_tune_to_frequency, 28u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_4(mock_pas_19_10_requestOfferDataExchangeObjectProducedByClient,
+DEFINE_PAS_4(nc_host_data_exchange_request_offer_data_exchange_object_produced_by_client,
              19u, 10u, MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_8_4_subscribeCANMessage, 8u, 4u,
+DEFINE_PAS_2(nc_host_vehicle_subscribe_can_message, 8u, 4u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_8_7_requestOdometer, 8u, 7u,
+DEFINE_PAS_1(nc_host_vehicle_request_odometer, 8u, 7u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_8_8_requestVehicleSpeedDisplayedOnICD, 8u, 8u,
+DEFINE_PAS_1(nc_host_vehicle_request_vehicle_speed_displayed_on_icd, 8u, 8u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_8_9_requestCANMessageSynchronization, 8u, 9u,
+DEFINE_PAS_2(nc_host_vehicle_request_can_message_synchronization, 8u, 9u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_1(mock_pas_8_12_requestIgnitionStatus, 8u, 12u,
+DEFINE_PAS_1(nc_host_vehicle_request_ignition_status, 8u, 12u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_30_6_requestApogeeRemoveCollectionMBR, 30u, 6u,
+DEFINE_PAS_2(nc_host_apogee_request_apogee_remove_collection_mbr, 30u, 6u,
              MOCK_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(mock_pas_13_12_replyStatusNavigationDatabase, 13u, 12u,
+DEFINE_PAS_2(nc_host_nav_diagnosis_reply_status_navigation_database, 13u, 12u,
              MOCK_CALLBACK_OPTIONAL)
 
-uint32_t mock_pas_31_12_requestWsaSetAlertLocation(
+uint32_t nc_host_agw_request_wsa_set_alert_location(
     void *proxy, uint32_t handle, MockPasSxmLocation location,
     uint32_t radius, uint32_t radius_unit)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, MockPasSxmLocation,
                                  uint32_t, uint32_t);
-    Callback callback = (Callback)mock_pas_slot(proxy, 12u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 12u);
     uint32_t status = callback != NULL
                           ? callback(proxy, handle, location, radius,
                                      radius_unit)
                           : 1u;
-    return mock_pas_status(31u, 12u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(31u, 12u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-static uint32_t mock_pas_apogee_set_mbr(
+static uint32_t nc_host_apogee_set_mbr(
     void *proxy, uint32_t slot, uint32_t handle, uint16_t type,
     MockPasSxmMbr mbr, uint32_t collection_index)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint16_t,
                                  MockPasSxmMbr, uint32_t);
-    Callback callback = (Callback)mock_pas_slot(proxy, slot);
+    Callback callback = (Callback)nc_host_callback_at(proxy, slot);
     uint32_t status = callback != NULL
                           ? callback(proxy, handle, type, mbr,
                                      collection_index)
                           : 1u;
-    return mock_pas_status(30u, slot, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(30u, slot, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_30_4_requestApogeeSetTypeCollectionMBR(
+uint32_t nc_host_apogee_request_apogee_set_type_collection_mbr(
     void *proxy, uint32_t handle, uint16_t type, MockPasSxmMbr mbr,
     uint32_t collection_index)
 {
-    return mock_pas_apogee_set_mbr(proxy, 4u, handle, type, mbr,
+    return nc_host_apogee_set_mbr(proxy, 4u, handle, type, mbr,
                                    collection_index);
 }
 
-uint32_t mock_pas_30_5_requestApogeeSetTypeExtractionMBR(
+uint32_t nc_host_apogee_request_apogee_set_type_extraction_mbr(
     void *proxy, uint32_t handle, uint16_t type, MockPasSxmMbr mbr,
     uint32_t collection_index)
 {
-    return mock_pas_apogee_set_mbr(proxy, 5u, handle, type, mbr,
+    return nc_host_apogee_set_mbr(proxy, 5u, handle, type, mbr,
                                    collection_index);
 }
 
-uint32_t mock_pas_29_4_requestParkingSetCollectionMBR(
+uint32_t nc_host_parking_request_parking_set_collection_mbr(
     void *proxy, uint32_t handle, MockPasSxmMbr mbr,
     uint16_t collection_index)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, MockPasSxmMbr, uint16_t);
-    Callback callback = (Callback)mock_pas_slot(proxy, 4u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 4u);
     uint32_t status = callback != NULL
                           ? callback(proxy, handle, mbr, collection_index)
                           : 1u;
-    return mock_pas_status(29u, 4u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(29u, 4u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_root_11_supplierSpecificServerFunction(
+uint32_t nc_host_root_supplier_specific_server_function(
     void *proxy, uint32_t word0, uint32_t word1, const void *opaque)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, const void *);
-    Callback callback = (Callback)mock_pas_slot(proxy, 11u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 11u);
     uint32_t status = callback != NULL
                           ? callback(proxy, word0, word1, opaque)
                           : 1u;
 
     /* The concrete consumer only logs the pointer during this call. */
-    return mock_pas_status(UINT32_MAX, 11u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(UINT32_MAX, 11u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_32_3_replyEWSArea(void *proxy, uint32_t handle,
+uint32_t nc_host_ews_reply_ews_area(void *proxy, uint32_t handle,
                                     const void *area_10)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, const void *);
     uint8_t owned[MOCK_PAS_EWS_AREA_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 3u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 3u);
     uint32_t status = 1u;
 
     if (callback != NULL && area_10 != NULL) {
         memcpy(owned, area_10, sizeof(owned));
         status = callback(proxy, handle, owned);
     }
-    return mock_pas_status(32u, 3u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(32u, 3u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_14_7_signalSelectionFilter(void *proxy, uint32_t count,
+uint32_t nc_host_rds_signal_selection_filter(void *proxy, uint32_t count,
                                              const void *filters_6x20)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, const void *);
@@ -454,7 +454,7 @@ uint32_t mock_pas_14_7_signalSelectionFilter(void *proxy, uint32_t count,
                                 ? count
                                 : MOCK_PAS_RDS_FILTER_MAX_RECORDS;
     const void *argument = NULL;
-    Callback callback = (Callback)mock_pas_slot(proxy, 7u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 7u);
     uint32_t status = 1u;
 
     if (callback != NULL && (copied_count == 0u || filters_6x20 != NULL)) {
@@ -465,32 +465,32 @@ uint32_t mock_pas_14_7_signalSelectionFilter(void *proxy, uint32_t count,
         }
         status = callback(proxy, count, argument);
     }
-    return mock_pas_status(14u, 7u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(14u, 7u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_27_5_signalSelectStation(void *proxy,
+uint32_t nc_host_tpeg_signal_select_station(void *proxy,
                                            const void *station_0x30)
 {
     typedef uint32_t (*Callback)(void *, const void *);
     uint8_t owned[MOCK_PAS_TPEG_STATION_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 5u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 5u);
     uint32_t status = 1u;
 
     if (callback != NULL && station_0x30 != NULL) {
         memcpy(owned, station_0x30, sizeof(owned));
         status = callback(proxy, owned);
     }
-    return mock_pas_status(27u, 5u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(27u, 5u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_27_6_signalSelectStationList(
+uint32_t nc_host_tpeg_signal_select_station_list(
     void *proxy, uint32_t count, const void *stations_0x30x4)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, const void *);
     uint8_t owned[MOCK_PAS_TPEG_STATION_SIZE *
                   MOCK_PAS_TPEG_STATION_MAX_RECORDS];
     const void *argument = NULL;
-    Callback callback = (Callback)mock_pas_slot(proxy, 6u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 6u);
     uint32_t status = 1u;
 
     if (callback != NULL && count <= MOCK_PAS_TPEG_STATION_MAX_RECORDS &&
@@ -502,73 +502,73 @@ uint32_t mock_pas_27_6_signalSelectStationList(
         }
         status = callback(proxy, count, argument);
     }
-    return mock_pas_status(27u, 6u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(27u, 6u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_9_5_signalMapMatchedPosition(void *proxy,
+uint32_t nc_host_gps_signal_map_matched_position(void *proxy,
                                                const void *position_0x38)
 {
     typedef uint32_t (*Callback)(void *, const void *);
     uint8_t owned[MOCK_PAS_MAP_MATCHED_POSITION_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 5u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 5u);
     uint32_t status = 1u;
 
     if (callback != NULL && position_0x38 != NULL) {
         memcpy(owned, position_0x38, sizeof(owned));
         status = callback(proxy, owned);
     }
-    return mock_pas_status(9u, 5u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(9u, 5u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_28_5_signalVICSWideEmergencyWarning(
+uint32_t nc_host_vics_signal_vics_wide_emergency_warning(
     void *proxy, uint32_t word0, uint32_t word1, uint32_t word2,
     uint32_t minute, const void *warning_0x180)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, uint32_t,
                                  uint32_t, const void *);
     uint8_t owned[MOCK_PAS_VICS_WARNING_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 5u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 5u);
     uint32_t status = 1u;
 
     if (callback != NULL && warning_0x180 != NULL) {
         memcpy(owned, warning_0x180, sizeof(owned));
         status = callback(proxy, word0, word1, word2, minute, owned);
     }
-    return mock_pas_status(28u, 5u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(28u, 5u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_8_10_signalCANMessage(void *proxy, uint32_t word0,
+uint32_t nc_host_vehicle_signal_can_message(void *proxy, uint32_t word0,
                                         uint32_t word1,
                                         const void *payload_8)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, const void *);
     uint8_t owned[MOCK_PAS_CAN_MESSAGE_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 10u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 10u);
     uint32_t status = 1u;
 
     if (callback != NULL && payload_8 != NULL) {
         memcpy(owned, payload_8, sizeof(owned));
         status = callback(proxy, word0, word1, owned);
     }
-    return mock_pas_status(8u, 10u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(8u, 10u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_7_5_replyTimeZoneInformation(
+uint32_t nc_host_i18n_reply_time_zone_information(
     void *proxy, uint32_t handle, const void *timezone_0x22c)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, const void *);
     uint8_t owned[MOCK_PAS_TIMEZONE_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 5u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 5u);
     uint32_t status = 1u;
 
     if (callback != NULL && timezone_0x22c != NULL) {
         memcpy(owned, timezone_0x22c, sizeof(owned));
         status = callback(proxy, handle, owned);
     }
-    return mock_pas_status(7u, 5u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(7u, 5u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_6_4_signalWriteLogData(void *proxy,
+uint32_t nc_host_logging_signal_write_log_data(void *proxy,
                                         uint32_t methods,
                                         uint32_t reserved_ignored,
                                         uint32_t encoding,
@@ -580,16 +580,16 @@ uint32_t mock_pas_6_4_signalWriteLogData(void *proxy,
                                            uint32_t, uint8_t, uint32_t,
                                            const void *);
     SignalWriteLogData callback =
-        (SignalWriteLogData)mock_pas_slot(proxy, 4u);
+        (SignalWriteLogData)nc_host_callback_at(proxy, 4u);
     uint32_t status = callback != NULL
                           ? callback(proxy, methods, reserved_ignored,
                                      encoding, severity, byte_count, text)
                           : 1u;
 
-    return mock_pas_status(6u, 4u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(6u, 4u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_25_19_replyLocationGet(
+uint32_t nc_host_voice_reply_location_get(
     void *proxy, uint32_t handle_ignored, uint32_t result,
     const uint32_t location_types[7], const char *location_ids,
     const char *location_values, const char *orthographic,
@@ -599,17 +599,17 @@ uint32_t mock_pas_25_19_replyLocationGet(
         void *, uint32_t, uint32_t, const uint32_t *, const char *,
         const char *, const char *, const char *);
     ReplyLocationGet callback =
-        (ReplyLocationGet)mock_pas_slot(proxy, 19u);
+        (ReplyLocationGet)nc_host_callback_at(proxy, 19u);
     uint32_t status = callback != NULL
                           ? callback(proxy, handle_ignored, result,
                                      location_types, location_ids,
                                      location_values, orthographic, phonetic)
                           : 1u;
 
-    return mock_pas_status(25u, 19u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(25u, 19u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-static void mock_pas_copy_vr_string(char owned[MOCK_PAS_VR_STRING_SIZE],
+static void nc_host_copy_voice_string(char owned[MOCK_PAS_VR_STRING_SIZE],
                                     const char *source)
 {
     size_t length = 0u;
@@ -621,73 +621,73 @@ static void mock_pas_copy_vr_string(char owned[MOCK_PAS_VR_STRING_SIZE],
     owned[length] = '\0';
 }
 
-uint32_t mock_pas_25_13_replyFileGet(void *proxy, uint32_t handle,
+uint32_t nc_host_voice_reply_file_get(void *proxy, uint32_t handle,
                                     uint32_t result, const char *filename)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, const char *);
     char owned[MOCK_PAS_VR_STRING_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 13u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 13u);
     uint32_t status = 1u;
 
     if (callback != NULL && filename != NULL) {
-        mock_pas_copy_vr_string(owned, filename);
+        nc_host_copy_voice_string(owned, filename);
         status = callback(proxy, handle, result, owned);
     }
-    return mock_pas_status(25u, 13u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(25u, 13u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_25_20_replyLocationSet(
+uint32_t nc_host_voice_reply_location_set(
     void *proxy, uint32_t handle, uint32_t result, uint32_t location_status,
     const char *location, uint32_t location_type, uint32_t entries)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, uint32_t,
                                  const char *, uint32_t, uint32_t);
     char owned[MOCK_PAS_VR_STRING_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 20u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 20u);
     uint32_t status = 1u;
 
     if (callback != NULL && location != NULL) {
-        mock_pas_copy_vr_string(owned, location);
+        nc_host_copy_voice_string(owned, location);
         status = callback(proxy, handle, result, location_status, owned,
                           location_type, entries);
     }
-    return mock_pas_status(25u, 20u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(25u, 20u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_25_21_replyNextAvailableLocationGet(
+uint32_t nc_host_voice_reply_next_available_location_get(
     void *proxy, uint32_t handle, uint32_t result,
     const uint32_t location_types[MOCK_PAS_VR_LOCATION_TYPE_COUNT])
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t,
                                  const uint32_t *);
     uint32_t owned[MOCK_PAS_VR_LOCATION_TYPE_COUNT];
-    Callback callback = (Callback)mock_pas_slot(proxy, 21u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 21u);
     uint32_t status = 1u;
 
     if (callback != NULL && location_types != NULL) {
         memcpy(owned, location_types, sizeof(owned));
         status = callback(proxy, handle, result, owned);
     }
-    return mock_pas_status(25u, 21u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(25u, 21u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_31_15_signalWsaWarningPopup(
+uint32_t nc_host_agw_signal_wsa_warning_popup(
     void *proxy, uint32_t alert_id, uint32_t is_manual,
     const void *alert_info_0x2d0)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, const void *);
     uint8_t owned[MOCK_PAS_WSA_ALERT_INFO_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 15u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 15u);
     uint32_t status = 1u;
 
     if (callback != NULL && alert_info_0x2d0 != NULL) {
         memcpy(owned, alert_info_0x2d0, sizeof(owned));
         status = callback(proxy, alert_id, is_manual, owned);
     }
-    return mock_pas_status(31u, 15u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(31u, 15u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_1_13_signalPressStateAnimation(void *proxy,
+uint32_t nc_host_hmi_signal_press_state_animation(void *proxy,
                                                  uint32_t press_state,
                                                  uint32_t unused_r2,
                                                  uint32_t x,
@@ -696,67 +696,67 @@ uint32_t mock_pas_1_13_signalPressStateAnimation(void *proxy,
     typedef uint32_t (*SignalPressStateAnimation)(void *, uint32_t, uint32_t,
                                                    uint32_t, uint32_t);
     SignalPressStateAnimation callback =
-        (SignalPressStateAnimation)mock_pas_slot(proxy, 13u);
+        (SignalPressStateAnimation)nc_host_callback_at(proxy, 13u);
     uint32_t status = callback != NULL
                           ? callback(proxy, press_state, unused_r2, x, y)
                           : 1u;
 
-    return mock_pas_status(1u, 13u, status, MOCK_CALLBACK_CRITICAL);
+    return nc_host_record_callback_status(1u, 13u, status, MOCK_CALLBACK_CRITICAL);
 }
 
-uint32_t mock_pas_7_6(void *proxy, const void *timezone_0x22c)
+uint32_t nc_host_i18n_signal_time_zone(void *proxy, const void *timezone_0x22c)
 {
     typedef uint32_t (*Callback)(void *, const void *);
     uint8_t owned[MOCK_PAS_TIMEZONE_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 6u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 6u);
     uint32_t status = 1u;
 
     if (callback != NULL && timezone_0x22c != NULL) {
         memcpy(owned, timezone_0x22c, sizeof(owned));
         status = callback(proxy, owned);
     }
-    return mock_pas_status(7u, 6u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(7u, 6u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_12_5(void *proxy, int32_t handle, const void *version4)
+uint32_t nc_host_diagnosis_reply_software_component_version(void *proxy, int32_t handle, const void *version4)
 {
     typedef uint32_t (*Callback)(void *, int32_t, const void *);
     uint8_t owned[MOCK_PAS_SOFTWARE_VERSION_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 5u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 5u);
     uint32_t status = 1u;
 
     if (callback != NULL && version4 != NULL) {
         memcpy(owned, version4, sizeof(owned));
         status = callback(proxy, handle, owned);
     }
-    return mock_pas_status(12u, 5u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(12u, 5u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_12_6(void *proxy, int32_t handle, uint16_t supplier)
+uint32_t nc_host_diagnosis_reply_software_component_supplier_identification(void *proxy, int32_t handle, uint16_t supplier)
 {
     typedef uint32_t (*Callback)(void *, int32_t, uint16_t);
-    Callback callback = (Callback)mock_pas_slot(proxy, 6u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 6u);
     uint32_t status = callback != NULL ? callback(proxy, handle, supplier) : 1u;
 
-    return mock_pas_status(12u, 6u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(12u, 6u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_13_13(void *proxy, int32_t handle, uint32_t packed_status)
+uint32_t nc_host_nav_diagnosis_reply_navigation_database_status(void *proxy, int32_t handle, uint32_t packed_status)
 {
     typedef uint32_t (*Callback)(void *, int32_t, uint32_t);
-    Callback callback = (Callback)mock_pas_slot(proxy, 13u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 13u);
     uint32_t status = callback != NULL
                           ? callback(proxy, handle, packed_status)
                           : 1u;
 
-    return mock_pas_status(13u, 13u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(13u, 13u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_13_11(void *proxy, int32_t handle, const wchar_t *text)
+uint32_t nc_host_nav_diagnosis_reply_navigation_database_version_string(void *proxy, int32_t handle, const wchar_t *text)
 {
     typedef uint32_t (*Callback)(void *, int32_t, const wchar_t *);
     wchar_t owned[MOCK_PAS_DIAG_WIDE_TEXT_MAX + 1u];
-    Callback callback = (Callback)mock_pas_slot(proxy, 11u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 11u);
     size_t length = 0u;
     uint32_t status = 1u;
 
@@ -768,30 +768,30 @@ uint32_t mock_pas_13_11(void *proxy, int32_t handle, const wchar_t *text)
         owned[length] = L'\0';
         status = callback(proxy, handle, owned);
     }
-    return mock_pas_status(13u, 11u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(13u, 11u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_17_3(void *proxy, const void *display_data_0xa5c)
+uint32_t nc_host_cluster_signal_instrument_cluster_display_data(void *proxy, const void *display_data_0xa5c)
 {
     typedef uint32_t (*Callback)(void *, const void *);
     uint8_t owned[MOCK_CLUSTER_RECORD_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 3u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 3u);
     uint32_t status = 1u;
 
     if (callback != NULL && display_data_0xa5c != NULL) {
         memcpy(owned, display_data_0xa5c, sizeof(owned));
         status = callback(proxy, owned);
     }
-    return mock_pas_status(17u, 3u, status, MOCK_CALLBACK_CRITICAL);
+    return nc_host_record_callback_status(17u, 3u, status, MOCK_CALLBACK_CRITICAL);
 }
 
-static uint32_t mock_pas_data_exchange(void *proxy, uint32_t slot,
+static uint32_t nc_host_data_exchange_at(void *proxy, uint32_t slot,
                                        uint16_t count, const uint32_t *types)
 {
     typedef uint32_t (*Callback)(void *, uint16_t, const uint32_t *);
     uint32_t owned[MOCK_PAS_DATA_EXCHANGE_MAX_TYPES];
     const uint32_t *argument = NULL;
-    Callback callback = (Callback)mock_pas_slot(proxy, slot);
+    Callback callback = (Callback)nc_host_callback_at(proxy, slot);
     uint32_t status = 1u;
 
     if (callback != NULL && count <= MOCK_PAS_DATA_EXCHANGE_MAX_TYPES &&
@@ -802,25 +802,25 @@ static uint32_t mock_pas_data_exchange(void *proxy, uint32_t slot,
         }
         status = callback(proxy, count, argument);
     }
-    return mock_pas_status(19u, slot, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(19u, slot, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_19_3(void *proxy, uint16_t count, const uint32_t *types)
+uint32_t nc_host_data_exchange_produce_data_exchange_object_types(void *proxy, uint16_t count, const uint32_t *types)
 {
-    return mock_pas_data_exchange(proxy, 3u, count, types);
+    return nc_host_data_exchange_at(proxy, 3u, count, types);
 }
 
-uint32_t mock_pas_19_4(void *proxy, uint16_t count, const uint32_t *types)
+uint32_t nc_host_data_exchange_consume_data_exchange_object_types(void *proxy, uint16_t count, const uint32_t *types)
 {
-    return mock_pas_data_exchange(proxy, 4u, count, types);
+    return nc_host_data_exchange_at(proxy, 4u, count, types);
 }
 
-uint32_t mock_pas_root_10(void *proxy, uint32_t thread_id,
+uint32_t nc_host_root_signal_thread_status(void *proxy, uint32_t thread_id,
                          const wchar_t *thread_name, uint32_t thread_status)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, const wchar_t *, uint32_t);
     wchar_t owned[MOCK_THREAD_NAME_LIMIT + 1u];
-    Callback callback = (Callback)mock_pas_slot(proxy, 10u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 10u);
     size_t length = 0u;
     uint32_t status = 1u;
 
@@ -834,21 +834,21 @@ uint32_t mock_pas_root_10(void *proxy, uint32_t thread_id,
         owned[length] = L'\0';
         status = callback(proxy, thread_id, owned, thread_status);
     }
-    return mock_pas_status(UINT32_MAX, 10u, status, MOCK_CALLBACK_CRITICAL);
+    return nc_host_record_callback_status(UINT32_MAX, 10u, status, MOCK_CALLBACK_CRITICAL);
 }
 
-uint32_t mock_pas_24_3_requestPlayTTS(void *proxy, uint32_t handle,
+uint32_t nc_host_tts_request_play_tts(void *proxy, uint32_t handle,
                                       uint32_t source, uint32_t text_type,
                                       const char *tts_text)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, uint32_t,
                                  const char *);
     char owned[0x404];
-    Callback callback = (Callback)mock_pas_slot(proxy, 3u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 3u);
     size_t length = 0u;
     uint32_t status = 1u;
 
-    if (callback != NULL && mock_pas_cstr8_within(tts_text, 0x403u)) {
+    if (callback != NULL && nc_host_cstr8_within(tts_text, 0x403u)) {
         while (tts_text[length] != '\0') {
             ++length;
         }
@@ -857,17 +857,17 @@ uint32_t mock_pas_24_3_requestPlayTTS(void *proxy, uint32_t handle,
             status = callback(proxy, handle, source, text_type, owned);
         }
     }
-    return mock_pas_status(24u, 3u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(24u, 3u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_32_4_signalEWSAreaChange(void *proxy,
+uint32_t nc_host_ews_signal_ews_area_change(void *proxy,
                                            const void *old_area_10,
                                            const void *new_area_10)
 {
     typedef uint32_t (*Callback)(void *, const void *, const void *);
     uint8_t old_owned[MOCK_PAS_EWS_AREA_SIZE];
     uint8_t new_owned[MOCK_PAS_EWS_AREA_SIZE];
-    Callback callback = (Callback)mock_pas_slot(proxy, 4u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 4u);
     uint32_t status = 1u;
 
     if (callback != NULL && old_area_10 != NULL && new_area_10 != NULL) {
@@ -875,10 +875,10 @@ uint32_t mock_pas_32_4_signalEWSAreaChange(void *proxy,
         memcpy(new_owned, new_area_10, sizeof(new_owned));
         status = callback(proxy, old_owned, new_owned);
     }
-    return mock_pas_status(32u, 4u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(32u, 4u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_20_7_requestHTTPMessage(
+uint32_t nc_host_connectivity_request_http_message(
     void *proxy, uint32_t handle, uint32_t service, const wchar_t *url,
     uint32_t method, uint32_t request_size, const void *request_data,
     uint32_t response_size, const void *response_data)
@@ -886,7 +886,7 @@ uint32_t mock_pas_20_7_requestHTTPMessage(
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t,
                                  const wchar_t *, uint32_t, uint32_t,
                                  const void *, uint32_t, const void *);
-    Callback callback = (Callback)mock_pas_slot(proxy, 7u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 7u);
     uint32_t status = 1u;
 
     if (callback != NULL && url != NULL &&
@@ -895,19 +895,19 @@ uint32_t mock_pas_20_7_requestHTTPMessage(
         status = callback(proxy, handle, service, url, method, request_size,
                           request_data, response_size, response_data);
     }
-    return mock_pas_status(20u, 7u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(20u, 7u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_root_6_signalPersist(void *proxy, const wchar_t *path)
+uint32_t nc_host_root_signal_persist(void *proxy, const wchar_t *path)
 {
     typedef uint32_t (*Callback)(void *, const wchar_t *);
-    Callback callback = (Callback)mock_pas_slot(proxy, 6u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 6u);
     uint32_t status = callback != NULL && path != NULL
                           ? callback(proxy, path) : 1u;
-    return mock_pas_status(UINT32_MAX, 6u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(UINT32_MAX, 6u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_21_4_requestHTTPMessage(
+uint32_t nc_host_live_traffic_request_http_message(
     void *proxy, uint32_t handle, const wchar_t *url, uint32_t method,
     uint32_t request_size, const void *request_data,
     uint32_t response_size, const void *response_data)
@@ -915,7 +915,7 @@ uint32_t mock_pas_21_4_requestHTTPMessage(
     typedef uint32_t (*Callback)(void *, uint32_t, const wchar_t *, uint32_t,
                                  uint32_t, const void *, uint32_t,
                                  const void *);
-    Callback callback = (Callback)mock_pas_slot(proxy, 4u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 4u);
     uint32_t status = 1u;
 
     if (callback != NULL && url != NULL &&
@@ -924,31 +924,31 @@ uint32_t mock_pas_21_4_requestHTTPMessage(
         status = callback(proxy, handle, url, method, request_size,
                           request_data, response_size, response_data);
     }
-    return mock_pas_status(21u, 4u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(21u, 4u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_19_8_replyDataExchangeObjectRequiredByServer(
+uint32_t nc_host_data_exchange_reply_data_exchange_object_required_by_server(
     void *proxy, uint32_t handle, uint32_t object_id, uint32_t object_type,
     const wchar_t *description, uint64_t size, uint32_t reply_type)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, uint32_t,
                                  const wchar_t *, uint64_t, uint32_t);
-    Callback callback = (Callback)mock_pas_slot(proxy, 8u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 8u);
     uint32_t status = callback != NULL
                           ? callback(proxy, handle, object_id, object_type,
                                      description, size, reply_type)
                           : 1u;
-    return mock_pas_status(19u, 8u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(19u, 8u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-static uint32_t mock_pas_data_exchange_transfer(
+static uint32_t nc_host_data_exchange_transfer_at(
     void *proxy, uint32_t slot, uint32_t handle, uint32_t object_id,
     uint64_t size, const void *data, uint64_t total_size, uint32_t abort,
     uint64_t maximum_size)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, uint64_t,
                                  const void *, uint64_t, uint32_t);
-    Callback callback = (Callback)mock_pas_slot(proxy, slot);
+    Callback callback = (Callback)nc_host_callback_at(proxy, slot);
     uint32_t status = 1u;
 
     if (callback != NULL && size <= maximum_size &&
@@ -956,100 +956,100 @@ static uint32_t mock_pas_data_exchange_transfer(
         status = callback(proxy, handle, object_id, size, data, total_size,
                           abort);
     }
-    return mock_pas_status(19u, slot, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(19u, slot, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_19_9_requestSendDataExchangeObjectRequiredByServer(
+uint32_t nc_host_data_exchange_request_send_data_exchange_object_required_by_server(
     void *proxy, uint32_t handle, uint32_t object_id, uint64_t size,
     const void *data, uint64_t total_size, uint32_t abort)
 {
-    return mock_pas_data_exchange_transfer(proxy, 9u, handle, object_id,
+    return nc_host_data_exchange_transfer_at(proxy, 9u, handle, object_id,
                                            size, data, total_size, abort,
                                            0xfc0u);
 }
 
-uint32_t mock_pas_19_11_dataExchangeTransfer(
+uint32_t nc_host_data_exchange_data_exchange_transfer(
     void *proxy, uint32_t handle, uint32_t object_id, uint64_t size,
     const void *data, uint64_t total_size, uint32_t abort)
 {
-    return mock_pas_data_exchange_transfer(proxy, 11u, handle, object_id,
+    return nc_host_data_exchange_transfer_at(proxy, 11u, handle, object_id,
                                            size, data, total_size, abort,
                                            UINT32_MAX);
 }
 
-uint32_t mock_pas_13_10_replyApprovedMapVersions(
+uint32_t nc_host_nav_diagnosis_reply_approved_map_versions(
     void *proxy, int32_t handle, const wchar_t *versions)
 {
     typedef uint32_t (*Callback)(void *, int32_t, const wchar_t *);
-    Callback callback = (Callback)mock_pas_slot(proxy, 10u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 10u);
     uint32_t status = callback != NULL
                           ? callback(proxy, handle, versions) : 1u;
-    return mock_pas_status(13u, 10u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(13u, 10u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_9_6_replyMapMatchedAddress(
+uint32_t nc_host_gps_reply_map_matched_address(
     void *proxy, uint32_t handle, const MockPasMapMatchedAddress *address)
 {
     typedef uint32_t (*Callback)(void *, uint32_t,
                                  const MockPasMapMatchedAddress *);
-    Callback callback = (Callback)mock_pas_slot(proxy, 6u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 6u);
     uint32_t status = callback != NULL && address != NULL
                           ? callback(proxy, handle, address) : 1u;
-    return mock_pas_status(9u, 6u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(9u, 6u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_26_4_makePhoneCall(void *proxy, uint32_t handle,
+uint32_t nc_host_phone_make_phone_call(void *proxy, uint32_t handle,
                                      const wchar_t *phone_number,
                                      const wchar_t *display_text)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, const wchar_t *,
                                  const wchar_t *);
-    Callback callback = (Callback)mock_pas_slot(proxy, 4u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 4u);
     uint32_t status = 1u;
 
-    if (callback != NULL && mock_pas_cstr16_within(phone_number, 0x1ffu) &&
-        mock_pas_cstr16_within(display_text, 0x13u) &&
+    if (callback != NULL && nc_host_cstr16_within(phone_number, 0x1ffu) &&
+        nc_host_cstr16_within(display_text, 0x13u) &&
         phone_number[0] != L'\0' && display_text[0] != L'\0') {
         status = callback(proxy, handle, phone_number, display_text);
     }
-    return mock_pas_status(26u, 4u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(26u, 4u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_25_14_replyFileInfo(
+uint32_t nc_host_voice_reply_file_info(
     void *proxy, uint32_t handle, uint32_t result,
     const char *language_list, uint32_t file_type, uint32_t entries)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, const char *,
                                  uint32_t, uint32_t);
-    Callback callback = (Callback)mock_pas_slot(proxy, 14u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 14u);
     uint32_t status = callback != NULL && language_list != NULL
                           ? callback(proxy, handle, result, language_list,
                                      file_type, entries)
                           : 1u;
-    return mock_pas_status(25u, 14u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(25u, 14u, status, MOCK_CALLBACK_OPTIONAL);
 }
 
-uint32_t mock_pas_25_35_replyConvertOrthoToPhonetic(
+uint32_t nc_host_voice_reply_convert_ortho_to_phonetic(
     void *proxy, uint32_t handle, uint32_t result, uint32_t count,
     const uint32_t *location_types, const char *const *strings)
 {
     typedef uint32_t (*Callback)(void *, uint32_t, uint32_t, uint32_t,
                                  const uint32_t *, const char *const *);
-    Callback callback = (Callback)mock_pas_slot(proxy, 35u);
+    Callback callback = (Callback)nc_host_callback_at(proxy, 35u);
     uint32_t index;
     uint32_t status = 1u;
 
     if (callback == NULL || count == 0u ||
         count > MOCK_PAS_VR_LOCATION_TYPE_COUNT || location_types == NULL ||
         strings == NULL) {
-        return mock_pas_status(25u, 35u, status, MOCK_CALLBACK_OPTIONAL);
+        return nc_host_record_callback_status(25u, 35u, status, MOCK_CALLBACK_OPTIONAL);
     }
     for (index = 0u; index < count; ++index) {
         if (strings[index] == NULL) {
-            return mock_pas_status(25u, 35u, status,
+            return nc_host_record_callback_status(25u, 35u, status,
                                    MOCK_CALLBACK_OPTIONAL);
         }
     }
     status = callback(proxy, handle, result, count, location_types, strings);
-    return mock_pas_status(25u, 35u, status, MOCK_CALLBACK_OPTIONAL);
+    return nc_host_record_callback_status(25u, 35u, status, MOCK_CALLBACK_OPTIONAL);
 }

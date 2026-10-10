@@ -9,7 +9,7 @@ and, just as importantly, what it does not prove.
 The authoritative executable is QR39.6 `nv_navigation`:
 
 ```text
-/mnt/d/updates/USA-ASO-8.4-QR-39.6.0-20210405-Q0H4/
+${FIRMWARE_ROOT}/USA-ASO-8.4-QR-39.6.0-20210405-Q0H4/
   unpacked/encrypted_flash/extracted/seg4/pas/bin/nv_navigation
 SHA-256 8c8b5010d3db9062f2c970a8c932d707615eb7c40e1d4e9ad8f8eb9060b796ae
 ```
@@ -37,7 +37,7 @@ QR39.6.
 
 There are 140 reachable root/adapter slots. Each has either an existing
 semantic typed method or a generated fixed-arity method from
-`src/compat/qr39/mock_static_provider_slots.def`. The checker expands the actual vtables
+`src/compat/qr39/provider_slots.def`. The checker expands the actual vtables
 and rejects a reachable binding to `mock_generic_virtual`, a variadic
 prototype, an arity mismatch, or a method without the shared ACTIVE lifecycle
 gate.

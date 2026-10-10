@@ -9,8 +9,8 @@ name, ownership rule, or semantic meaning. In particular, a 32-bit integer,
 pointer, reference, enum, and soft-float value can be register-equivalent at a
 call boundary. Pointer extent and ownership require separate consumer evidence.
 
-No local `decomp-permuter` installation was present in `/mnt/d/tools`,
-`/home/shish/tools`, or `/mnt/d`. Rather than install unreviewed software, the
+No reviewed local `decomp-permuter` installation was available. Rather than
+install unreviewed software, the
 repository contains a bounded deterministic declaration/wrapper permuter in
 [`tools/abi/qnx_arm_abi_oracle.py`](../../tools/abi/qnx_arm_abi_oracle.py).
 

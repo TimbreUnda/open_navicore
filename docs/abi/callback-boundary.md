@@ -6,7 +6,7 @@ The provider dispatch source is the untouched USA stock `libNaviCore.so`
 retrieved before mock deployment:
 
 ```text
-/mnt/d/analysis/mock_navicore_runtime/final-mock-transaction-20261008-attempt1/
+workstation-local capture `final-mock-transaction-20261008-attempt1/`
   live.before/libNaviCore.stock.so
 size 19935860
 SHA-256 fd1e931430cca61116c533cdf617dc805548e312a9131e972f55a7d30ab64842
@@ -231,40 +231,37 @@ The receiver dataflow input itself is reproduced against the same imported
 stock program with:
 
 ```text
-JAVA_HOME=/home/shish/tools/jdk \
-  /home/shish/tools/ghidra_12.1.3_PUBLIC/support/analyzeHeadless \
+${GHIDRA_HOME}/support/analyzeHeadless \
   /tmp callback-stock -process libNaviCore.stock.so -noanalysis \
-  -scriptPath /mnt/d/open_navicore/tools \
+  -scriptPath "$PWD/tools/ghidra" \
   -postScript RecoverCallbackReceiverDataflow.java \
   /tmp/exact-callback-dispatches.csv \
-  /mnt/d/open_navicore/evidence/qr39/static/callback-receiver-dataflow.csv
+  "$PWD/evidence/qr39/static/callback-receiver-dataflow.csv"
 ```
 
 The machine-level companion is reproduced in the same project with:
 
 ```text
-JAVA_HOME=/home/shish/tools/jdk \
-  /home/shish/tools/ghidra_12.1.3_PUBLIC/support/analyzeHeadless \
+${GHIDRA_HOME}/support/analyzeHeadless \
   /tmp callback-stock -process libNaviCore.stock.so -noanalysis \
-  -scriptPath /mnt/d/open_navicore/tools \
+  -scriptPath "$PWD/tools/ghidra" \
   -postScript RecoverArmCallbackReceiverSlices.java \
   /tmp/exact-callback-dispatches.csv \
-  /mnt/d/open_navicore/evidence/qr39/static/callback-arm-slices.csv
+  "$PWD/evidence/qr39/static/callback-arm-slices.csv"
 ```
 
 The interprocedural field-origin evidence and its repeated-shape summary are
 reproduced with:
 
 ```text
-JAVA_HOME=/home/shish/tools/jdk \
-  /home/shish/tools/ghidra_12.1.3_PUBLIC/support/analyzeHeadless \
+${GHIDRA_HOME}/support/analyzeHeadless \
   /tmp callback-stock -process libNaviCore.stock.so -noanalysis \
-  -scriptPath /mnt/d/open_navicore/tools \
+  -scriptPath "$PWD/tools/ghidra" \
   -postScript RecoverCallbackFieldOrigins.java \
-  /mnt/d/open_navicore/evidence/qr39/static/callback-outside-inventory.csv \
-  /mnt/d/open_navicore/evidence/qr39/static/callback-arm-slices.csv \
-  /mnt/d/open_navicore/evidence/qr39/static/callback-receiver-dataflow.csv \
-  /mnt/d/open_navicore/evidence/qr39/static/callback-field-origins.csv
+  "$PWD/evidence/qr39/static/callback-outside-inventory.csv" \
+  "$PWD/evidence/qr39/static/callback-arm-slices.csv" \
+  "$PWD/evidence/qr39/static/callback-receiver-dataflow.csv" \
+  "$PWD/evidence/qr39/static/callback-field-origins.csv"
 
 python3 -m tools.analysis.summarize_callback_field_origins \
   evidence/qr39/static/callback-field-origins.csv \

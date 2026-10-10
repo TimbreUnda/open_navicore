@@ -92,9 +92,9 @@ $cc $common_flags \
     -DMOCK_NAVICORE_RENDERER_STUB \
     -DMOCK_NAV_BACKEND_PLUGIN_PATH='"'"$plugin_path"'"' \
     -DEXPECT_TRACE_PATH='"'"$trace_path"'"' \
-    src/compat/qr39/mock_navicore.c src/runtime/mock_api_telemetry.c src/runtime/mock_callback_backend.c \
+    src/compat/qr39/navicore_compat.c src/runtime/mock_api_telemetry.c src/runtime/mock_callback_backend.c \
     src/runtime/mock_cluster_backend.c src/backend/mock_backend_loader.c \
-    src/compat/qr39/mock_pas_callbacks.c src/runtime/mock_gps_backend.c \
+    src/compat/qr39/host_callbacks.c src/runtime/mock_gps_backend.c \
     src/runtime/mock_pointer_backend.c src/runtime/mock_scalar_backend.c \
     src/renderer/mock_renderer.c src/renderer/mock_screen_input.c src/backend/mock_default_backend.c \
     src/platform/host/mock_renderer_stub.c tests/plugin_lifecycle_smoke.c \

@@ -5,6 +5,8 @@ import csv
 import re
 import sys
 
+from tools.callback_symbols import callback_symbol
+
 
 PROXY_IDENTITY = {
     "IF_ServerSoftwareInfrastructureProxy": ("root", "SI_SoftwareInfrastructure"),
@@ -254,8 +256,9 @@ CONCRETE_AGGREGATE_SIGNATURES = {
 
 
 def concrete_symbol(source):
-    api = re.sub(r"[^A-Za-z0-9_]", "_", source["api_name"])
-    return "mock_pas_%s_%s_%s" % (source["adapter"], source["slot"], api)
+    return callback_symbol(
+        source["adapter"], source["slot"], source["api_name"]
+    )
 
 
 def concrete_contracts(path):

@@ -13,10 +13,10 @@ the framework DSO (`g_PasLogParams` and `g_PasVersion`).
 Build and inspect it offline:
 
 ```sh
-make -C /mnt/d/open_navicore/tools/qnx/navicore_control verify
+make -C tools/qnx/navicore_control verify
 ```
 
-The result is `../dist/navicore_reload`. On the bench, with the normal PAS
+The result is `../../../dist/navicore_reload`. On the bench, with the normal PAS
 runtime/library search paths:
 
 ```sh

@@ -2,7 +2,7 @@
 set -eu
 
 expected_hash=6bc343da57552df88c509b01d839524eb5b119a610b19a9bb8f6d84f2a71e586
-base=/mnt/d/updates
+base=${FIRMWARE_UPDATES_DIR:?set FIRMWARE_UPDATES_DIR to the firmware archive directory}
 qr395=$base/USA-ASO-8.4-QR-39.5.0-20210201-Q0H0/unpacked/encrypted_app/extracted/pas/scfg/ns_mq.cfg
 qr396=$base/USA-ASO-8.4-QR-39.6.0-20210405-Q0H4/unpacked/encrypted_app/extracted/pas/scfg/ns_mq.cfg
 sm395=$base/USA-ASO-8.4-QR-39.5.0-20210201-Q0H0/unpacked/encrypted_flash/extracted/seg4/pas/scfg/sm_config_launch.cfg

@@ -44,7 +44,7 @@ identities could construct local framework objects but received no session
 creation response because they had no configured PAS receiver queue.
 
 Build and verify with `make test verify`. The resulting executable is
-`../dist/sm_reload_probe`.
+`../../../dist/sm_reload_probe`.
 
 ```
 LD_LIBRARY_PATH=/pas/lib/dll:/lib:/usr/lib /datastore/navicore-mock/bin/sm_reload_probe probe

@@ -12,8 +12,8 @@ import tempfile
 from tools.abi.qnx_arm_abi_oracle import FLAGS, parse_objdump
 
 
-DEFAULT_SDK = "/mnt/d/tools/qnx660-sdk"
-DEFAULT_HOST_LIBS = "/mnt/d/tools/qnx-host-libs"
+DEFAULT_SDK = os.environ.get("QNX_SDK")
+DEFAULT_HOST_LIBS = os.environ.get("QNX_HOST_LIBS")
 FIELDS = [
     "adapter", "slot", "symbol", "signature", "words_after_self",
     "location_size", "mbr_size", "mbr_alignment", "callee_sha256",
@@ -124,11 +124,17 @@ def write(rows, path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sdk", default=DEFAULT_SDK)
-    parser.add_argument("--host-libs", default=DEFAULT_HOST_LIBS)
+    parser.add_argument("--sdk", default=DEFAULT_SDK,
+                        required=DEFAULT_SDK is None)
+    parser.add_argument("--host-libs", default=DEFAULT_HOST_LIBS,
+                        required=DEFAULT_HOST_LIBS is None)
     parser.add_argument("--output", default="evidence/qr39/oracles/aggregate-callback-abi.csv")
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
+    if not args.sdk or not args.host_libs:
+        parser.error(
+            "set QNX_SDK and QNX_HOST_LIBS, or pass --sdk and --host-libs"
+        )
     actual = build(args.sdk, args.host_libs)
     path = pathlib.Path(args.output)
     if args.verify:

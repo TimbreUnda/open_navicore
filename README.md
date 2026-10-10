@@ -108,8 +108,10 @@ versioned. Verification compares regenerated output against them.
 - Target headers/libraries for Screen, EGL, and GLES2
 - Ghidra only when regenerating static-analysis evidence
 
-The default local SDK paths are documented in the Makefile and can be
-overridden with `QNX_SDK`, `HOST_LIBS`, `BUILD_DIR`, and `DIST_DIR`.
+No workstation paths are embedded in the project. Set `QNX_SDK` and
+`QNX_HOST_LIBS` when building target artifacts; `BUILD_DIR` and `DIST_DIR`
+remain optional overrides. For example, sibling tool directories can be used
+with `QNX_SDK=../qnx660-sdk QNX_HOST_LIBS=../qnx-host-libs make verify-qnx`.
 
 ```sh
 git clone https://github.com/TimbreUnda/open_navicore.git

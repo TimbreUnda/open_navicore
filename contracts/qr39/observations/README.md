@@ -3,7 +3,7 @@
 These CSV files are the reviewed inputs used by Open NaviCore's contract
 checkers. They were captured from the QR39.6 `nv_navigation` integration trace
 identified as `stage1-v11-20261008-attempt1` and were previously referenced
-through a workstation-local `/mnt/d/analysis` path.
+through a workstation-local analysis path outside this repository.
 
 | File | SHA-256 | Role |
 |---|---|---|

@@ -1,6 +1,6 @@
 /* adapter, slot, ABI words after self.  This list contains only statically
  * reachable QR39.6 provider methods that do not already have a semantic or
- * pointer-aware implementation in mock_navicore.c. */
+ * pointer-aware implementation in navicore_compat.c. */
 MOCK_STATIC_SLOT(root, 6, 1)
 MOCK_STATIC_SLOT(root, 7, 2)
 MOCK_STATIC_SLOT(root, 8, 1)

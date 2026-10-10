@@ -1,7 +1,7 @@
-QNX_SDK ?= /mnt/d/tools/qnx660-sdk
-QNX_HOST := $(QNX_SDK)/host/linux/x86
-QNX_TARGET := $(QNX_SDK)/target/qnx6
-HOST_LIBS ?= /mnt/d/tools/qnx-host-libs
+QNX_SDK ?=
+QNX_HOST ?= $(if $(QNX_SDK),$(QNX_SDK)/host/linux/x86)
+QNX_TARGET ?= $(if $(QNX_SDK),$(QNX_SDK)/target/qnx6)
+HOST_LIBS ?= $(QNX_HOST_LIBS)
 QCC := $(QNX_HOST)/usr/bin/qcc
 QNX_READELF := $(QNX_HOST)/usr/bin/ntoarmv7-readelf
 QNX_OBJDUMP := $(QNX_HOST)/usr/bin/ntoarmv7-objdump
@@ -39,9 +39,9 @@ RAW_CAPTURE_OBJECTS := $(BUILD_DIR)/mock_raw_callback_capture.o \
 # Keep the host provider composition and renderer seam shared by smoke tests.
 HOST_RENDERER_SOURCES := src/renderer/mock_renderer.c src/renderer/mock_screen_input.c \
 	src/backend/mock_default_backend.c src/platform/host/mock_renderer_stub.c
-HOST_PROVIDER_SOURCES := src/compat/qr39/mock_navicore.c src/runtime/mock_api_telemetry.c \
+HOST_PROVIDER_SOURCES := src/compat/qr39/navicore_compat.c src/runtime/mock_api_telemetry.c \
 	src/runtime/mock_callback_backend.c src/runtime/mock_cluster_backend.c \
-	src/backend/mock_backend_loader.c src/compat/qr39/mock_pas_callbacks.c src/runtime/mock_gps_backend.c \
+	src/backend/mock_backend_loader.c src/compat/qr39/host_callbacks.c src/runtime/mock_gps_backend.c \
 	src/runtime/mock_pointer_backend.c src/runtime/mock_scalar_backend.c $(HOST_RENDERER_SOURCES)
 
 PRIVATE_INCLUDE_DIRS := -Isrc/compat/qr39 -Isrc/runtime -Isrc/backend \
@@ -57,7 +57,7 @@ LDFLAGS := -Vgcc_ntoarmv7le -shared -Wl,-soname,libNaviCore.so \
 	static-provider-coverage-selftest static-callback-coverage-selftest \
 	pas-proxy-coverage-selftest qnx-arm-abi-oracle-selftest \
 	arm-snapshot-replay-selftest raw-callback-capture \
-	raw-callback-capture-selftest clean
+	raw-callback-capture-selftest portability-selftest clean
 
 all: $(TARGET) $(SMOKE_TARGET) $(PLUGIN_TARGET) $(OUTBOUND_PLUGIN_TARGET) \
 	$(PLUGIN_SMOKE_TARGET)
@@ -91,7 +91,7 @@ $(TARGET): $(OBJECTS) | $(DIST_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(LDFLAGS) -o $@ $^ -lscreen -lEGL -lGLESv2
 
-$(BUILD_DIR)/mock_navicore.o: src/compat/qr39/mock_navicore.c src/compat/qr39/mock_static_provider_slots.def src/backend/mock_backend_loader.h include/mock_navicore.h include/mock_api_telemetry.h include/mock_callback_backend.h include/open_navicore/cluster.h include/mock_gps_backend.h include/mock_pointer_backend.h include/mock_scalar_backend.h include/mock_renderer.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_navicore.o: src/compat/qr39/navicore_compat.c src/compat/qr39/provider_slots.def src/backend/mock_backend_loader.h include/mock_navicore.h include/mock_api_telemetry.h include/mock_callback_backend.h include/open_navicore/cluster.h include/mock_gps_backend.h include/mock_pointer_backend.h include/mock_scalar_backend.h include/mock_renderer.h include/open_navicore/backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
@@ -111,7 +111,7 @@ $(BUILD_DIR)/mock_cluster_backend.o: src/runtime/mock_cluster_backend.c include/
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mock_pas_callbacks.o: src/compat/qr39/mock_pas_callbacks.c include/mock_pas_callbacks.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/mock_pas_callbacks.o: src/compat/qr39/host_callbacks.c include/open_navicore/host_callbacks.h include/mock_callback_backend.h Makefile | $(BUILD_DIR)
 	QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS) \
 		$(QCC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
@@ -187,10 +187,11 @@ $(BUILD_DIR) $(DIST_DIR):
 
 # Self-contained checks available from a public source checkout. These consume
 # only committed source, contracts, and evidence; no QNX SDK or stock ELF.
-check-contracts: pas-proxy-coverage-selftest
+check-contracts: portability-selftest pas-proxy-coverage-selftest
+	python3 -m tests.check_symbol_names
 	sh tests/check_plugin_elf.sh --self-test
 	python3 -m tests.check_raw_callback_capture
-	sh tests/check_callback_coverage.sh $(CALLBACK_MATRIX) contracts/qr39/callbacks/runtime-coverage.csv src/compat/qr39/mock_navicore.c
+	sh tests/check_callback_coverage.sh $(CALLBACK_MATRIX) contracts/qr39/callbacks/runtime-coverage.csv src/compat/qr39/navicore_compat.c
 	python3 -m tests.check_static_callback_additions contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv
 	python3 -m tests.check_static_callback_thunk_ownership \
@@ -198,8 +199,8 @@ check-contracts: pas-proxy-coverage-selftest
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv
 	python3 -m tests.check_static_callback_contracts \
 		contracts/qr39/callbacks/static-contracts.csv contracts/qr39/callbacks/runtime-coverage.csv \
-		contracts/qr39/callbacks/dispatch-additions.csv include/mock_pas_callbacks.h \
-		src/compat/qr39/mock_pas_callbacks.c src/compat/qr39/mock_navicore.c
+		contracts/qr39/callbacks/dispatch-additions.csv include/open_navicore/host_callbacks.h \
+		src/compat/qr39/host_callbacks.c src/compat/qr39/navicore_compat.c
 	python3 -m tests.check_static_callback_outside_inventory \
 		evidence/qr39/static/callback-outside-inventory.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
@@ -212,9 +213,9 @@ check-contracts: pas-proxy-coverage-selftest
 		evidence/qr39/static/callback-outside-inventory.csv \
 		evidence/qr39/static/callback-arm-slices.csv
 	python3 -m tests.check_provider_coverage $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
-		contracts/qr39/provider/api-coverage.csv src/compat/qr39/mock_navicore.c
+		contracts/qr39/provider/api-coverage.csv src/compat/qr39/navicore_compat.c
 	python3 -m tests.check_static_provider_slots contracts/qr39/provider/slot-manifest.csv \
-		src/compat/qr39/mock_navicore.c src/compat/qr39/mock_static_provider_slots.def
+		src/compat/qr39/navicore_compat.c src/compat/qr39/provider_slots.def
 
 # Backwards-compatible full contract target. The explicit targets below make
 # proprietary SDK and stock-image requirements visible to public contributors.
@@ -280,7 +281,7 @@ test-host: check-contracts
 	$(BUILD_DIR)/lifecycle-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-pthread -DMOCK_NAVICORE_TESTING $(CPPFLAGS) \
-		src/runtime/mock_callback_backend.c src/compat/qr39/mock_pas_callbacks.c \
+		src/runtime/mock_callback_backend.c src/compat/qr39/host_callbacks.c \
 		tests/pas_callbacks_smoke.c -o $(BUILD_DIR)/pas-callbacks-smoke
 	$(BUILD_DIR)/pas-callbacks-smoke
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
@@ -326,11 +327,11 @@ test: test-host
 
 provider-coverage-selftest:
 	python3 -m tests.check_provider_coverage $(PROVIDER_MATRIX) $(POINTER_MATRIX) \
-		contracts/qr39/provider/api-coverage.csv src/compat/qr39/mock_navicore.c --self-test
+		contracts/qr39/provider/api-coverage.csv src/compat/qr39/navicore_compat.c --self-test
 
 static-provider-coverage-selftest:
 	python3 -m tests.check_static_provider_slots contracts/qr39/provider/slot-manifest.csv \
-		src/compat/qr39/mock_navicore.c src/compat/qr39/mock_static_provider_slots.def --self-test
+		src/compat/qr39/navicore_compat.c src/compat/qr39/provider_slots.def --self-test
 
 static-callback-coverage-selftest: pas-proxy-coverage-selftest
 	python3 -m tests.check_static_callback_additions contracts/qr39/callbacks/runtime-coverage.csv \
@@ -341,8 +342,8 @@ static-callback-coverage-selftest: pas-proxy-coverage-selftest
 		--self-test
 	python3 -m tests.check_static_callback_contracts \
 		contracts/qr39/callbacks/static-contracts.csv contracts/qr39/callbacks/runtime-coverage.csv \
-		contracts/qr39/callbacks/dispatch-additions.csv include/mock_pas_callbacks.h \
-		src/compat/qr39/mock_pas_callbacks.c src/compat/qr39/mock_navicore.c
+		contracts/qr39/callbacks/dispatch-additions.csv include/open_navicore/host_callbacks.h \
+		src/compat/qr39/host_callbacks.c src/compat/qr39/navicore_compat.c
 	python3 -m tests.check_static_callback_outside_inventory \
 		evidence/qr39/static/callback-outside-inventory.csv contracts/qr39/callbacks/runtime-coverage.csv \
 		contracts/qr39/callbacks/dispatch-additions.csv contracts/qr39/callbacks/static-contracts.csv \
@@ -375,20 +376,22 @@ pas-proxy-coverage-selftest:
 		contracts/qr39/callbacks/static-contracts.csv \
 		evidence/qr39/cross-version/callback-contracts.csv \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
-		include/mock_pas_callbacks.h src/compat/qr39/mock_pas_callbacks.c \
-		src/compat/qr39/mock_navicore.c
+		include/open_navicore/host_callbacks.h src/compat/qr39/host_callbacks.c \
+		src/compat/qr39/navicore_compat.c
 	python3 -m tests.check_cross_version_concrete_vtable_audit \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv
 	python3 -m tests.check_concrete_callback_integration \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv \
-		include/mock_pas_callbacks.h src/compat/qr39/mock_pas_callbacks.c \
-		tests/pas_callbacks_smoke.c src/compat/qr39/mock_navicore.c
+		include/open_navicore/host_callbacks.h src/compat/qr39/host_callbacks.c \
+		tests/pas_callbacks_smoke.c src/compat/qr39/navicore_compat.c
 
 qnx-arm-abi-oracle-selftest:
-	python3 -m tools.abi.qnx_arm_abi_oracle --verify
-	python3 -m tools.abi.qnx_aggregate_abi_oracle --verify
+	python3 -m tools.abi.qnx_arm_abi_oracle --sdk "$(QNX_SDK)" \
+		--host-libs "$(HOST_LIBS)" --verify
+	python3 -m tools.abi.qnx_aggregate_abi_oracle --sdk "$(QNX_SDK)" \
+		--host-libs "$(HOST_LIBS)" --verify
 	python3 -m tests.check_qnx_arm_abi_oracle \
 		evidence/qr39/oracles/qnx-arm-catalog.csv \
 		evidence/qr39/oracles/qnx-arm-assessment.csv \
@@ -397,6 +400,9 @@ qnx-arm-abi-oracle-selftest:
 		evidence/qr39/oracles/aggregate-callback-abi.csv \
 		evidence/qr39/cross-version/concrete-vtable-audit.csv \
 		contracts/qr39/callbacks/proxy-slot-manifest.csv
+
+portability-selftest:
+	python3 -m tests.check_portable_paths
 
 arm-snapshot-replay-selftest:
 	python3 -m tests.check_arm_snapshot_replay

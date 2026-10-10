@@ -62,8 +62,8 @@ reviewable contracts:
 
 - `src/capture/generated/mock_raw_callback_slot_table.c`
 - `src/capture/generated/mock_raw_callback_slots_arm.S`
-- `src/compat/qr39/mock_static_provider_slots.def`
-- root-level ABI/evidence CSV files
+- `src/compat/qr39/provider_slots.def`
+- ABI and evidence CSV files under `contracts/` and `evidence/`
 - replay fixtures under `fixtures/`
 
 Regenerate them with the repository tools and commit generator and output

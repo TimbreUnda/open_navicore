@@ -1,4 +1,4 @@
-#include "mock_pas_callbacks.h"
+#include <open_navicore/host_callbacks.h>
 
 #include <assert.h>
 #include <stdint.h>
@@ -643,31 +643,31 @@ int main(void)
 
     /* QNX ARM by-value aggregate callback declarations. */
     prepare(12u, (GenericCallback)callback_wsa_location);
-    assert(mock_pas_31_12_requestWsaSetAlertLocation(
+    assert(nc_host_agw_request_wsa_set_alert_location(
                &g_proxy, 31u, wsa_location, 33u, 2u) == 0u);
     assert(g_calls == 1u);
 
     prepare(4u, (GenericCallback)callback_apogee_mbr);
-    assert(mock_pas_30_4_requestApogeeSetTypeCollectionMBR(
+    assert(nc_host_apogee_request_apogee_set_type_collection_mbr(
                &g_proxy, 30u, 0x1234u, mbr, 7u) == 0u);
     assert(g_calls == 1u);
     prepare(5u, (GenericCallback)callback_apogee_mbr);
-    assert(mock_pas_30_5_requestApogeeSetTypeExtractionMBR(
+    assert(nc_host_apogee_request_apogee_set_type_extraction_mbr(
                &g_proxy, 30u, 0x1234u, mbr, 7u) == 0u);
     assert(g_calls == 1u);
 
     prepare(4u, (GenericCallback)callback_parking_mbr);
-    assert(mock_pas_29_4_requestParkingSetCollectionMBR(
+    assert(nc_host_parking_request_parking_set_collection_mbr(
                &g_proxy, 29u, mbr, 0x4567u) == 0u);
     assert(g_calls == 1u);
 
     /* Exercise every newly recovered pointer-bearing ABI with typed callees. */
     g_mutate_bytes = (uint8_t *)tts;
     prepare(3u, (GenericCallback)callback_tts);
-    assert(mock_pas_24_3_requestPlayTTS(&g_proxy, 0x2403u, 2u, 3u, tts) == 0u);
+    assert(nc_host_tts_request_play_tts(&g_proxy, 0x2403u, 2u, 3u, tts) == 0u);
     assert(g_calls == 1u && tts[0] == 'X');
     prepare(3u, (GenericCallback)callback_tts);
-    assert(mock_pas_24_3_requestPlayTTS(&g_proxy, 1u, 2u, 3u, "") == 1u);
+    assert(nc_host_tts_request_play_tts(&g_proxy, 1u, 2u, 3u, "") == 1u);
     assert(g_calls == 0u);
 
     memset(old_area, 0x11, sizeof(old_area));
@@ -675,37 +675,37 @@ int main(void)
     prepare(4u, (GenericCallback)callback_ews_change);
     g_pointer[0] = old_area;
     g_pointer[1] = new_area;
-    assert(mock_pas_32_4_signalEWSAreaChange(&g_proxy, old_area, new_area) == 0u);
+    assert(nc_host_ews_signal_ews_area_change(&g_proxy, old_area, new_area) == 0u);
     assert(g_calls == 1u);
 
     prepare(7u, (GenericCallback)callback_http20);
     g_pointer[0] = url;
     g_pointer[1] = request_data;
     g_pointer[2] = response_data;
-    assert(mock_pas_20_7_requestHTTPMessage(
+    assert(nc_host_connectivity_request_http_message(
                &g_proxy, 20u, 7u, url, 2u, 3u, request_data,
                4u, response_data) == 0u);
     assert(g_calls == 1u);
     prepare(7u, (GenericCallback)callback_http20);
-    assert(mock_pas_20_7_requestHTTPMessage(
+    assert(nc_host_connectivity_request_http_message(
                &g_proxy, 20u, 7u, url, 2u, 1u, NULL,
                0u, NULL) == 1u && g_calls == 0u);
 
     prepare(6u, (GenericCallback)callback_persist);
     g_pointer[0] = path;
-    assert(mock_pas_root_6_signalPersist(&g_proxy, path) == 0u && g_calls == 1u);
+    assert(nc_host_root_signal_persist(&g_proxy, path) == 0u && g_calls == 1u);
 
     prepare(4u, (GenericCallback)callback_http21);
     g_pointer[0] = url;
     g_pointer[1] = request_data;
     g_pointer[2] = response_data;
-    assert(mock_pas_21_4_requestHTTPMessage(
+    assert(nc_host_live_traffic_request_http_message(
                &g_proxy, 21u, url, 4u, 3u, request_data,
                4u, response_data) == 0u && g_calls == 1u);
 
     prepare(8u, (GenericCallback)callback_exchange_reply);
     g_pointer[0] = description;
-    assert(mock_pas_19_8_replyDataExchangeObjectRequiredByServer(
+    assert(nc_host_data_exchange_reply_data_exchange_object_required_by_server(
                &g_proxy, 19u, 8u, 3u, description,
                UINT64_C(0x1122334455667788), 5u) == 0u);
     assert(g_calls == 1u);
@@ -713,98 +713,98 @@ int main(void)
     prepare(9u, (GenericCallback)callback_exchange_transfer);
     g_argument[0] = 9u;
     g_pointer[0] = transfer_data;
-    assert(mock_pas_19_9_requestSendDataExchangeObjectRequiredByServer(
+    assert(nc_host_data_exchange_request_send_data_exchange_object_required_by_server(
                &g_proxy, 19u, 9u, UINT64_C(0x123), transfer_data,
                UINT64_C(0x55667788), 1u) == 0u && g_calls == 1u);
     prepare(9u, (GenericCallback)callback_exchange_transfer);
-    assert(mock_pas_19_9_requestSendDataExchangeObjectRequiredByServer(
+    assert(nc_host_data_exchange_request_send_data_exchange_object_required_by_server(
                &g_proxy, 19u, 9u, UINT64_C(0xfc1), transfer_data,
                UINT64_C(0x55667788), 1u) == 1u && g_calls == 0u);
 
     prepare(10u, (GenericCallback)callback_wide_borrowed);
     g_pointer[0] = versions;
-    assert(mock_pas_13_10_replyApprovedMapVersions(
+    assert(nc_host_nav_diagnosis_reply_approved_map_versions(
                &g_proxy, -13, versions) == 0u && g_calls == 1u);
 
     prepare(6u, (GenericCallback)callback_map_address);
     g_pointer[0] = &address;
-    assert(mock_pas_9_6_replyMapMatchedAddress(
+    assert(nc_host_gps_reply_map_matched_address(
                &g_proxy, 9u, &address) == 0u && g_calls == 1u);
 
     prepare(4u, (GenericCallback)callback_phone);
     g_pointer[0] = phone_number;
     g_pointer[1] = display_text;
-    assert(mock_pas_26_4_makePhoneCall(
+    assert(nc_host_phone_make_phone_call(
                &g_proxy, 26u, phone_number, display_text) == 0u);
     assert(g_calls == 1u);
     prepare(4u, (GenericCallback)callback_phone);
-    assert(mock_pas_26_4_makePhoneCall(
+    assert(nc_host_phone_make_phone_call(
                &g_proxy, 26u, L"", display_text) == 1u && g_calls == 0u);
 
     prepare(11u, (GenericCallback)callback_exchange_transfer);
     g_argument[0] = 11u;
     g_pointer[0] = transfer_data;
-    assert(mock_pas_19_11_dataExchangeTransfer(
+    assert(nc_host_data_exchange_data_exchange_transfer(
                &g_proxy, 19u, 11u, UINT64_C(0x123), transfer_data,
                UINT64_C(0x55667788), 1u) == 0u && g_calls == 1u);
 
     prepare(14u, (GenericCallback)callback_file_info);
     g_pointer[0] = languages;
-    assert(mock_pas_25_14_replyFileInfo(
+    assert(nc_host_voice_reply_file_info(
                &g_proxy, 25u, 14u, languages, 6u, 7u) == 0u);
     assert(g_calls == 1u);
 
     prepare(35u, (GenericCallback)callback_phonetic);
     g_pointer[0] = phonetic_types;
     g_pointer[1] = phonetic_strings;
-    assert(mock_pas_25_35_replyConvertOrthoToPhonetic(
+    assert(nc_host_voice_reply_convert_ortho_to_phonetic(
                &g_proxy, 25u, 35u, 2u, phonetic_types,
                phonetic_strings) == 0u && g_calls == 1u);
     prepare(35u, (GenericCallback)callback_phonetic);
-    assert(mock_pas_25_35_replyConvertOrthoToPhonetic(
+    assert(nc_host_voice_reply_convert_ortho_to_phonetic(
                &g_proxy, 25u, 35u, 8u, phonetic_types,
                phonetic_strings) == 1u && g_calls == 0u);
 
-    TEST_0(mock_pas_root_12, 12u);
-    TEST_0(mock_pas_root_3, 3u);
-    TEST_1(mock_pas_root_5_signalInitiateRestartOnce, 5u, 0x5001u);
+    TEST_0(nc_host_root_adapter_ready, 12u);
+    TEST_0(nc_host_root_no_arg_internal_state_cleanup, 3u);
+    TEST_1(nc_host_root_signal_initiate_restart_once, 5u, 0x5001u);
     prepare(2u, (GenericCallback)callback0);
-    assert(mock_pas_all_2(&g_proxy, 31u) == 0u && g_calls == 1u);
-    TEST_0(mock_pas_1_2, 2u);
-    TEST_1(mock_pas_1_3, 3u, UINT32_MAX);
-    TEST_1(mock_pas_1_4_requestCreateRequestCode, 4u, 0x104u);
-    TEST_1(mock_pas_1_5_requestCreateFingerPrint, 5u, 0x105u);
-    TEST_2(mock_pas_1_6, 6u, 1u, 2u);
-    TEST_3(mock_pas_1_7, 7u, 3u, 4u, 5u);
-    TEST_1(mock_pas_1_9, 9u, 6u);
-    TEST_3(mock_pas_1_10, 10u, 7u, 8u, 9u);
-    TEST_1(mock_pas_1_12, 12u, 10u);
+    assert(nc_host_adapter_ready(&g_proxy, 31u) == 0u && g_calls == 1u);
+    TEST_0(nc_host_hmi_adapter_ready, 2u);
+    TEST_1(nc_host_hmi_subscribe, 3u, UINT32_MAX);
+    TEST_1(nc_host_hmi_request_create_request_code, 4u, 0x104u);
+    TEST_1(nc_host_hmi_request_create_finger_print, 5u, 0x105u);
+    TEST_2(nc_host_hmi_request_screen_window_identifier, 6u, 1u, 2u);
+    TEST_3(nc_host_hmi_request_hmi_state, 7u, 3u, 4u, 5u);
+    TEST_1(nc_host_hmi_reply_hmi_state_transition, 9u, 6u);
+    TEST_3(nc_host_hmi_reply_screen_change, 10u, 7u, 8u, 9u);
+    TEST_1(nc_host_hmi_reply_screen_theme_change, 12u, 10u);
     prepare(13u, (GenericCallback)callback_press_state_animation);
-    assert(mock_pas_1_13_signalPressStateAnimation(
+    assert(nc_host_hmi_signal_press_state_animation(
                &g_proxy, 1u, 0x7b275100u, 60u, 400u) == 0u);
     assert(g_calls == 1u && g_argument[0] == 1u);
     assert(g_argument[1] == 0x7b275100u);
     assert(g_argument[2] == 60u && g_argument[3] == 400u);
     prepare(13u, (GenericCallback)callback_press_state_animation);
-    assert(mock_pas_1_13_signalPressStateAnimation(
+    assert(nc_host_hmi_signal_press_state_animation(
                &g_proxy, 2u, 0xdeadbeefu, UINT32_MAX, 0u) == 0u);
     assert(g_calls == 1u && g_argument[0] == 2u);
     assert(g_argument[1] == 0xdeadbeefu);
     assert(g_argument[2] == UINT32_MAX && g_argument[3] == 0u);
     prepare(13u, (GenericCallback)callback_press_state_animation);
-    assert(mock_pas_1_13_signalPressStateAnimation(
+    assert(nc_host_hmi_signal_press_state_animation(
                &g_proxy, 3u, 0x12345678u, 390u, 777u) == 2u);
     assert(g_calls == 1u && g_argument[0] == 3u);
     assert(g_argument[1] == 0x12345678u);
     assert(g_argument[2] == 390u && g_argument[3] == 777u);
-    TEST_1(mock_pas_1_14, 14u, 2u);
-    TEST_2(mock_pas_1_8_signalHMIStateChange, 8u, 1u, 2u);
-    TEST_4(mock_pas_1_11_signalScreenChange, 11u, 1u, 2u, 3u, 4u);
-    TEST_1(mock_pas_4_3, 3u, 0x43u);
-    TEST_1(mock_pas_6_3, 3u, 0x63u);
+    TEST_1(nc_host_hmi_signal_navigation_hmi_ready, 14u, 2u);
+    TEST_2(nc_host_hmi_signal_hmi_state_change, 8u, 1u, 2u);
+    TEST_4(nc_host_hmi_signal_screen_change, 11u, 1u, 2u, 3u, 4u);
+    TEST_1(nc_host_hardkey_subscribe, 3u, 0x43u);
+    TEST_1(nc_host_logging_request_log_buffer_sizes, 3u, 0x63u);
     prepare(4u, (GenericCallback)callback_write_log_data);
     g_return_status = 7u;
-    assert(mock_pas_6_4_signalWriteLogData(
+    assert(nc_host_logging_signal_write_log_data(
                &g_proxy, 0x11u, 0x22334455u, 3u, 0xfeu,
                0x66778899u, location_ids) == 7u);
     assert(g_calls == 1u && g_argument[0] == 0x11u);
@@ -813,76 +813,76 @@ int main(void)
     assert(g_pointer[0] == location_ids);
     prepare(4u, (GenericCallback)callback_write_log_data);
     g_return_status = 9u;
-    assert(mock_pas_6_4_signalWriteLogData(
+    assert(nc_host_logging_signal_write_log_data(
                &g_proxy, 0u, UINT32_MAX, 2u, 0u, 0u, NULL) == 9u);
     assert(g_calls == 1u && g_argument[1] == UINT32_MAX);
     assert(g_pointer[0] == NULL);
-    TEST_1(mock_pas_7_3, 3u, 0x73u);
-    TEST_1(mock_pas_7_4, 4u, 0x74u);
-    TEST_1(mock_pas_8_3, 3u, UINT32_MAX);
-    TEST_1(mock_pas_8_5, 5u, 0x85u);
-    TEST_1(mock_pas_8_6, 6u, 0x86u);
-    TEST_1(mock_pas_8_11, 11u, 0x811u);
-    TEST_1(mock_pas_9_3, 3u, UINT32_MAX);
-    TEST_2(mock_pas_10_3, 3u, 1u, 256u);
-    TEST_2(mock_pas_10_4_requestAudioOutSourceDescriptor, 4u, 0x104u, 1u);
-    TEST_2(mock_pas_10_5_requestAudioInSourceDescriptor, 5u, 0x105u, 2u);
-    TEST_2(mock_pas_10_6_requestAudioSourceAllocation, 6u, 0x106u, 3u);
-    TEST_2(mock_pas_10_7_requestAudioSourcePreparation, 7u, 0x107u, 4u);
-    TEST_1(mock_pas_10_8_signalDeallocateAudioSource, 8u, 5u);
-    TEST_3(mock_pas_10_9_replyAudioSourceDeactivation,
+    TEST_1(nc_host_i18n_subscribe, 3u, 0x73u);
+    TEST_1(nc_host_i18n_request_internationalization_settings, 4u, 0x74u);
+    TEST_1(nc_host_vehicle_subscribe, 3u, UINT32_MAX);
+    TEST_1(nc_host_vehicle_request_day_night_status, 5u, 0x85u);
+    TEST_1(nc_host_vehicle_request_day_night_setting, 6u, 0x86u);
+    TEST_1(nc_host_vehicle_request_vehicle_identification_number, 11u, 0x811u);
+    TEST_1(nc_host_gps_subscribe, 3u, UINT32_MAX);
+    TEST_2(nc_host_audio_subscribe_audio_state, 3u, 1u, 256u);
+    TEST_2(nc_host_audio_request_audio_out_source_descriptor, 4u, 0x104u, 1u);
+    TEST_2(nc_host_audio_request_audio_in_source_descriptor, 5u, 0x105u, 2u);
+    TEST_2(nc_host_audio_request_audio_source_allocation, 6u, 0x106u, 3u);
+    TEST_2(nc_host_audio_request_audio_source_preparation, 7u, 0x107u, 4u);
+    TEST_1(nc_host_audio_signal_deallocate_audio_source, 8u, 5u);
+    TEST_3(nc_host_audio_reply_audio_source_deactivation,
            9u, 0x109u, 6u, 0u);
-    TEST_1(mock_pas_10_10, 10u, 4u);
-    TEST_2(mock_pas_10_11_requestAudioSourceStatus, 11u, 0x10bu, 7u);
-    TEST_1(mock_pas_10_12_signalEnableServerAudioSource, 12u, 8u);
-    TEST_1(mock_pas_10_13_signalDisableServerAudioSource, 13u, 9u);
-    TEST_2(mock_pas_10_14_requestAudioSourceEnableStatus,
+    TEST_1(nc_host_audio_signal_audio_source_availability, 10u, 4u);
+    TEST_2(nc_host_audio_request_audio_source_status, 11u, 0x10bu, 7u);
+    TEST_1(nc_host_audio_signal_enable_server_audio_source, 12u, 8u);
+    TEST_1(nc_host_audio_signal_disable_server_audio_source, 13u, 9u);
+    TEST_2(nc_host_audio_request_audio_source_enable_status,
            14u, 0x10eu, 10u);
-    TEST_2(mock_pas_10_15_signalAudioSourceComfortVolume, 15u, 11u, 2u);
-    TEST_1(mock_pas_10_16_signalEnableAudioSourceVolumeSeparation, 16u, 12u);
-    TEST_1(mock_pas_10_17_signalDisableAudioSourceVolumeSeparation, 17u, 13u);
-    TEST_2(mock_pas_10_18_requestAudioSourceVolumeSeparationStatus,
+    TEST_2(nc_host_audio_signal_audio_source_comfort_volume, 15u, 11u, 2u);
+    TEST_1(nc_host_audio_signal_enable_audio_source_volume_separation, 16u, 12u);
+    TEST_1(nc_host_audio_signal_disable_audio_source_volume_separation, 17u, 13u);
+    TEST_2(nc_host_audio_request_audio_source_volume_separation_status,
            18u, 0x112u, 14u);
-    TEST_2(mock_pas_10_19, 19u, 5u, 1u);
-    TEST_3(mock_pas_10_20_requestAudioSourceVolumeChange,
+    TEST_2(nc_host_audio_request_audio_source_volume, 19u, 5u, 1u);
+    TEST_3(nc_host_audio_request_audio_source_volume_change,
            20u, 5u, 1u, 22u);
-    TEST_1(mock_pas_12_8, 8u, 12u);
-    TEST_1(mock_pas_13_3, 3u, UINT32_MAX);
-    TEST_1(mock_pas_13_4, 4u, 1u);
-    TEST_1(mock_pas_13_5, 5u, 2u);
-    TEST_1(mock_pas_13_6, 6u, 3u);
-    TEST_1(mock_pas_13_7, 7u, 4u);
-    TEST_1(mock_pas_13_8, 8u, 5u);
-    TEST_1(mock_pas_13_9, 9u, 6u);
-    TEST_2(mock_pas_13_13, 13u, (int32_t)-10, 0xabcdefu);
+    TEST_1(nc_host_diagnosis_request_vehicle_brand, 8u, 12u);
+    TEST_1(nc_host_nav_diagnosis_subscribe_driver_distraction_status, 3u, UINT32_MAX);
+    TEST_1(nc_host_nav_diagnosis_request_driver_distraction_status, 4u, 1u);
+    TEST_1(nc_host_nav_diagnosis_request_static_setting_11fc, 5u, 2u);
+    TEST_1(nc_host_nav_diagnosis_request_static_setting_11fb, 6u, 3u);
+    TEST_1(nc_host_nav_diagnosis_request_static_setting_11fa, 7u, 4u);
+    TEST_1(nc_host_nav_diagnosis_request_static_setting_11fe, 8u, 5u);
+    TEST_1(nc_host_nav_diagnosis_request_static_setting_11fd, 9u, 6u);
+    TEST_2(nc_host_nav_diagnosis_reply_navigation_database_status, 13u, (int32_t)-10, 0xabcdefu);
     TEST_1(mock_pas_17_4_raw, 4u, 0x174u);
-    TEST_1(mock_pas_17_5, 5u, UINT32_MAX);
-    TEST_0(mock_pas_17_6, 6u);
-    TEST_1(mock_pas_17_7, 7u, 19u);
-    TEST_1(mock_pas_19_5, 5u, 17u);
+    TEST_1(nc_host_cluster_subscribe, 5u, UINT32_MAX);
+    TEST_0(nc_host_cluster_request_or_signal_no_args, 6u);
+    TEST_1(nc_host_cluster_request_tbt_settings_enable_status, 7u, 19u);
+    TEST_1(nc_host_data_exchange_request_supported_transport_means_and_buffer_sizes, 5u, 17u);
     TEST_3(mock_pas_19_6_raw, 6u, 0x1960u, 0x1961u, 0x1962u);
-    TEST_3(mock_pas_19_7_requestSendDataExchangeObjectProducedByServer,
+    TEST_3(nc_host_data_exchange_request_send_data_exchange_object_produced_by_server,
            7u, 1u, 2u, 3u);
-    TEST_1(mock_pas_20_3, 3u, 1u);
-    TEST_2(mock_pas_20_4, 4u, 16u, 6u);
-    TEST_2(mock_pas_20_8, 8u, 14u, 6u);
-    TEST_2(mock_pas_20_9, 9u, 15u, 6u);
-    TEST_1(mock_pas_20_6_releaseConnectionForService, 6u, 6u);
-    TEST_0(mock_pas_25_3, 3u);
-    TEST_0(mock_pas_25_4, 4u);
-    TEST_3(mock_pas_25_7_replyAlphabetGet, 7u, 1u, 2u, 3u);
-    TEST_2(mock_pas_25_8_replyDestinationAdbEntrySet, 8u, 1u, 2u);
-    TEST_2(mock_pas_25_9_replyDestinationHomeSet, 9u, 1u, 2u);
-    TEST_2(mock_pas_25_10_replyDestinationWorkSet, 10u, 1u, 2u);
-    TEST_3(mock_pas_25_11_replyDestinationStatus, 11u, 1u, 2u, 3u);
-    TEST_3(mock_pas_25_12_replyFileFromDBIDGet, 12u, 1u, 2u, 3u);
-    TEST_2(mock_pas_25_15_replyGuidanceInstructionsRepeat, 15u, 1u, 2u);
-    TEST_2(mock_pas_25_16_replyGuidanceStop, 16u, 1u, 2u);
-    TEST_2(mock_pas_25_17_replyGuidanceStart, 17u, 1u, 2u);
-    TEST_3(mock_pas_25_18_replyLocationCheck, 18u, 1u, 2u, 3u);
+    TEST_1(nc_host_connectivity_subscribe, 3u, 1u);
+    TEST_2(nc_host_connectivity_request_connectivity_status, 4u, 16u, 6u);
+    TEST_2(nc_host_connectivity_request_connection_device_info, 8u, 14u, 6u);
+    TEST_2(nc_host_connectivity_request_signal_strength, 9u, 15u, 6u);
+    TEST_1(nc_host_connectivity_release_connection_for_service, 6u, 6u);
+    TEST_0(nc_host_voice_initialization_no_op, 3u);
+    TEST_0(nc_host_voice_signal_or_request_route_guidance_state, 4u);
+    TEST_3(nc_host_voice_reply_alphabet_get, 7u, 1u, 2u, 3u);
+    TEST_2(nc_host_voice_reply_destination_adb_entry_set, 8u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_destination_home_set, 9u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_destination_work_set, 10u, 1u, 2u);
+    TEST_3(nc_host_voice_reply_destination_status, 11u, 1u, 2u, 3u);
+    TEST_3(nc_host_voice_reply_file_from_dbid_get, 12u, 1u, 2u, 3u);
+    TEST_2(nc_host_voice_reply_guidance_instructions_repeat, 15u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_guidance_stop, 16u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_guidance_start, 17u, 1u, 2u);
+    TEST_3(nc_host_voice_reply_location_check, 18u, 1u, 2u, 3u);
     prepare(19u, (GenericCallback)callback_location_get);
     g_return_status = 11u;
-    assert(mock_pas_25_19_replyLocationGet(
+    assert(nc_host_voice_reply_location_get(
                &g_proxy, 0x19191919u, 2u, location_types, location_ids,
                location_values, orthographic, phonetic) == 11u);
     assert(g_calls == 1u && g_argument[0] == 0x19191919u);
@@ -891,88 +891,88 @@ int main(void)
     assert(g_pointer[3] == orthographic && g_pointer[4] == phonetic);
     prepare(19u, (GenericCallback)callback_location_get);
     g_return_status = 12u;
-    assert(mock_pas_25_19_replyLocationGet(
+    assert(nc_host_voice_reply_location_get(
                &g_proxy, UINT32_MAX, 0u, NULL, NULL, NULL, NULL, NULL) == 12u);
     assert(g_calls == 1u && g_argument[0] == UINT32_MAX);
     assert(g_argument[1] == 0u && g_pointer[0] == NULL);
     assert(g_pointer[1] == NULL && g_pointer[2] == NULL);
     assert(g_pointer[3] == NULL && g_pointer[4] == NULL);
-    TEST_3(mock_pas_25_23, 23u, 1u, 2u, 3u);
-    TEST_3(mock_pas_25_24, 24u, 4u, 5u, 6u);
-    TEST_2(mock_pas_25_25, 25u, 7u, 8u);
-    TEST_4(mock_pas_25_22_replyPOISet, 22u, 1u, 2u, 3u, 4u);
-    TEST_2(mock_pas_25_26_replyChangeRouteGuidance, 26u, 1u, 2u);
-    TEST_2(mock_pas_25_27_replyChangeMapDirection, 27u, 1u, 2u);
-    TEST_2(mock_pas_25_28_replyChangeMapDimensionalView, 28u, 1u, 2u);
-    TEST_2(mock_pas_25_29_replyZoomIn, 29u, 1u, 2u);
-    TEST_2(mock_pas_25_30_replyZoomOut, 30u, 1u, 2u);
-    TEST_3(mock_pas_25_34_replySetDestination, 34u, 1u, 2u, 3u);
-    TEST_1(mock_pas_26_3, 3u, 1u);
-    TEST_1(mock_pas_26_5, 5u, 13u);
-    TEST_1(mock_pas_24_4_internalDeinitialize, 4u, 0x2404u);
-    TEST_1(mock_pas_29_3, 3u, UINT32_MAX);
-    TEST_1(mock_pas_30_3, 3u, UINT32_MAX);
-    TEST_1(mock_pas_31_3, 3u, UINT32_MAX);
+    TEST_3(nc_host_voice_reply_route_guidance_status, 23u, 1u, 2u, 3u);
+    TEST_3(nc_host_voice_reply_states_settings, 24u, 4u, 5u, 6u);
+    TEST_2(nc_host_voice_reply_tef_file, 25u, 7u, 8u);
+    TEST_4(nc_host_voice_reply_poi_set, 22u, 1u, 2u, 3u, 4u);
+    TEST_2(nc_host_voice_reply_change_route_guidance, 26u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_change_map_direction, 27u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_change_map_dimensional_view, 28u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_zoom_in, 29u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_zoom_out, 30u, 1u, 2u);
+    TEST_3(nc_host_voice_reply_set_destination, 34u, 1u, 2u, 3u);
+    TEST_1(nc_host_phone_subscribe, 3u, 1u);
+    TEST_1(nc_host_phone_request_phone_call_availability, 5u, 13u);
+    TEST_1(nc_host_tts_internal_deinitialize, 4u, 0x2404u);
+    TEST_1(nc_host_parking_subscribe, 3u, UINT32_MAX);
+    TEST_1(nc_host_apogee_subscribe, 3u, UINT32_MAX);
+    TEST_1(nc_host_agw_subscribe, 3u, UINT32_MAX);
     TEST_1(mock_pas_31_6_raw, 6u, 0x316u);
     TEST_5(mock_pas_31_10_raw, 10u, 1u, 2u, 3u, 4u, 5u);
     TEST_3(mock_pas_31_13_raw, 13u, 0x311u, 0x312u, 0x313u);
-    TEST_2(mock_pas_31_8_replyGraphicalWeatherMapMode, 8u, 1u, 2u);
-    TEST_2(mock_pas_root_9_requestUserStorage, 9u, 1u, 2u);
+    TEST_2(nc_host_agw_reply_graphical_weather_map_mode, 8u, 1u, 2u);
+    TEST_2(nc_host_root_request_user_storage, 9u, 1u, 2u);
 
     /* Every newly recovered fixed-scalar dormant seam is independently callable. */
-    TEST_1(mock_pas_20_5_signalConnectionNeeded, 5u, 1u);
-    TEST_0(mock_pas_25_5_signalMyDestDeletedEvent, 5u);
-    TEST_1(mock_pas_25_6_signalGUISelection, 6u, 2u);
-    TEST_2(mock_pas_25_31_replyRouteGuidanceStatus, 31u, 3u, 4u);
-    TEST_0(mock_pas_25_32_signalTerminateVR, 32u);
-    TEST_0(mock_pas_25_33_signalInitiateVR, 33u);
-    TEST_1(mock_pas_31_4_replyEnterGraphicalWeatherMap, 4u, 5u);
-    TEST_1(mock_pas_31_5_replyExitGraphicalWeatherMap, 5u, 6u);
-    TEST_2(mock_pas_31_7_requestAgwPanningMode, 7u, 7u, 8u);
-    TEST_2(mock_pas_31_9_requestAgwSetFilter, 9u, 9u, 10u);
-    TEST_3(mock_pas_31_11_requestAgwSetRadiusOfInterest,
+    TEST_1(nc_host_connectivity_signal_connection_needed, 5u, 1u);
+    TEST_0(nc_host_voice_signal_my_dest_deleted_event, 5u);
+    TEST_1(nc_host_voice_signal_gui_selection, 6u, 2u);
+    TEST_2(nc_host_voice_reply_route_guidance_status_completion, 31u, 3u, 4u);
+    TEST_0(nc_host_voice_signal_terminate_vr, 32u);
+    TEST_0(nc_host_voice_signal_initiate_vr, 33u);
+    TEST_1(nc_host_agw_reply_enter_graphical_weather_map, 4u, 5u);
+    TEST_1(nc_host_agw_reply_exit_graphical_weather_map, 5u, 6u);
+    TEST_2(nc_host_agw_request_agw_panning_mode, 7u, 7u, 8u);
+    TEST_2(nc_host_agw_request_agw_set_filter, 9u, 9u, 10u);
+    TEST_3(nc_host_agw_request_agw_set_radius_of_interest,
            11u, 11u, 12u, 13u);
-    TEST_0(mock_pas_31_14_signalExitGraphicalWeatherMap, 14u);
-    TEST_1(mock_pas_14_3_subscribe, 3u, 14u);
-    TEST_1(mock_pas_14_4_requestStatus, 4u, 15u);
-    TEST_1(mock_pas_14_5_requestSelectionFilterCapabilities, 5u, 16u);
-    TEST_1(mock_pas_14_6_requestSelectableFilterList, 6u, 17u);
-    TEST_0(mock_pas_27_2_adapterReady, 2u);
-    TEST_1(mock_pas_27_3_subscribe, 3u, 18u);
-    TEST_1(mock_pas_27_4_requestStationList, 4u, 19u);
-    TEST_1(mock_pas_9_4_requestGPSPosition, 4u, 20u);
-    TEST_1(mock_pas_root_2_subscribe, 2u, 21u);
-    TEST_0(mock_pas_root_4_signalDisableWatchdog, 4u);
-    TEST_1(mock_pas_root_7_replyShutdown, 7u, 22u);
-    TEST_1(mock_pas_root_8_requestPowerStatus, 8u, 23u);
-    TEST_1(mock_pas_12_3_subscribeDiagnosisDriverDistractionStatus,
+    TEST_0(nc_host_agw_signal_exit_graphical_weather_map, 14u);
+    TEST_1(nc_host_rds_subscribe, 3u, 14u);
+    TEST_1(nc_host_rds_request_status, 4u, 15u);
+    TEST_1(nc_host_rds_request_selection_filter_capabilities, 5u, 16u);
+    TEST_1(nc_host_rds_request_selectable_filter_list, 6u, 17u);
+    TEST_0(nc_host_tpeg_adapter_ready, 2u);
+    TEST_1(nc_host_tpeg_subscribe, 3u, 18u);
+    TEST_1(nc_host_tpeg_request_station_list, 4u, 19u);
+    TEST_1(nc_host_gps_request_gps_position, 4u, 20u);
+    TEST_1(nc_host_root_subscribe, 2u, 21u);
+    TEST_0(nc_host_root_signal_disable_watchdog, 4u);
+    TEST_1(nc_host_root_reply_shutdown, 7u, 22u);
+    TEST_1(nc_host_root_request_power_status, 8u, 23u);
+    TEST_1(nc_host_diagnosis_subscribe_diagnosis_driver_distraction_status,
            3u, 24u);
-    TEST_1(mock_pas_12_4_requestDiagnosisDriverDistractionStatus,
+    TEST_1(nc_host_diagnosis_request_diagnosis_driver_distraction_status,
            4u, 25u);
-    TEST_2(mock_pas_12_7_signalErrorCode, 7u, 26u, 27u);
-    TEST_1(mock_pas_23_3_subscribe, 3u, 28u);
-    TEST_0(mock_pas_21_2_adapterReady, 2u);
-    TEST_1(mock_pas_21_3_subscribe, 3u, 29u);
-    TEST_0(mock_pas_21_5_signalStartAuthentication, 5u);
-    TEST_0(mock_pas_28_2_adapterReady, 2u);
-    TEST_0(mock_pas_28_3_subscribe, 3u);
-    TEST_2(mock_pas_28_4_requestTuneToFrequency, 4u, 30u, 31u);
-    TEST_4(mock_pas_19_10_requestOfferDataExchangeObjectProducedByClient,
+    TEST_2(nc_host_diagnosis_signal_error_code, 7u, 26u, 27u);
+    TEST_1(nc_host_rotary_subscribe, 3u, 28u);
+    TEST_0(nc_host_live_traffic_adapter_ready, 2u);
+    TEST_1(nc_host_live_traffic_subscribe, 3u, 29u);
+    TEST_0(nc_host_live_traffic_signal_start_authentication, 5u);
+    TEST_0(nc_host_vics_adapter_ready, 2u);
+    TEST_0(nc_host_vics_subscribe, 3u);
+    TEST_2(nc_host_vics_request_tune_to_frequency, 4u, 30u, 31u);
+    TEST_4(nc_host_data_exchange_request_offer_data_exchange_object_produced_by_client,
            10u, 32u, 33u, 34u, 35u);
-    TEST_2(mock_pas_8_4_subscribeCANMessage, 4u, 36u, 37u);
-    TEST_1(mock_pas_8_7_requestOdometer, 7u, 38u);
-    TEST_1(mock_pas_8_8_requestVehicleSpeedDisplayedOnICD, 8u, 39u);
-    TEST_2(mock_pas_8_9_requestCANMessageSynchronization, 9u, 40u, 41u);
-    TEST_1(mock_pas_8_12_requestIgnitionStatus, 12u, 42u);
-    TEST_2(mock_pas_30_6_requestApogeeRemoveCollectionMBR, 6u, 43u, 44u);
-    TEST_2(mock_pas_13_12_replyStatusNavigationDatabase, 12u, 45u, 46u);
+    TEST_2(nc_host_vehicle_subscribe_can_message, 4u, 36u, 37u);
+    TEST_1(nc_host_vehicle_request_odometer, 7u, 38u);
+    TEST_1(nc_host_vehicle_request_vehicle_speed_displayed_on_icd, 8u, 39u);
+    TEST_2(nc_host_vehicle_request_can_message_synchronization, 9u, 40u, 41u);
+    TEST_1(nc_host_vehicle_request_ignition_status, 12u, 42u);
+    TEST_2(nc_host_apogee_request_apogee_remove_collection_mbr, 6u, 43u, 44u);
+    TEST_2(nc_host_nav_diagnosis_reply_status_navigation_database, 12u, 45u, 46u);
 
     /* Bounded pointer seams copy before dispatch; callbacks mutate the caller. */
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
     g_expected_copy_size = MOCK_PAS_EWS_AREA_SIZE;
     prepare(3u, (GenericCallback)callback_word_owned_blob);
-    assert(mock_pas_32_3_replyEWSArea(&g_proxy, 47u, concrete_copy) == 0u);
+    assert(nc_host_ews_reply_ews_area(&g_proxy, 47u, concrete_copy) == 0u);
     assert(g_calls == 1u && g_argument[0] == 47u);
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
@@ -980,7 +980,7 @@ int main(void)
     g_expected_copy_size = MOCK_PAS_RDS_FILTER_RECORD_SIZE *
                            MOCK_PAS_RDS_FILTER_MAX_RECORDS;
     prepare(7u, (GenericCallback)callback_word_owned_blob);
-    assert(mock_pas_14_7_signalSelectionFilter(&g_proxy, 25u,
+    assert(nc_host_rds_signal_selection_filter(&g_proxy, 25u,
                                                 concrete_copy) == 0u);
     assert(g_calls == 1u && g_argument[0] == 25u);
 
@@ -988,7 +988,7 @@ int main(void)
     g_mutate_bytes = concrete_copy;
     g_expected_copy_size = MOCK_PAS_TPEG_STATION_SIZE;
     prepare(5u, (GenericCallback)callback_owned_blob);
-    assert(mock_pas_27_5_signalSelectStation(&g_proxy, concrete_copy) == 0u);
+    assert(nc_host_tpeg_signal_select_station(&g_proxy, concrete_copy) == 0u);
     assert(g_calls == 1u);
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
@@ -996,13 +996,13 @@ int main(void)
     g_expected_copy_size = MOCK_PAS_TPEG_STATION_SIZE *
                            MOCK_PAS_TPEG_STATION_MAX_RECORDS;
     prepare(6u, (GenericCallback)callback_word_owned_blob);
-    assert(mock_pas_27_6_signalSelectStationList(
+    assert(nc_host_tpeg_signal_select_station_list(
                &g_proxy, MOCK_PAS_TPEG_STATION_MAX_RECORDS,
                concrete_copy) == 0u);
     assert(g_calls == 1u &&
            g_argument[0] == MOCK_PAS_TPEG_STATION_MAX_RECORDS);
     prepare(6u, (GenericCallback)callback_word_owned_blob);
-    assert(mock_pas_27_6_signalSelectStationList(
+    assert(nc_host_tpeg_signal_select_station_list(
                &g_proxy, MOCK_PAS_TPEG_STATION_MAX_RECORDS + 1u,
                concrete_copy) == 1u);
     assert(g_calls == 0u);
@@ -1011,13 +1011,13 @@ int main(void)
     g_mutate_bytes = concrete_copy;
     g_expected_copy_size = MOCK_PAS_MAP_MATCHED_POSITION_SIZE;
     prepare(5u, (GenericCallback)callback_owned_blob);
-    assert(mock_pas_9_5_signalMapMatchedPosition(
+    assert(nc_host_gps_signal_map_matched_position(
                &g_proxy, concrete_copy) == 0u && g_calls == 1u);
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
     prepare(11u, (GenericCallback)callback_opaque);
-    assert(mock_pas_root_11_supplierSpecificServerFunction(
+    assert(nc_host_root_supplier_specific_server_function(
                &g_proxy, 48u, 49u, concrete_copy) == 0u);
     assert(g_calls == 1u && g_pointer[0] == concrete_copy);
     assert(g_argument[0] == 48u && g_argument[1] == 49u);
@@ -1026,7 +1026,7 @@ int main(void)
     g_mutate_bytes = concrete_copy;
     g_expected_copy_size = MOCK_PAS_VICS_WARNING_SIZE;
     prepare(5u, (GenericCallback)callback_4word_owned_blob);
-    assert(mock_pas_28_5_signalVICSWideEmergencyWarning(
+    assert(nc_host_vics_signal_vics_wide_emergency_warning(
                &g_proxy, 50u, 51u, 52u, 53u, concrete_copy) == 0u);
     assert(g_calls == 1u && g_argument[0] == 50u && g_argument[3] == 53u);
 
@@ -1034,7 +1034,7 @@ int main(void)
     g_mutate_bytes = concrete_copy;
     g_expected_copy_size = MOCK_PAS_CAN_MESSAGE_SIZE;
     prepare(10u, (GenericCallback)callback_2word_owned_blob);
-    assert(mock_pas_8_10_signalCANMessage(
+    assert(nc_host_vehicle_signal_can_message(
                &g_proxy, 54u, 55u, concrete_copy) == 0u);
     assert(g_calls == 1u && g_argument[0] == 54u && g_argument[1] == 55u);
 
@@ -1042,7 +1042,7 @@ int main(void)
     g_mutate_bytes = concrete_copy;
     g_expected_copy_size = MOCK_PAS_TIMEZONE_SIZE;
     prepare(5u, (GenericCallback)callback_word_owned_blob);
-    assert(mock_pas_7_5_replyTimeZoneInformation(
+    assert(nc_host_i18n_reply_time_zone_information(
                &g_proxy, 56u, concrete_copy) == 0u);
     assert(g_calls == 1u && g_argument[0] == 56u);
 
@@ -1050,90 +1050,90 @@ int main(void)
     vr_text[sizeof(vr_text) - 1u] = '\0';
     g_mutate_bytes = (uint8_t *)vr_text;
     prepare(13u, (GenericCallback)callback_file_get);
-    assert(mock_pas_25_13_replyFileGet(&g_proxy, 1u, 2u, vr_text) == 0u);
+    assert(nc_host_voice_reply_file_get(&g_proxy, 1u, 2u, vr_text) == 0u);
     assert(g_calls == 1u);
     prepare(13u, (GenericCallback)callback_file_get);
-    assert(mock_pas_25_13_replyFileGet(&g_proxy, 1u, 2u, NULL) == 1u);
+    assert(nc_host_voice_reply_file_get(&g_proxy, 1u, 2u, NULL) == 1u);
     assert(g_calls == 0u);
 
     memset(vr_text, 'B', sizeof(vr_text));
     vr_text[sizeof(vr_text) - 1u] = '\0';
     g_mutate_bytes = (uint8_t *)vr_text;
     prepare(20u, (GenericCallback)callback_location_set);
-    assert(mock_pas_25_20_replyLocationSet(
+    assert(nc_host_voice_reply_location_set(
                &g_proxy, 3u, 4u, 5u, vr_text, 6u, 7u) == 0u);
     assert(g_calls == 1u);
 
     g_mutate_words = next_types;
     prepare(21u, (GenericCallback)callback_location_types);
-    assert(mock_pas_25_21_replyNextAvailableLocationGet(
+    assert(nc_host_voice_reply_next_available_location_get(
                &g_proxy, 8u, 9u, next_types) == 0u);
     assert(g_calls == 1u);
 
     memset(wsa, 0x5a, sizeof(wsa));
     g_mutate_bytes = wsa;
     prepare(15u, (GenericCallback)callback_wsa);
-    assert(mock_pas_31_15_signalWsaWarningPopup(
+    assert(nc_host_agw_signal_wsa_warning_popup(
                &g_proxy, 10u, 1u, wsa) == 0u);
     assert(g_calls == 1u);
 
     memset(timezone, 0x5a, sizeof(timezone));
     g_mutate_bytes = timezone;
     prepare(6u, (GenericCallback)callback_blob);
-    assert(mock_pas_7_6(&g_proxy, timezone) == 0u && g_calls == 1u);
+    assert(nc_host_i18n_signal_time_zone(&g_proxy, timezone) == 0u && g_calls == 1u);
     prepare(6u, (GenericCallback)callback_blob);
-    assert(mock_pas_7_6(&g_proxy, NULL) == 1u && g_calls == 0u);
+    assert(nc_host_i18n_signal_time_zone(&g_proxy, NULL) == 1u && g_calls == 0u);
 
     memset(version, 0x5a, sizeof(version));
     g_mutate_bytes = version;
     prepare(5u, (GenericCallback)callback_version);
-    assert(mock_pas_12_5(&g_proxy, -7, version) == 0u && g_calls == 1u);
+    assert(nc_host_diagnosis_reply_software_component_version(&g_proxy, -7, version) == 0u && g_calls == 1u);
     prepare(5u, (GenericCallback)callback_version);
-    assert(mock_pas_12_5(&g_proxy, -7, NULL) == 1u && g_calls == 0u);
+    assert(nc_host_diagnosis_reply_software_component_version(&g_proxy, -7, NULL) == 1u && g_calls == 0u);
     prepare(6u, (GenericCallback)callback_supplier);
-    assert(mock_pas_12_6(&g_proxy, -8, 0xfedcu) == 0u && g_calls == 1u);
+    assert(nc_host_diagnosis_reply_software_component_supplier_identification(&g_proxy, -8, 0xfedcu) == 0u && g_calls == 1u);
 
     wmemset(wide, L'A', MOCK_PAS_DIAG_WIDE_TEXT_MAX + 1u);
     wide[MOCK_PAS_DIAG_WIDE_TEXT_MAX + 1u] = L'\0';
     g_mutate_wide = wide;
     prepare(11u, (GenericCallback)callback_wide);
-    assert(mock_pas_13_11(&g_proxy, -9, wide) == 0u && g_calls == 1u);
+    assert(nc_host_nav_diagnosis_reply_navigation_database_version_string(&g_proxy, -9, wide) == 0u && g_calls == 1u);
     prepare(11u, (GenericCallback)callback_wide);
-    assert(mock_pas_13_11(&g_proxy, -9, NULL) == 1u && g_calls == 0u);
+    assert(nc_host_nav_diagnosis_reply_navigation_database_version_string(&g_proxy, -9, NULL) == 1u && g_calls == 0u);
 
     memset(cluster, 0x5a, sizeof(cluster));
     g_mutate_bytes = cluster;
     prepare(3u, (GenericCallback)callback_blob);
-    assert(mock_pas_17_3(&g_proxy, cluster) == 0u && g_calls == 1u);
+    assert(nc_host_cluster_signal_instrument_cluster_display_data(&g_proxy, cluster) == 0u && g_calls == 1u);
     prepare(3u, (GenericCallback)callback_blob);
-    assert(mock_pas_17_3(&g_proxy, NULL) == 1u && g_calls == 0u);
+    assert(nc_host_cluster_signal_instrument_cluster_display_data(&g_proxy, NULL) == 1u && g_calls == 0u);
 
     g_mutate_words = types;
     prepare(3u, (GenericCallback)callback_data);
-    assert(mock_pas_19_3(&g_proxy, 0u, NULL) == 0u && g_calls == 1u);
+    assert(nc_host_data_exchange_produce_data_exchange_object_types(&g_proxy, 0u, NULL) == 0u && g_calls == 1u);
     prepare(4u, (GenericCallback)callback_data);
-    assert(mock_pas_19_4(&g_proxy, 3u, types) == 0u && g_calls == 1u);
+    assert(nc_host_data_exchange_consume_data_exchange_object_types(&g_proxy, 3u, types) == 0u && g_calls == 1u);
     prepare(4u, (GenericCallback)callback_data);
-    assert(mock_pas_19_4(&g_proxy, 65u, types) == 1u && g_calls == 0u);
+    assert(nc_host_data_exchange_consume_data_exchange_object_types(&g_proxy, 65u, types) == 1u && g_calls == 0u);
     prepare(4u, (GenericCallback)callback_data);
-    assert(mock_pas_19_4(&g_proxy, 1u, NULL) == 1u && g_calls == 0u);
+    assert(nc_host_data_exchange_consume_data_exchange_object_types(&g_proxy, 1u, NULL) == 1u && g_calls == 0u);
 
     wmemset(wide, L'N', MOCK_THREAD_NAME_LIMIT + 1u);
     wide[MOCK_THREAD_NAME_LIMIT + 1u] = L'\0';
     g_mutate_wide = wide;
     prepare(10u, (GenericCallback)callback_thread);
-    assert(mock_pas_root_10(&g_proxy, 77u, wide, 3u) == 0u && g_calls == 1u);
+    assert(nc_host_root_signal_thread_status(&g_proxy, 77u, wide, 3u) == 0u && g_calls == 1u);
     prepare(10u, (GenericCallback)callback_thread);
-    assert(mock_pas_root_10(&g_proxy, 77u, NULL, 3u) == 1u && g_calls == 0u);
+    assert(nc_host_root_signal_thread_status(&g_proxy, 77u, NULL, 3u) == 1u && g_calls == 0u);
 
     prepare(3u, (GenericCallback)callback1);
     g_return_status = 5u;
-    assert(mock_pas_13_3(&g_proxy, 1u) == 5u);
+    assert(nc_host_nav_diagnosis_subscribe_driver_distraction_status(&g_proxy, 1u) == 5u);
     mock_callback_test_state(&state);
     assert(state.optional_failures >= 1u);
     prepare(3u, (GenericCallback)callback1);
     g_return_status = 6u;
-    assert(mock_pas_8_3(&g_proxy, 1u) == 6u);
+    assert(nc_host_vehicle_subscribe(&g_proxy, 1u) == 6u);
     mock_callback_test_state(&state);
     assert(state.critical_failures >= 1u);
     mock_callback_backend_reset();

@@ -780,7 +780,7 @@ to prove that the radio routes physical input to the recreated `NAV_main`
 application context and that its source coordinates match the rendered
 800-by-480 buffer under the installed Screen class policy.
 
-The nearby `/mnt/d/osmand-qnx-build` evidence proves the pinned OsmAnd Core
+Workstation-local OsmAnd build evidence proves that the pinned OsmAnd Core
 static archive and a QNX ARM smoke binary build, but not a map-renderer/EGL
 integration. This change intentionally stops at the backend boundary: no
 OsmAnd object is constructed or linked yet.

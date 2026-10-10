@@ -1,7 +1,7 @@
-QNX_SDK ?= /mnt/d/tools/qnx660-sdk
-QNX_HOST := $(QNX_SDK)/host/linux/x86
-QNX_TARGET := $(QNX_SDK)/target/qnx6
-HOST_LIBS ?= /mnt/d/tools/qnx-host-libs
+QNX_SDK ?=
+QNX_HOST ?= $(if $(QNX_SDK),$(QNX_SDK)/host/linux/x86)
+QNX_TARGET ?= $(if $(QNX_SDK),$(QNX_SDK)/target/qnx6)
+HOST_LIBS ?= $(QNX_HOST_LIBS)
 QCC := $(QNX_HOST)/usr/bin/QCC
 READELF := $(QNX_HOST)/usr/bin/ntoarmv7-readelf
 

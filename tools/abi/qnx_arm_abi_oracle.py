@@ -20,8 +20,8 @@ import subprocess
 import tempfile
 
 
-DEFAULT_SDK = "/mnt/d/tools/qnx660-sdk"
-DEFAULT_HOST_LIBS = "/mnt/d/tools/qnx-host-libs"
+DEFAULT_SDK = os.environ.get("QNX_SDK")
+DEFAULT_HOST_LIBS = os.environ.get("QNX_HOST_LIBS")
 FLAGS = [
     "-Vgcc_ntoarmv7le", "-O2", "-fno-inline", "-fno-ipa-sra",
     "-fno-optimize-sibling-calls", "-ffunction-sections",
@@ -316,8 +316,9 @@ def load(path):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--sdk", default=DEFAULT_SDK)
-    p.add_argument("--host-libs", default=DEFAULT_HOST_LIBS)
+    p.add_argument("--sdk", default=DEFAULT_SDK, required=DEFAULT_SDK is None)
+    p.add_argument("--host-libs", default=DEFAULT_HOST_LIBS,
+                   required=DEFAULT_HOST_LIBS is None)
     p.add_argument("--manifest", default="contracts/qr39/callbacks/proxy-slot-manifest.csv")
     p.add_argument("--evidence", default="evidence/qr39/oracles/qnx-arm-evidence.csv")
     p.add_argument("--catalog", default="evidence/qr39/oracles/qnx-arm-catalog.csv")
@@ -333,6 +334,8 @@ def main():
             raise SystemExit("--function must name a function in --normalize-objdump")
         print(";".join(call_window(funcs[args.function], args.call_index)))
         return
+    if not args.sdk or not args.host_libs:
+        p.error("set QNX_SDK and QNX_HOST_LIBS, or pass --sdk and --host-libs")
     with tempfile.TemporaryDirectory(prefix="qnx-arm-abi-oracle-") as work:
         catalog = build_catalog(args.sdk, args.host_libs, work)
     matcher_self_test(catalog)
