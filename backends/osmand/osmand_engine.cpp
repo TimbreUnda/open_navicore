@@ -1,6 +1,9 @@
 #include "engine.h"
 #include "session.h"
 #include "diagnostics.h"
+#include "ui/gl_overlay_compositor.h"
+#include "ui/navigation_model.h"
+#include "ui/navigation_view.h"
 
 #include <OsmAndCore.h>
 #include <OsmAndCore/CoreResourcesEmbeddedBundle.h>
@@ -31,6 +34,7 @@ public:
     bool initialize(const Config&, const MockNavBackendRenderTargetV1&,
                     std::shared_ptr<Wakeup>) override;
     FrameResult frame(const MockNavBackendRenderTargetV1&) override;
+    int pointer(const MockNavBackendPointerV1&) override;
     ReleaseResult release(ReleaseMode) override;
 
 private:
@@ -48,6 +52,10 @@ private:
     std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> symbols_;
     std::shared_ptr<OsmAnd::MapRasterLayerProvider_Software> raster_;
     std::shared_ptr<OsmAnd::IMapRenderer> renderer_;
+    std::unique_ptr<ui::NavigationModel> navigation_;
+    std::unique_ptr<ui::NavigationView> view_;
+    ui::GlOverlayCompositor compositor_;
+    bool overlay_enabled_ = true;
 };
 
 bool failure(const char* message)
@@ -132,7 +140,12 @@ bool OsmAndEngine::initialize(const Config& config,
     phase_ = Phase::RenderingEntering;
     if (!renderer_->initializeRendering(true))
         return failure("error=initialize_rendering_partial");
+    // Rendering now has a valid teardown contract. Mark it before allocations
+    // below so an LVGL construction exception can still release OsmAnd.
     phase_ = Phase::Ready;
+    navigation_ = std::unique_ptr<ui::NavigationModel>(new ui::NavigationModel());
+    view_ = std::unique_ptr<ui::NavigationView>(
+        new ui::NavigationView(*navigation_, target.width, target.height));
     return true;
 }
 
@@ -162,7 +175,22 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     // resource-wait behavior, but let Session report sustained lack of progress.
     if (!renderer_->renderFrame())
         return {FrameOutcome::Pending, PendingStage::Render, true};
+    view_->resize(target.width, target.height);
+    if (overlay_enabled_ && view_->render(16u) &&
+        !compositor_.present(view_->pixels(), view_->width(), view_->height())) {
+        trace("error=ui_composite");
+        compositor_.release(false);
+        overlay_enabled_ = false;
+    }
     return {FrameOutcome::Presented, PendingStage::None, !renderer_->isIdle()};
+}
+
+int OsmAndEngine::pointer(const MockNavBackendPointerV1& event)
+{
+    if (phase_ != Phase::Ready || !view_)
+        return -1;
+    view_->pointer(static_cast<int>(event.action), event.x, event.y);
+    return 0;
 }
 
 ReleaseResult OsmAndEngine::release(ReleaseMode mode)
@@ -176,6 +204,10 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         // Set the failure state BEFORE invoking dependency code that may throw
         // or fail after tearing down only part of the resource graph.
         phase_ = Phase::Quarantined;
+        compositor_.release(mode == ReleaseMode::ContextLost);
+        view_.reset();
+        navigation_.reset();
+        overlay_enabled_ = true;
         if (!renderer_->releaseRendering(mode == ReleaseMode::ContextLost))
             return ReleaseResult::Quarantined;
         phase_ = Phase::CoreReady;

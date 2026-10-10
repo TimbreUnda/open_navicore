@@ -3,6 +3,7 @@ OSMAND_QNX_ROOT ?=
 OSMAND_CORE_LIB_DIR ?= $(OSMAND_QNX_ROOT)/source/binaries/qnx/gcc-armv7/Release
 OSMAND_QT_PREFIX ?= $(OSMAND_QNX_ROOT)/qt-pic-prefix
 OSMAND_CXX ?= $(OSMAND_QNX_ROOT)/gcc-out/bin/arm-unknown-nto-qnx6.6.0eabi-g++
+OSMAND_CC ?= $(OSMAND_QNX_ROOT)/gcc-out/bin/arm-unknown-nto-qnx6.6.0eabi-gcc
 # Change this identifier when replacing an external binary/source bundle in place.
 OSMAND_BUNDLE_ID ?= local-unqualified
 OSMAND_CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -Werror \
@@ -14,6 +15,7 @@ OSMAND_CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -Werror \
 	-DOSMAND_OPENGLES2PLUS_RENDERER_SUPPORTED \
 	-fPIC -fvisibility=hidden -ffunction-sections -fdata-sections
 OSMAND_INCLUDES := -I$(CURDIR)/include -I$(OSMAND_QNX_ROOT)/source/core/include \
+	-I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/glm/upstream.patched \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/boost/upstream.patched \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched \
@@ -27,23 +29,29 @@ OSMAND_LINKFLAGS := -shared -static-libstdc++ -static-libgcc -Wl,-Bsymbolic \
 	-Wl,-rpath,/datastore/navicore-backend \
 	-Wl,--version-script=$(CURDIR)/backends/osmand/osmand_backend.map \
 	-Wl,--gc-sections -Wl,--no-undefined -Wl,-z,text
+OSMAND_LVGL_FLAGS := -DLV_CONF_PATH='"backends/osmand/ui/lv_conf.h"'
 # Worktrees, flags, toolchains and bundle identities never share object files.
 OSMAND_CONFIG_KEY := $(shell printf '%s\n' '$(CURDIR)' '$(QNX_HOST)' \
 	'$(QNX_TARGET)' '$(HOST_LIBS)' '$(OSMAND_CXX)' '$(OSMAND_CORE_LIB_DIR)' \
+	'$(OSMAND_CC)' \
 	'$(OSMAND_BUNDLE_ID)' '$(OSMAND_CXXFLAGS)' '$(OSMAND_INCLUDES)' \
-	'$(OSMAND_LINKFLAGS)' '$(CPPFLAGS)' '$(CFLAGS)' | sha256sum | cut -c1-16)
+	'$(OSMAND_LVGL_FLAGS)' '$(OSMAND_LINKFLAGS)' '$(CPPFLAGS)' '$(CFLAGS)' | sha256sum | cut -c1-16)
 OSMAND_BUILD_ROOT ?= $(CURDIR)/build/osmand
 OSMAND_BUILD_DIR := $(OSMAND_BUILD_ROOT)/$(OSMAND_CONFIG_KEY)
 OSMAND_BINUTILS_DIR := $(OSMAND_BUILD_DIR)/binutils
 OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 OSMAND_PLUGIN_TARGET := $(OSMAND_BUILD_DIR)/libMockNavBackendOsmAnd.so
 OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
-	session.o diagnostics.o osmand_engine.o)
+	session.o diagnostics.o osmand_engine.o navigation_model.o \
+	navigation_view.o gl_overlay_compositor.o)
+LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
+OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
+OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)
 OSMAND_OBF_SMOKE_TARGET := $(OSMAND_BUILD_DIR)/qnx-osmand-obf-smoke
 OSMAND_PLUGIN_SMOKE_TARGET := $(OSMAND_BUILD_DIR)/qnx-osmand-plugin-smoke
 OSMAND_ENV = QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS)
 OSMAND_COMPILE = $(OSMAND_ENV) $(OSMAND_CXX) --sysroot=$(QNX_TARGET) \
-	-B$(OSMAND_BINUTILS_DIR)/ $(OSMAND_CXXFLAGS) $(OSMAND_INCLUDES)
+	-B$(OSMAND_BINUTILS_DIR)/ $(OSMAND_CXXFLAGS) $(OSMAND_INCLUDES) $(OSMAND_LVGL_FLAGS)
 
 .PHONY: osmand-check osmand-manifest osmand-session-test
 
@@ -69,6 +77,20 @@ $(OSMAND_BINUTILS_STAMP): | $(OSMAND_BUILD_DIR)
 $(OSMAND_BUILD_DIR)/%.o: backends/osmand/%.cpp backends/osmand/osmand.mk \
 		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
 	$(OSMAND_COMPILE) -MMD -MP -c $< -o $@
+
+$(OSMAND_BUILD_DIR)/%.o: backends/osmand/ui/%.cpp backends/osmand/osmand.mk \
+		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
+	$(OSMAND_COMPILE) -I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
+		$(OSMAND_LVGL_FLAGS) -MMD -MP -c $< -o $@
+
+$(OSMAND_BUILD_DIR)/lvgl/%.o: third_party/lvgl/src/%.c \
+		backends/osmand/ui/lv_conf.h backends/osmand/osmand.mk \
+		$(OSMAND_CC) $(OSMAND_BINUTILS_STAMP)
+	mkdir -p $(dir $@)
+	$(OSMAND_ENV) $(OSMAND_CC) --sysroot=$(QNX_TARGET) -B$(OSMAND_BINUTILS_DIR)/ \
+		-std=c99 -O2 -fPIC -ffunction-sections -fdata-sections \
+		-I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
+		$(OSMAND_LVGL_FLAGS) -MMD -MP -c $< -o $@
 
 $(OSMAND_PLUGIN_TARGET): $(OSMAND_OBJECTS) backends/osmand/osmand_backend.map \
 		$(OSMAND_CORE_LIB_DIR)/libOsmAndCore_shared.so
@@ -117,3 +139,23 @@ osmand-session-test:
 		backends/osmand/osmand_backend.cpp tests/osmand_session_test.cpp \
 		-o $(BUILD_DIR)/osmand-session-test
 	$(BUILD_DIR)/osmand-session-test
+
+LVGL_HOST_BUILD_DIR := $(BUILD_DIR)/lvgl-host
+LVGL_HOST_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(LVGL_HOST_BUILD_DIR)/%.o,$(LVGL_SOURCES))
+
+$(LVGL_HOST_BUILD_DIR)/%.o: third_party/lvgl/src/%.c backends/osmand/ui/lv_conf.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c99 -O2 -I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
+		-DLV_CONF_PATH='"backends/osmand/ui/lv_conf.h"' -c $< -o $@
+
+$(LVGL_HOST_BUILD_DIR)/liblvgl.a: $(LVGL_HOST_OBJECTS)
+	$(AR) rcs $@ $^
+
+navigation-ui-test: $(LVGL_HOST_BUILD_DIR)/liblvgl.a
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror \
+		-Iinclude -Ibackends/osmand -Ithird_party/lvgl -I$(CURDIR) \
+		-DLV_CONF_PATH='"backends/osmand/ui/lv_conf.h"' \
+		backends/osmand/ui/navigation_model.cpp \
+		backends/osmand/ui/navigation_view.cpp tests/navigation_ui_test.cpp \
+		$(LVGL_HOST_BUILD_DIR)/liblvgl.a -lm -o $(LVGL_HOST_BUILD_DIR)/navigation-ui-test
+	$(LVGL_HOST_BUILD_DIR)/navigation-ui-test

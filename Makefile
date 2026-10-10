@@ -56,7 +56,7 @@ LDFLAGS := -Vgcc_ntoarmv7le -shared -Wl,-soname,libNaviCore.so \
 	contract-check full-check replay-stock provider-coverage-selftest \
 	static-provider-coverage-selftest static-callback-coverage-selftest \
 	pas-proxy-coverage-selftest qnx-arm-abi-oracle-selftest \
-	arm-snapshot-replay-selftest raw-callback-capture \
+	arm-snapshot-replay-selftest raw-callback-capture navigation-ui-test \
 	raw-callback-capture-selftest portability-selftest osmand-backend \
 	osmand-obf-smoke osmand-plugin-smoke clean
 
@@ -260,7 +260,7 @@ replay-stock: arm-snapshot-replay-selftest
 verify-bench:
 	@echo "Bench verification is operator-run; see docs/development/validation-tiers.md"
 
-test-host: check-contracts osmand-session-test
+test-host: check-contracts osmand-session-test navigation-ui-test
 	mkdir -p $(BUILD_DIR)
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-pthread \

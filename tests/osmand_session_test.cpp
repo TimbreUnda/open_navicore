@@ -51,6 +51,7 @@ public:
             throw std::runtime_error("frame");
         return p_->frame;
     }
+    int pointer(const MockNavBackendPointerV1&) override { return 0; }
     ReleaseResult release(ReleaseMode mode) override
     {
         ++p_->released;

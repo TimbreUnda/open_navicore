@@ -16,6 +16,9 @@ are not implemented.
 | `session.*` | Lifecycle, attachment generations, worker wakeups, frame policy and rollback decisions |
 | `engine.h` | Small injectable engine interface; no Qt/OsmAnd types |
 | `osmand_engine.cpp` | Core, resource bundle, map pipeline and renderer ownership |
+| `ui/navigation_model.*` | Host-testable destination/search/route state with revisioned asynchronous result seams |
+| `ui/navigation_view.*` | LVGL 9.6 software-rendered 2a/2b/2c/1b screen flow |
+| `ui/gl_overlay_compositor.*` | GLES2 texture composition inside the already-current borrowed context |
 | `diagnostics.*` | Nonthrowing, best-effort trace to `/tmp/open-navicore-osmand.log` |
 
 The provider owns Screen/EGL display, window, surface and context. The backend
