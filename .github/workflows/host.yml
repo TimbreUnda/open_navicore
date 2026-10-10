@@ -1,0 +1,20 @@
+name: Host and contract checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install host build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes gcc-multilib
+      - name: Run portable host and contract checks
+        run: make test-host

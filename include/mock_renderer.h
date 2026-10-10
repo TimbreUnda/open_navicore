@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "mock_gps_backend.h"
-#include "mock_nav_backend.h"
+#include <open_navicore/backend.h>
 
 #ifdef __cplusplus
 extern "C" {

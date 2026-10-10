@@ -87,12 +87,14 @@ contracts, ownership rules, and runtime behavior.
 |---|---|
 | [`src/`](src) | Provider, lifecycle, renderer, backend loader, and callback code |
 | [`include/`](include) | Public and internal ABI declarations |
-| [`plugins/`](plugins) | Reference backend and negative-test plugins |
+| [`backends/`](backends) | Reference backend and negative-test plugins |
+| [`contracts/`](contracts) | Checked provider and callback compatibility contracts |
+| [`evidence/`](evidence) | Static, cross-version, and compiler-oracle evidence |
 | [`tests/`](tests) | Host, ARM ABI, lifecycle, stress, and manifest checks |
 | [`tools/`](tools) | Ghidra scripts, ABI oracles, generators, and replay tooling |
 | [`fixtures/`](fixtures) | Deterministic original-code replay fixtures |
 | [`deploy/`](deploy) | Bench deployment and control helpers |
-| `*.csv` | Checked interface inventories and evidence manifests |
+| [`docs/`](docs) | ABI, development, and validation documentation |
 
 Generated ARM callback tables and checked CSV manifests are intentionally
 versioned. Verification compares regenerated output against them.
@@ -106,16 +108,25 @@ versioned. Verification compares regenerated output against them.
 - Target headers/libraries for Screen, EGL, and GLES2
 - Ghidra only when regenerating static-analysis evidence
 
-The default local SDK paths are documented in the Makefile and can be
-overridden with `QNX_SDK`, `HOST_LIBS`, `BUILD_DIR`, and `DIST_DIR`.
+No workstation paths are embedded in the project. Set `QNX_SDK` and
+`QNX_HOST_LIBS` when building target artifacts; `BUILD_DIR` and `DIST_DIR`
+remain optional overrides. For example, sibling tool directories can be used
+with `QNX_SDK=../qnx660-sdk QNX_HOST_LIBS=../qnx-host-libs make verify-qnx`.
 
 ```sh
 git clone https://github.com/TimbreUnda/open_navicore.git
 cd open_navicore
 
-make
 make test
-make verify
+```
+
+`make test` is the portable host suite and requires no QNX SDK or stock
+firmware. Target verification is intentionally explicit:
+
+```sh
+make verify-qnx    # licensed QNX SDP 6.6 and target graphics libraries
+make replay-stock  # locally supplied stock ELF plus Unicorn/Capstone
+make verify        # both target and replay verification
 ```
 
 Useful focused checks:
@@ -128,7 +139,8 @@ make raw-callback-capture-selftest
 ```
 
 Target artifacts are written to `dist/`, which is intentionally ignored by
-Git.
+Git. See [validation tiers](docs/development/validation-tiers.md) for the exact
+claims and inputs of every check.
 
 ## Evidence model
 

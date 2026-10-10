@@ -4,12 +4,10 @@
 import copy
 import csv
 import hashlib
-import pathlib
 import sys
 from collections import Counter
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
-from summarize_callback_field_origins import FIELDS as GROUP_FIELDS, summarize
+from tools.analysis.summarize_callback_field_origins import FIELDS as GROUP_FIELDS, summarize
 
 
 ORIGIN_FIELDS = [

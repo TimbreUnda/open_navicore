@@ -9,6 +9,8 @@ import re
 import sys
 from collections import Counter, defaultdict
 
+from tools.callback_symbols import callback_symbol
+
 
 RAW_KEY_DIGEST = "da0aa737f0f6b9ed9692af9422f606dd11b6af409bb05cd2c1d5394704e81d44"
 PURE_VIRTUAL = "080848a8"
@@ -204,7 +206,8 @@ def catalog(matrix_path, coverage_path, additions_path, contracts_path,
                 row["qr40_vtable"] != "081f06f0" or
                 row["qr396_target"] != target or row["qr40_target"] != target or
                 row["emitted"] != "no" or
-                not row["implementation_symbol"].startswith("mock_pas_10_") or
+                row["implementation_symbol"] != callback_symbol(
+                    row["adapter"], row["slot"], row["api_name"]) or
                 "*" in row["abi_prototype"].split(",", 1)[-1] or
                 "scalar" not in row["pointer_contract"]):
             raise ValueError("cross-version Audio evidence mismatch for %r" % (key,))
@@ -259,9 +262,9 @@ def catalog(matrix_path, coverage_path, additions_path, contracts_path,
                 }[key]
             comma = ", " if arguments else ""
             prototype = "uint32_t (*)(void *self%s%s)" % (comma, arguments)
-            symbol = "mock_pas_%s_%s_%s" % (
-                row["adapter"], row["slot"],
-                re.sub(r"[^A-Za-z0-9_]", "_", row["api_name"]))
+            symbol = callback_symbol(
+                row["adapter"], row["slot"], row["api_name"]
+            )
             result[key] = {
                 "source": "cross_version_concrete_vtable_audit",
                 "words": row["abi_words_after_self"],

@@ -197,7 +197,7 @@ def validate(rows, source, static_definition):
         if f"adapter == MOCK_UNAVAILABLE_ADAPTER_{adapter}" not in source:
             fail(f"getAdapter no longer rejects unreachable adapter {adapter}")
     get_adapter_match = re.search(
-        r"static uint32_t mock_get_adapter\s*\([^;]*?\)\s*\{(.*?)\n\}",
+        r"static uint32_t nc_provider_get_adapter\s*\([^;]*?\)\s*\{(.*?)\n\}",
         source, re.S)
     if get_adapter_match is None or "*interface_out = NULL" not in get_adapter_match.group(1):
         fail("getAdapter no longer initializes its output before rejection")

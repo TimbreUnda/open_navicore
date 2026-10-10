@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "mock_gps_backend.h"
-#include "mock_nav_backend.h"
+#include <open_navicore/backend.h>
 #include "mock_renderer.h"
 
 #include <assert.h>

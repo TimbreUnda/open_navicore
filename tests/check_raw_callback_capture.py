@@ -16,7 +16,7 @@ def fail(message: str) -> None:
 
 
 root = pathlib.Path(__file__).resolve().parents[1]
-manifest = root / "pas-callback-proxy-slot-manifest.csv"
+manifest = root / "contracts/qr39/callbacks/proxy-slot-manifest.csv"
 rows = [r for r in csv.DictReader(manifest.open(newline="", encoding="utf-8"))
         if r["slot_kind"] == "pure_virtual_application"]
 if len(rows) != 199 or len({r["interface"] for r in rows}) != 25:
@@ -24,11 +24,11 @@ if len(rows) != 199 or len({r["interface"] for r in rows}) != 25:
 
 with tempfile.TemporaryDirectory() as directory:
     temp = pathlib.Path(directory)
-    subprocess.run([sys.executable, str(root / "tools/generate_raw_callback_trampolines.py"),
+    subprocess.run([sys.executable, "-m", "tools.generators.generate_raw_callback_trampolines",
                     str(manifest), str(temp / "slots.S"), str(temp / "table.c")],
-                   check=True, stdout=subprocess.DEVNULL)
-    for generated, checked in ((temp / "slots.S", root / "src/mock_raw_callback_slots_arm.S"),
-                               (temp / "table.c", root / "src/mock_raw_callback_slot_table.c")):
+                   cwd=root, check=True, stdout=subprocess.DEVNULL)
+    for generated, checked in ((temp / "slots.S", root / "src/capture/generated/mock_raw_callback_slots_arm.S"),
+                               (temp / "table.c", root / "src/capture/generated/mock_raw_callback_slot_table.c")):
         if generated.read_bytes() != checked.read_bytes():
             fail(f"stale generated file {checked.name}")
 
@@ -53,10 +53,10 @@ with tempfile.TemporaryDirectory() as directory:
         "registers": {}, "allocations": [], "stubs": [],
     }
     (temp / "template.json").write_text(json.dumps(template), encoding="utf-8")
-    subprocess.run([sys.executable, str(root / "tools/raw_callback_to_replay.py"),
+    subprocess.run([sys.executable, "-m", "tools.replay.raw_callback_to_replay",
                     str(temp / "capture.raw"), str(temp / "template.json"),
                     str(temp / "replay.json"), "--manifest", str(manifest)],
-                   check=True)
+                   cwd=root, check=True)
     replay = json.loads((temp / "replay.json").read_text(encoding="utf-8"))
     if replay["execution"] != {"entry": "0x80001000", "isa": "thumb",
                                "stop_pc": "0x23000000"}:
@@ -65,7 +65,7 @@ with tempfile.TemporaryDirectory() as directory:
             replay["raw_callback_capture"]["interface"] != "SI_VoiceRecognition":
         fail("raw record converter lost register/interface identity")
 
-assembly = (root / "src/mock_raw_callback_slots_arm.S").read_text(encoding="utf-8")
+assembly = (root / "src/capture/generated/mock_raw_callback_slots_arm.S").read_text(encoding="utf-8")
 if len(re.findall(r"^mock_raw_cb_\d{3}_.*:$", assembly, re.M)) != 199:
     fail("generated assembly does not contain 199 labels")
 if assembly.count("stmdb sp!, {r12, lr}") != 199:
@@ -73,14 +73,14 @@ if assembly.count("stmdb sp!, {r12, lr}") != 199:
 if assembly.count("b mock_raw_callback_enter") != 199:
     fail("a per-slot stub does not branch to the shared entry")
 
-common = (root / "src/mock_raw_callback_trampolines_arm.S").read_text(encoding="utf-8")
+common = (root / "src/capture/mock_raw_callback_trampolines_arm.S").read_text(encoding="utf-8")
 for required in ("stmdb sp!, {r0-r3}", "mrs r2, cpsr", "msr cpsr_f, r0",
                  "ldmia sp!, {r0-r3}", "ldmia sp!, {r12, lr}", "bx r12",
                  "stmdb sp!, {r0-r3, r12, lr}", "bx lr"):
     if required not in common:
         fail(f"missing preservation instruction: {required}")
 
-capture = (root / "src/mock_raw_callback_capture.c").read_text(encoding="utf-8")
+capture = (root / "src/capture/mock_raw_callback_capture.c").read_text(encoding="utf-8")
 for forbidden in ("malloc(", "calloc(", "realloc(", "free(", "syslog(",
                   "printf(", "fprintf(", "pthread_mutex", "clock_gettime("):
     if forbidden in capture:

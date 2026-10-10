@@ -11,7 +11,6 @@ import tempfile
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-TOOL = ROOT / "tools" / "arm_snapshot_replay.py"
 FIXTURE = ROOT / "fixtures" / "arm-replay" / "hmi-signal-state-v1.json"
 CALLBACK = 0x20001000
 
@@ -19,8 +18,8 @@ CALLBACK = 0x20001000
 def invoke(*args: str, snapshot: pathlib.Path = FIXTURE,
            want_rc: int = 0) -> dict:
     process = subprocess.run(
-        [sys.executable, str(TOOL), str(snapshot), *args],
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        [sys.executable, "-m", "tools.replay.arm_snapshot_replay", str(snapshot), *args],
+        cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if process.returncode != want_rc:
         raise AssertionError(
             f"replay rc={process.returncode}, expected {want_rc}\n"

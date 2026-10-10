@@ -21,14 +21,23 @@ ABI compatibility and still-unknown product semantics.
 4. Run the relevant focused test, followed by:
 
    ```sh
-   make test
-   make -B -j2 verify
-   make pas-proxy-coverage-selftest
-   make qnx-arm-abi-oracle-selftest
+   make test-host
+   make check-contracts
    ```
+
+   Changes to target ABI code additionally require maintainer-recorded
+   `make -B -j2 verify-qnx`; changes to replay fixtures require
+   `make replay-stock` with the identified local stock image.
 
 5. Explain the evidence class, ownership/lifetime behavior, and any remaining
    limitations in the pull request.
+
+Python tools and checks are local packages. Run them from the repository root
+with `python3 -m tools.<group>.<module>` or `python3 -m tests.<module>`, for example
+`python3 -m tools.abi.qnx_arm_abi_oracle --help`. The Make targets use this same
+convention. No package installation or `PYTHONPATH` setting is needed; shared
+helpers use ordinary imports such as `from tools.callback_symbols import
+callback_symbol`.
 
 ## ABI evidence rules
 
@@ -51,10 +60,10 @@ Keep these evidence classes separate in code and documentation:
 The following are intentionally tracked because verification treats them as
 reviewable contracts:
 
-- `src/mock_raw_callback_slot_table.c`
-- `src/mock_raw_callback_slots_arm.S`
-- `src/mock_static_provider_slots.def`
-- root-level ABI/evidence CSV files
+- `src/capture/generated/mock_raw_callback_slot_table.c`
+- `src/capture/generated/mock_raw_callback_slots_arm.S`
+- `src/compat/qr39/provider_slots.def`
+- ABI and evidence CSV files under `contracts/` and `evidence/`
 - replay fixtures under `fixtures/`
 
 Regenerate them with the repository tools and commit generator and output

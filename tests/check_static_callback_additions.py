@@ -8,17 +8,17 @@ import sys
 
 EXPECTED = {
     ("root", "5"): ("SI_SoftwareInfrastructure", "1", "0x00263e6a",
-                       "mock_pas_root_5_signalInitiateRestartOnce"),
+                       "nc_host_root_signal_initiate_restart_once"),
     ("1", "4"): ("SI_HMIIntegration", "1", "0x00262eec",
-                    "mock_pas_1_4_requestCreateRequestCode"),
+                    "nc_host_hmi_request_create_request_code"),
     ("1", "5"): ("SI_HMIIntegration", "1", "0x00262f94",
-                    "mock_pas_1_5_requestCreateFingerPrint"),
-    ("9", "6"): ("SI_GPSData", "2", "0x002640ce", "mock_pas_9_6_replyMapMatchedAddress"),
+                    "nc_host_hmi_request_create_finger_print"),
+    ("9", "6"): ("SI_GPSData", "2", "0x002640ce", "nc_host_gps_reply_map_matched_address"),
     ("20", "6"): ("SI_Connectivity", "1", "0x0026cc50",
-                     "mock_pas_20_6_releaseConnectionForService"),
+                     "nc_host_connectivity_release_connection_for_service"),
     ("24", "4"): ("SI_TTS", "1", "0x002b13d2",
-                     "mock_pas_24_4_internalDeinitialize"),
-    ("26", "4"): ("SI_Phone", "3", "0x0026f3ce", "mock_pas_26_4_makePhoneCall"),
+                     "nc_host_tts_internal_deinitialize"),
+    ("26", "4"): ("SI_Phone", "3", "0x0026f3ce", "nc_host_phone_make_phone_call"),
 }
 
 FIELDS = [
@@ -82,7 +82,7 @@ def negative_tests(text):
         text.replace("0x00263e6a", "0x00263e6c", 1),
         text.replace("9,6,SI_GPSData,static_typed_not_emitted",
                      "9,6,SI_GPSData,static_pointer_fail_closed", 1),
-        text.replace(",mock_pas_root_5_signalInitiateRestartOnce,no\n",
+        text.replace(",nc_host_root_signal_initiate_restart_once,no\n",
                      ",mock_pas_forbidden,yes\n", 1),
         text.replace("borrowed synchronous 0x50-byte ARM record", "none", 1),
     ]

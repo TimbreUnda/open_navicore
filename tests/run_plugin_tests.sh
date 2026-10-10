@@ -6,7 +6,7 @@ readelf_bin=${READELF:-readelf}
 build_dir=${1:?usage: run_plugin_tests.sh build-dir}
 mkdir -p "$build_dir/plugins"
 
-common_flags="-std=c99 -O2 -g -Wall -Wextra -Werror -pthread -fPIC -fvisibility=hidden -DMOCK_REF_PLUGIN_HEADLESS -Iinclude -Isrc ${EXTRA_CFLAGS:-}"
+common_flags="-std=c99 -O2 -g -Wall -Wextra -Werror -pthread -fPIC -fvisibility=hidden -DMOCK_REF_PLUGIN_HEADLESS -Iinclude -Isrc/compat/qr39 -Isrc/runtime -Isrc/backend -Isrc/renderer -Isrc/capture ${EXTRA_CFLAGS:-}"
 plugin_path="$build_dir/plugins/active.so"
 trace_path="$build_dir/reference-plugin.log"
 
@@ -18,9 +18,9 @@ build_plugin() {
         -DMOCK_REF_PLUGIN_FAILURE="$failure" \
         -DMOCK_REF_PLUGIN_INVALID="$invalid" \
         -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-        -Wl,--version-script=plugins/reference_backend.map \
+        -Wl,--version-script=backends/reference/reference_backend.map \
         -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-        plugins/reference_backend.c -o "$output"
+        backends/reference/reference_backend.c -o "$output"
 }
 
 build_plugin "$build_dir/plugins/success.so" 0 0
@@ -28,30 +28,30 @@ $cc $common_flags -shared \
     -DMOCK_REF_PLUGIN_FAILURE=0 -DMOCK_REF_PLUGIN_INVALID=0 \
     -DMOCK_REF_PLUGIN_MAX_QUERY_ABI=2 \
     -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-    -Wl,--version-script=plugins/reference_backend.map \
+    -Wl,--version-script=backends/reference/reference_backend.map \
     -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-    plugins/reference_backend.c -o "$build_dir/plugins/query-v2-only.so"
+    backends/reference/reference_backend.c -o "$build_dir/plugins/query-v2-only.so"
 $cc $common_flags -shared \
     -DMOCK_REF_PLUGIN_FAILURE=0 -DMOCK_REF_PLUGIN_INVALID=0 \
     -DMOCK_REF_PLUGIN_MAX_QUERY_ABI=3 \
     -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-    -Wl,--version-script=plugins/reference_backend.map \
+    -Wl,--version-script=backends/reference/reference_backend.map \
     -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-    plugins/reference_backend.c -o "$build_dir/plugins/query-v3-only.so"
+    backends/reference/reference_backend.c -o "$build_dir/plugins/query-v3-only.so"
 $cc $common_flags -shared \
     -DMOCK_REF_PLUGIN_FAILURE=0 -DMOCK_REF_PLUGIN_INVALID=0 \
     -DMOCK_REF_PLUGIN_QUERY_V1_ONLY=1 \
     -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-    -Wl,--version-script=plugins/reference_backend.map \
+    -Wl,--version-script=backends/reference/reference_backend.map \
     -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-    plugins/reference_backend.c -o "$build_dir/plugins/query-v1-only.so"
+    backends/reference/reference_backend.c -o "$build_dir/plugins/query-v1-only.so"
 $cc $common_flags -shared \
     -DMOCK_REF_PLUGIN_FAILURE=0 -DMOCK_REF_PLUGIN_INVALID=0 \
     -DMOCK_REF_PLUGIN_OUTBOUND_TEST=1 \
     -DMOCK_REF_PLUGIN_TRACE_PATH='"'"$trace_path"'"' \
-    -Wl,--version-script=plugins/reference_backend.map \
+    -Wl,--version-script=backends/reference/reference_backend.map \
     -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
-    plugins/reference_backend.c -o "$build_dir/plugins/outbound.so"
+    backends/reference/reference_backend.c -o "$build_dir/plugins/outbound.so"
 build_plugin "$build_dir/plugins/start-fail.so" 1 0
 build_plugin "$build_dir/plugins/surface-fail.so" 2 0
 build_plugin "$build_dir/plugins/render-fail.so" 3 0
@@ -62,13 +62,13 @@ build_plugin "$build_dir/plugins/bad-build-id.so" 0 4
 build_plugin "$build_dir/plugins/query-fail.so" 0 5
 
 $cc $common_flags -shared -Wl,-z,now \
-    plugins/no_query_backend.c -o "$build_dir/plugins/no-query.so"
+    tests/fixtures/plugins/no_query_backend.c -o "$build_dir/plugins/no-query.so"
 
 $cc $common_flags -shared -Wl,-soname,libmocknav-missing.so -Wl,-z,defs \
-    plugins/missing_dependency.c \
+    tests/fixtures/plugins/missing_dependency.c \
     -o "$build_dir/plugins/libmocknav-missing.so"
 $cc $common_flags -shared -Wl,-z,now -Wl,-z,defs -Wl,--no-as-needed \
-    plugins/unresolved_dependency_backend.c \
+    tests/fixtures/plugins/unresolved_dependency_backend.c \
     -L"$build_dir/plugins" -lmocknav-missing \
     -o "$build_dir/plugins/missing-needed.so"
 needed=$($readelf_bin -d "$build_dir/plugins/missing-needed.so" | \
@@ -83,7 +83,7 @@ rm -f "$build_dir/plugins/libmocknav-missing.so"
 # not require host multilib runtime packages. The host linker must support the
 # standard i386 emulation for this mandatory negative test.
 $cc -m32 -shared -nostdlib -fPIC -fvisibility=hidden \
-    plugins/wrong_class_backend.c \
+    tests/fixtures/plugins/wrong_class_backend.c \
     -o "$build_dir/plugins/wrong-class.so"
 
 $cc $common_flags \
@@ -92,17 +92,17 @@ $cc $common_flags \
     -DMOCK_NAVICORE_RENDERER_STUB \
     -DMOCK_NAV_BACKEND_PLUGIN_PATH='"'"$plugin_path"'"' \
     -DEXPECT_TRACE_PATH='"'"$trace_path"'"' \
-    src/mock_navicore.c src/mock_api_telemetry.c src/mock_callback_backend.c \
-    src/mock_cluster_backend.c src/mock_backend_loader.c \
-    src/mock_pas_callbacks.c src/mock_gps_backend.c \
-    src/mock_pointer_backend.c src/mock_scalar_backend.c \
-    src/mock_renderer.c src/mock_screen_input.c src/mock_default_backend.c \
-    src/mock_renderer_stub.c tests/plugin_lifecycle_smoke.c \
+    src/compat/qr39/navicore_compat.c src/runtime/mock_api_telemetry.c src/runtime/mock_callback_backend.c \
+    src/runtime/mock_cluster_backend.c src/backend/mock_backend_loader.c \
+    src/compat/qr39/host_callbacks.c src/runtime/mock_gps_backend.c \
+    src/runtime/mock_pointer_backend.c src/runtime/mock_scalar_backend.c \
+    src/renderer/mock_renderer.c src/renderer/mock_screen_input.c src/backend/mock_default_backend.c \
+    src/platform/host/mock_renderer_stub.c tests/plugin_lifecycle_smoke.c \
     -ldl -o "$build_dir/plugin-lifecycle-smoke"
 
 $cc $common_flags -DMOCK_NAVICORE_TESTING -DMOCK_NAVICORE_RENDERER_STUB \
-    src/mock_backend_loader.c src/mock_renderer.c src/mock_screen_input.c \
-    src/mock_default_backend.c src/mock_renderer_stub.c \
+    src/backend/mock_backend_loader.c src/renderer/mock_renderer.c src/renderer/mock_screen_input.c \
+    src/backend/mock_default_backend.c src/platform/host/mock_renderer_stub.c \
     tests/plugin_handshake_smoke.c -ldl \
     -o "$build_dir/plugin-handshake-smoke"
 "$build_dir/plugin-handshake-smoke"

@@ -2,7 +2,7 @@
 
 #include "mock_gps_backend.h"
 #include "mock_callback_backend.h"
-#include "mock_cluster_backend.h"
+#include <open_navicore/cluster.h>
 #include "mock_navicore.h"
 
 #include <assert.h>

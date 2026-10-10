@@ -4,7 +4,9 @@
 *.h text diff=cpp
 *.cpp text diff=cpp
 *.S text diff=cpp
-*.csv text eol=lf
+# Historical evidence includes reviewed CRLF files. Preserve their bytes while
+# still letting Git's content detector provide ordinary textual diffs.
+*.csv -text
 *.json text eol=lf
 *.md text eol=lf
 *.sh text eol=lf

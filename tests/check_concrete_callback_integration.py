@@ -8,6 +8,8 @@ import re
 import sys
 from collections import Counter
 
+from tools.callback_symbols import callback_symbol
+
 
 POINTER_SAFE = {
     ("24", "3"): ("0x404", True),
@@ -43,8 +45,7 @@ def load(path):
 
 
 def symbol(row):
-    api = re.sub(r"[^A-Za-z0-9_]", "_", row["api_name"])
-    return "mock_pas_%s_%s_%s" % (row["adapter"], row["slot"], api)
+    return callback_symbol(row["adapter"], row["slot"], row["api_name"])
 
 
 def function_body(source, name):
@@ -95,7 +96,7 @@ def validate(audit, manifest, header, source, smoke, provider):
                             "g_expected_copy_size" not in smoke):
                         raise ValueError("bounded-copy proof missing: %r" % (key,))
                 elif ("callback" not in body and
-                      "mock_pas_data_exchange_transfer" not in body):
+                      "nc_host_data_exchange_transfer_at" not in body):
                     raise ValueError("borrowed synchronous seam is not forwarded")
             if key in AGGREGATE_SAFE:
                 aggregate, words = AGGREGATE_SAFE[key]

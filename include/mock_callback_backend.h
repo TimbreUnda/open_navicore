@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "mock_cluster_backend.h"
+#include <open_navicore/cluster.h>
 
 enum { MOCK_THREAD_NAME_LIMIT = 63 };
 

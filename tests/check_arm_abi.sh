@@ -20,7 +20,7 @@ sed -n '/<mock_vehicle_day_night_status>:/,/^$/p' "$dump_file" |
     grep -Eq 'mov[[:space:]]+r[4-9], r1'
 sed -n '/<mock_vehicle_day_night_setting>:/,/^$/p' "$dump_file" |
     grep -Eq 'mov[[:space:]]+r[4-9], r1'
-for function in mock_8_3 mock_8_5; do
+for function in nc_provider_vehicle_day_night_status_reply nc_provider_vehicle_day_night_setting_reply; do
     sed -n "/<${function}>:/,/^$/p" "$dump_file" |
         grep -Eq 'mov[[:space:]]+r[4-9], r2'
 done
@@ -41,7 +41,7 @@ sed -n '/<mock_20_3>:/,/^$/p' "$dump_file" |
 # moves that incoming word to current sp+24, then writes it to outgoing sp[0]
 # before BLX. r1/r2/r3 remain the press state, ignored ABI placeholder, and x.
 press_body=$(sed -n \
-    '/<mock_pas_1_13_signalPressStateAnimation>:/,/^$/p' "$dump_file")
+    '/<nc_host_hmi_signal_press_state_animation>:/,/^$/p' "$dump_file")
 printf '%s\n' "$press_body" | grep -Eq 'ldr[[:space:]]+r[4-9], \[sp, #24\]'
 printf '%s\n' "$press_body" | grep -Eq 'str[[:space:]]+r[4-9], \[sp, #0\]'
 printf '%s\n' "$press_body" | grep -Eq 'blx[[:space:]]+r[4-9]'
@@ -50,7 +50,7 @@ printf '%s\n' "$press_body" | grep -Eq 'blx[[:space:]]+r[4-9]'
 # 20-byte local frame preserves 8-byte alignment, so incoming sp+0/+4/+8 are
 # current sp+32/+36/+40 and are forwarded to outgoing sp+0/+4/+8.
 logging_body=$(sed -n \
-    '/<mock_pas_6_4_signalWriteLogData>:/,/^$/p' "$dump_file")
+    '/<nc_host_logging_signal_write_log_data>:/,/^$/p' "$dump_file")
 printf '%s\n' "$logging_body" | grep -Eq 'sub[[:space:]]+sp, #20'
 printf '%s\n' "$logging_body" | grep -Eq 'ldrb[^[]*\[sp, #32\]'
 printf '%s\n' "$logging_body" | grep -Eq 'ldr[[:space:]]+r[4-9], \[sp, #36\]'
@@ -63,7 +63,7 @@ printf '%s\n' "$logging_body" | grep -Eq 'blx[[:space:]]+r[4-9]'
 # Voice slot 19 similarly forwards four incoming pointer words from current
 # sp+32/+36/+40/+44 to outgoing sp+0/+4/+8/+12 before the indirect call.
 voice_body=$(sed -n \
-    '/<mock_pas_25_19_replyLocationGet>:/,/^$/p' "$dump_file")
+    '/<nc_host_voice_reply_location_get>:/,/^$/p' "$dump_file")
 printf '%s\n' "$voice_body" | grep -Eq 'sub[[:space:]]+sp, #20'
 for offsets in '32 0' '36 4' '40 8' '44 12'; do
     incoming=${offsets% *}
@@ -75,7 +75,7 @@ for offsets in '32 0' '36 4' '40 8' '44 12'; do
 done
 printf '%s\n' "$voice_body" | grep -Eq 'blx[[:space:]]+r[4-9]'
 
-root3_body=$(sed -n '/<mock_pas_root_3>:/,/^$/p' "$dump_file")
+root3_body=$(sed -n '/<nc_host_root_no_arg_internal_state_cleanup>:/,/^$/p' "$dump_file")
 printf '%s\n' "$root3_body" | grep -Eq 'blx[[:space:]]+r[0-9]'
 
 # The concrete-vtable pointer seams must remain explicit synchronous ARM
@@ -84,21 +84,21 @@ printf '%s\n' "$root3_body" | grep -Eq 'blx[[:space:]]+r[0-9]'
 # opaque SoftwareInfrastructure row performs the BLX directly and must never
 # acquire a memcpy/retention path.
 for function in \
-    mock_pas_32_3_replyEWSArea \
-    mock_pas_14_7_signalSelectionFilter \
-    mock_pas_27_5_signalSelectStation \
-    mock_pas_27_6_signalSelectStationList \
-    mock_pas_9_5_signalMapMatchedPosition \
-    mock_pas_28_5_signalVICSWideEmergencyWarning \
-    mock_pas_8_10_signalCANMessage \
-    mock_pas_7_5_replyTimeZoneInformation; do
+    nc_host_ews_reply_ews_area \
+    nc_host_rds_signal_selection_filter \
+    nc_host_tpeg_signal_select_station \
+    nc_host_tpeg_signal_select_station_list \
+    nc_host_gps_signal_map_matched_position \
+    nc_host_vics_signal_vics_wide_emergency_warning \
+    nc_host_vehicle_signal_can_message \
+    nc_host_i18n_reply_time_zone_information; do
     body=$(sed -n "/<${function}>:/,/^$/p" "$dump_file")
     printf '%s\n' "$body" | grep -Eq 'sub(\.w)?[[:space:]]+sp'
     printf '%s\n' "$body" | grep -Eq 'blx[[:space:]]+(r[4-9]|ip|lr)'
 done
 
 opaque_body=$(sed -n \
-    '/<mock_pas_root_11_supplierSpecificServerFunction>:/,/^$/p' \
+    '/<nc_host_root_supplier_specific_server_function>:/,/^$/p' \
     "$dump_file")
 printf '%s\n' "$opaque_body" | grep -Eq 'ldr[^[]*\[r[0-9]+, #44\]'
 printf '%s\n' "$opaque_body" | grep -Eq 'blx[[:space:]]+r[4-9]'
@@ -107,7 +107,7 @@ printf '%s\n' "$opaque_body" | grep -Eq 'blx[[:space:]]+r[4-9]'
 # VICS has five words after self: minute and pointer arrive at incoming sp+0
 # and sp+4. The owned 0x180-byte record is then forwarded at outgoing sp+4.
 vics_body=$(sed -n \
-    '/<mock_pas_28_5_signalVICSWideEmergencyWarning>:/,/^$/p' \
+    '/<nc_host_vics_signal_vics_wide_emergency_warning>:/,/^$/p' \
     "$dump_file")
 printf '%s\n' "$vics_body" | grep -Eq 'ldr[^[]*\[sp, #440\]'
 printf '%s\n' "$vics_body" | grep -Eq 'ldr[^[]*\[sp, #444\]'
