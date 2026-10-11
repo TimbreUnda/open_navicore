@@ -150,6 +150,8 @@ the identical route, phase durations, and aggregation method:
 | Above plus persistent renderer-thread EGL context | 22.2 fps | 23.3 fps | 24.0 fps | 14.28 s |
 | Persistent context, shortened 25 ms pacing control | 22.2 fps | 23.6 fps | 24.1 fps | 14.49 s |
 | Persistent context, 30 Hz pacing, three Screen buffers | 23.2 fps | 23.4 fps | 24.2 fps | not sampled |
+| Three buffers, no software pacing, full 1024x768 surface | 22.1 fps | 23.7 fps | 24.3 fps | not sampled |
+| Three buffers, no pacing, visible 1024x574 band | 30.0 fps | 32.4 fps | 32.3 fps | not sampled |
 
 The persistent-context route-only phase held 23.2--24.8 fps while backend p95
 remained 2--3 ms. Full-map median map p95 improved to 25.5 ms, but its stable
@@ -183,6 +185,30 @@ The next presentation investigation should target the `NAV_main` Screen
 class/pipeline/compositor policy or a proven direct-post path before map-mesh
 work is used as evidence of visible frame rate.
 
+Removing the provider pacer did not change the full-surface route-only floor.
+Direct timing showed why: during the trivial scene, `eglSwapBuffers` itself
+averaged roughly 38--40 ms and reached 45--50 ms, while the backend still used
+only 2--3 ms. The panel is configured for 60 Hz, so this was composition
+backpressure rather than panel refresh or provider scheduling.
+
+The stock HMI exposes navigation only between its 72-pixel top chrome and
+122-pixel bottom chrome. Rendering a 1024x574 Screen window positioned at
+`(0,72)`, instead of a covered 1024x768 window, reduced submitted pixels by
+25.3% without changing visible geometry or touch behavior. The route-only GPU
+floor rose to 32.3 fps (31.6--32.9), and raster without symbols held 32.4 fps
+(30.9--33.2). Warm full-map movement averaged 30.0 fps, but individual windows
+still ranged from 25.2 to 32.5 fps and cold/resource-churn map p95 exceeded
+100 ms. This proves the presentation path can exceed 30 fps and leaves the
+CPU-raster basemap as the remaining blocker to stable movement.
+
+The retained-mesh renderer should therefore target the visible 1024x574
+surface from its first implementation. Full-screen hidden pixels, a
+full-surface compatibility window, and explicit pre-swap pacing are not part of
+the selected steady-state design. Once mesh rendering is stable, add a small
+deadline limiter only if the natural Screen backpressure remains materially
+above the desired 30 fps; do not reintroduce a fixed sleep ahead of a blocking
+swap.
+
 ## Approaches considered
 
 | Approach | Runtime load | Porting risk | Map/data impact | 30 fps judgment |
@@ -211,6 +237,10 @@ References consulted:
   caches rendered widgets as GPU textures. The vendored LVGL implementation is
   still experimental for this driver and must pass a capability probe before
   adoption.
+- [QNX Screen composition](https://www.qnx.com/developers/docs/7.1/com.qnx.doc.screen/topic/manual/cscreen_composition.html)
+  documents hardware pipelines, overlay usage, and framebuffer composition;
+  [Screen properties](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.screen/topic/screen_8h_1Screen_Property_Types.html)
+  defines swap interval, pipeline, and render-buffer semantics.
 
 ## Selected architecture
 
