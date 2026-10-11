@@ -94,6 +94,7 @@ private:
     double simulation_speed_metres_per_second_ = 20.0;
     std::chrono::steady_clock::time_point simulation_updated_at_{};
     bool render_shootout_enabled_ = false;
+    bool sustained_basemap_benchmark_ = false;
     bool render_shootout_active_ = false;
     bool render_shootout_complete_ = false;
     unsigned int render_shootout_phase_ = 0u;
@@ -181,7 +182,9 @@ bool OsmAndEngine::initialize(const Config& config,
                              std::shared_ptr<Wakeup> wakeup)
 {
     simulation_enabled_ = config.simulate_route;
-    render_shootout_enabled_ = config.render_shootout;
+    sustained_basemap_benchmark_ = config.sustained_basemap_benchmark;
+    render_shootout_enabled_ = config.render_shootout &&
+                               !sustained_basemap_benchmark_;
     frame_metrics_ = FrameMetrics(config.performance_metrics);
     OsmAnd::enablePerformanceMetrics(config.detailed_tile_metrics);
     if (config.performance_metrics)
@@ -194,6 +197,8 @@ bool OsmAndEngine::initialize(const Config& config,
         trace("simulation=enabled");
     if (render_shootout_enabled_)
         trace("render_shootout=enabled");
+    if (sustained_basemap_benchmark_)
+        trace("sustained_basemap_benchmark=enabled");
     resources_ = OsmAnd::CoreResourcesEmbeddedBundle::loadFromLibrary(
         QString::fromLocal8Bit(config.resources.c_str()));
     if (!resources_)
@@ -264,7 +269,8 @@ bool OsmAndEngine::initialize(const Config& config,
     renderer_->setAzimuth(0.0f);
     renderer_->setElevationAngle(90.0f);
     route_lines_ = std::make_shared<OsmAnd::VectorLinesCollection>();
-    renderer_->addSymbolsProvider(symbols_);
+    if (!sustained_basemap_benchmark_)
+        renderer_->addSymbolsProvider(symbols_);
     renderer_->addSymbolsProvider(route_lines_);
     renderer_->setMapLayerProvider(0, raster_);
 
@@ -690,6 +696,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         simulation_progress_metres_ = 0.0;
         simulation_geometry_length_metres_ = 0.0;
         render_shootout_enabled_ = false;
+        sustained_basemap_benchmark_ = false;
         render_shootout_active_ = false;
         render_shootout_complete_ = false;
         render_shootout_phase_ = 0u;

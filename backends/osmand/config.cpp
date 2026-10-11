@@ -43,6 +43,9 @@ Config Config::from_environment()
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_RENDER_SHOOTOUT",
             "/datastore/navicore-backend/enable-render-shootout"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_SUSTAINED_BASEMAP_BENCHMARK",
+            "/datastore/navicore-backend/enable-sustained-basemap-benchmark"),
         20.0
     };
 }
