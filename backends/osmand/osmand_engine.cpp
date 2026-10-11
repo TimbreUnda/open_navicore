@@ -6,6 +6,7 @@
 #include "frame_metrics.h"
 #include "guidance_tracker.h"
 #include "navigation_worker.h"
+#include "retained_symbol_layer.h"
 #include "ui/gl_overlay_compositor.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
@@ -69,6 +70,7 @@ private:
     std::shared_ptr<OsmAnd::MapRasterLayerProvider_Software> raster_;
     std::shared_ptr<OsmAnd::IMapRenderer> renderer_;
     std::shared_ptr<OsmAnd::VectorLinesCollection> route_lines_;
+    std::unique_ptr<RetainedSymbolLayer> retained_symbols_;
     std::unique_ptr<ui::NavigationModel> navigation_;
     std::unique_ptr<ui::NavigationView> view_;
     std::unique_ptr<NavigationWorker> navigation_worker_;
@@ -99,6 +101,7 @@ private:
     bool sustained_basemap_benchmark_ = false;
     bool baked_map_symbols_ = false;
     bool bounded_map_symbols_ = false;
+    bool retained_map_symbols_ = false;
     bool render_shootout_active_ = false;
     bool render_shootout_complete_ = false;
     unsigned int render_shootout_phase_ = 0u;
@@ -189,6 +192,7 @@ bool OsmAndEngine::initialize(const Config& config,
     sustained_basemap_benchmark_ = config.sustained_basemap_benchmark;
     baked_map_symbols_ = config.baked_map_symbols;
     bounded_map_symbols_ = config.bounded_map_symbols;
+    retained_map_symbols_ = config.retained_map_symbols;
     render_shootout_enabled_ = config.render_shootout &&
                                !sustained_basemap_benchmark_;
     frame_metrics_ = FrameMetrics(config.performance_metrics);
@@ -209,6 +213,8 @@ bool OsmAndEngine::initialize(const Config& config,
         trace("baked_map_symbols=enabled");
     if (bounded_map_symbols_)
         trace("bounded_map_symbols=enabled groups_per_tile=12");
+    if (retained_map_symbols_)
+        trace("retained_map_symbols=enabled atlas=512 symbols=32");
     resources_ = OsmAnd::CoreResourcesEmbeddedBundle::loadFromLibrary(
         QString::fromLocal8Bit(config.resources.c_str()));
     if (!resources_)
@@ -293,8 +299,12 @@ bool OsmAndEngine::initialize(const Config& config,
     renderer_->setElevationAngle(90.0f);
     route_lines_ = std::make_shared<OsmAnd::VectorLinesCollection>();
     if ((!sustained_basemap_benchmark_ || bounded_map_symbols_) &&
+        !retained_map_symbols_ &&
         !baked_map_symbols_)
         renderer_->addSymbolsProvider(symbols_);
+    if (retained_map_symbols_)
+        retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
+            symbols_, wakeup);
     renderer_->addSymbolsProvider(route_lines_);
     renderer_->setMapLayerProvider(0, raster_);
 
@@ -585,6 +595,14 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     if (!map_rendered)
         return finish({FrameOutcome::Pending, PendingStage::Render, true},
                       MeasuredFrameOutcome::RenderPending);
+    if (retained_symbols_) {
+        retained_symbols_->request(renderer_->getMapState());
+        if (!retained_symbols_->present(*renderer_, target.width, target.height)) {
+            trace("error=retained_symbols");
+            retained_symbols_->release(false);
+            retained_symbols_.reset();
+        }
+    }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
     const bool ui_dirty = overlay_enabled_ && view_->render(16u);
@@ -705,6 +723,11 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         phase_ = Phase::Quarantined;
         if (navigation_worker_) navigation_worker_->stop();
         navigation_worker_.reset();
+        if (retained_symbols_) {
+            retained_symbols_->stop();
+            retained_symbols_->release(mode == ReleaseMode::ContextLost);
+            retained_symbols_.reset();
+        }
         navigation_wakeup_.reset();
         navigation_map_.clear();
         navigation_routing_xml_.clear();

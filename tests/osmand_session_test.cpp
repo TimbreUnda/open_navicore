@@ -118,6 +118,9 @@ void lifecycle()
     assert(setenv("OPEN_NAVICORE_OSMAND_BOUNDED_MAP_SYMBOLS", "1", 1) == 0);
     assert(Config::from_environment().bounded_map_symbols);
     assert(unsetenv("OPEN_NAVICORE_OSMAND_BOUNDED_MAP_SYMBOLS") == 0);
+    assert(setenv("OPEN_NAVICORE_OSMAND_RETAINED_MAP_SYMBOLS", "1", 1) == 0);
+    assert(Config::from_environment().retained_map_symbols);
+    assert(unsetenv("OPEN_NAVICORE_OSMAND_RETAINED_MAP_SYMBOLS") == 0);
 
     probe = std::make_shared<Probe>();
     unsigned requests = 0, new_requests = 0;

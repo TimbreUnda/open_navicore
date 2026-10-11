@@ -16,6 +16,7 @@ struct Config {
     bool sustained_basemap_benchmark = false;
     bool baked_map_symbols = false;
     bool bounded_map_symbols = false;
+    bool retained_map_symbols = false;
     double simulation_speed_metres_per_second = 20.0;
 
     static Config from_environment();

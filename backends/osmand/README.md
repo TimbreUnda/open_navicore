@@ -304,6 +304,16 @@ weighted FPS and every rolling five-second window was below 30 FPS
 provider filters groups only after OsmAnd has performed its upstream symbol
 rasterization, and the live output also exposed malformed oversized imagery.
 
+The custom retained-atlas candidate is enabled with
+`OPEN_NAVICORE_OSMAND_RETAINED_MAP_SYMBOLS=1` or
+`/datastore/navicore-backend/enable-retained-map-symbols`. OsmAnd rasterizes a
+bounded visible-tile symbol set on a background worker only when the visible
+tile set changes. The renderer thread retains one 512x512 atlas, projects up to
+32 map anchors, performs a small priority/collision pass, and emits one GLES2
+batch. Camera movement does not rerasterize or re-upload glyphs. This mode is a
+candidate pending equal-route live qualification; 30 FPS is its acceptance
+floor, not a limiter.
+
 ## Stationary bench qualification checklist
 
 1. Preserve stock/active-file backups and recovery access. Record the complete

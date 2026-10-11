@@ -53,7 +53,7 @@ OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 OSMAND_PLUGIN_TARGET := $(OSMAND_BUILD_DIR)/libMockNavBackendOsmAnd.so
 OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
 	session.o diagnostics.o osmand_engine.o baked_symbols_raster_provider.o bounded_symbols_provider.o navigation_worker.o compact_text.o navigation_model.o \
-	guidance_tracker.o navigation_view.o gl_overlay_compositor.o frame_metrics.o)
+	retained_symbol_layer.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o frame_metrics.o)
 LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
 OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
 OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)
@@ -88,17 +88,17 @@ $(OSMAND_BINUTILS_STAMP): | $(OSMAND_BUILD_DIR)
 	ln -sf $(QNX_HOST)/usr/bin/arm-unknown-nto-qnx6.6.0eabi-ld $(OSMAND_BINUTILS_DIR)/ld
 	touch $@
 
-$(OSMAND_BUILD_DIR)/%.o: backends/osmand/%.cpp backends/osmand/osmand.mk \
+$(OSMAND_BUILD_DIR)/%.o: backends/osmand/%.cpp \
 		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
 	$(OSMAND_COMPILE) -MMD -MP -c $< -o $@
 
-$(OSMAND_BUILD_DIR)/%.o: backends/osmand/ui/%.cpp backends/osmand/osmand.mk \
+$(OSMAND_BUILD_DIR)/%.o: backends/osmand/ui/%.cpp \
 		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
 	$(OSMAND_COMPILE) -I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
 		$(OSMAND_LVGL_FLAGS) -MMD -MP -c $< -o $@
 
 $(OSMAND_BUILD_DIR)/lvgl/%.o: third_party/lvgl/src/%.c \
-		backends/osmand/ui/lv_conf.h backends/osmand/osmand.mk \
+		backends/osmand/ui/lv_conf.h \
 		$(OSMAND_CC) $(OSMAND_BINUTILS_STAMP)
 	mkdir -p $(dir $@)
 	$(OSMAND_ENV) $(OSMAND_CC) --sysroot=$(QNX_TARGET) -B$(OSMAND_BINUTILS_DIR)/ \
@@ -113,7 +113,7 @@ $(OSMAND_PLUGIN_TARGET): $(OSMAND_OBJECTS) backends/osmand/osmand_backend.map \
 		-L$(OSMAND_CORE_LIB_DIR) -lOsmAndCore_shared -lEGL -lGLESv2 -lc
 
 $(OSMAND_BUILD_DIR)/qnx_osmand_obf_smoke.o: tests/qnx_osmand_obf_smoke.cpp \
-		backends/osmand/osmand.mk $(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
+		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
 	$(OSMAND_COMPILE) -MMD -MP -c $< -o $@
 
 $(OSMAND_OBF_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_obf_smoke.o \
@@ -123,7 +123,7 @@ $(OSMAND_OBF_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_obf_smoke.o \
 		-lsocket -lEGL -lGLESv2 -lslog2 -lz -lpps -lm
 
 $(OSMAND_BUILD_DIR)/qnx_osmand_route_smoke.o: tests/qnx_osmand_route_smoke.cpp \
-		backends/osmand/osmand.mk $(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
+		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
 	$(OSMAND_COMPILE) -MMD -MP -c $< -o $@
 
 $(OSMAND_ROUTE_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_route_smoke.o \
@@ -135,7 +135,7 @@ $(OSMAND_ROUTE_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_route_smoke.o \
 		-lsocket -lslog2 -lz -lpps -lEGL -lGLESv2 -lm -lc
 
 $(OSMAND_BUILD_DIR)/qnx_osmand_plugin_smoke.o: tests/qnx_osmand_plugin_smoke.c \
-		backends/osmand/osmand.mk | $(OSMAND_BUILD_DIR)
+		| $(OSMAND_BUILD_DIR)
 	$(OSMAND_ENV) $(QCC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(OSMAND_PLUGIN_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_plugin_smoke.o
