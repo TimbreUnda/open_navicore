@@ -15,6 +15,10 @@
 #define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(0)
 #define MOCK_WINDOW_BUFFER_COUNT 3
 #define MOCK_PRESENT_TRACE_PATH "/tmp/open-navicore-present.log"
+#define MOCK_CONTENT_X 0
+#define MOCK_CONTENT_Y 72
+#define MOCK_CONTENT_WIDTH 1024
+#define MOCK_CONTENT_HEIGHT 574
 
 typedef struct {
     screen_context_t screen_context;
@@ -181,10 +185,11 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     EGLint min_swap_interval = -1;
     EGLint max_swap_interval = -1;
     int size[2] = { 0, 0 };
-    int window_position[2] = { 0, 0 };
-    int window_size[2] = { 0, 0 };
+    int window_position[2] = { MOCK_CONTENT_X, MOCK_CONTENT_Y };
+    int window_size[2] = { MOCK_CONTENT_WIDTH, MOCK_CONTENT_HEIGHT };
     int source_position[2] = { 0, 0 };
-    int source_size[2] = { 0, 0 };
+    int source_size[2] = { MOCK_CONTENT_WIDTH, MOCK_CONTENT_HEIGHT };
+    int buffer_size[2] = { MOCK_CONTENT_WIDTH, MOCK_CONTENT_HEIGHT };
     int rotation = 0;
     int sensitivity = SCREEN_SENSITIVITY_TEST;
     int screen_swap_interval = -1;
@@ -211,6 +216,19 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
         screen_set_window_property_cv(g_qnx.window, SCREEN_PROPERTY_CLASS,
                                       (int)sizeof(window_class),
                                       window_class) != 0 ||
+        screen_set_window_property_iv(g_qnx.window,
+                                      SCREEN_PROPERTY_BUFFER_SIZE,
+                                      buffer_size) != 0 ||
+        screen_set_window_property_iv(g_qnx.window, SCREEN_PROPERTY_POSITION,
+                                      window_position) != 0 ||
+        screen_set_window_property_iv(g_qnx.window, SCREEN_PROPERTY_SIZE,
+                                      window_size) != 0 ||
+        screen_set_window_property_iv(g_qnx.window,
+                                      SCREEN_PROPERTY_SOURCE_POSITION,
+                                      source_position) != 0 ||
+        screen_set_window_property_iv(g_qnx.window,
+                                      SCREEN_PROPERTY_SOURCE_SIZE,
+                                      source_size) != 0 ||
         screen_create_window_buffers(g_qnx.window,
                                      MOCK_WINDOW_BUFFER_COUNT) != 0 ||
         screen_create_event(&g_qnx.event) != 0) {
