@@ -317,7 +317,7 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                    "sensitivity=%d "
                    "swap_range=%d..%d swap0=%d screen_swap=%d "
                    "buffer_count=%d render_buffers=%d pipeline=%d "
-                   "pace_interval_us=0 display_goal_fps=30 "
+                   "pace_interval_us=0 acceptance_floor_fps=30 uncapped=1 "
                    "persistent_context=1",
                    (unsigned int)config_id, MOCK_WINDOW_BUFFER_COUNT,
                    target->width, target->height,

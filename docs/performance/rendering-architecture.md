@@ -1,15 +1,15 @@
 # Rendering architecture for stable 30 fps
 
-Status: selected architecture; implementation and bench qualification remain.
+Status: first production path selected from live-radio evidence; retained symbol
+rendering and final bench qualification remain.
 
 ## Target and definition of success
 
 The target is the VP4R bench radio: two Cortex-A15 cores at 1.5 GHz, 2 GiB RAM,
 and the IMG/PowerVR OpenGL ES 2 driver exposed through QNX Screen/EGL. The
-visible navigation region is about 1024x576 inside the stock 1024x768 HMI,
-but the provider target and LVGL overlay canvas are the full 1024x768. QNX `pidin`
-reports a 215 MiB data/address-space figure for the current replacement process
-after loading OsmAnd, its
+visible navigation region is a 1024x574 Screen window at `(0,72)` inside the
+stock 1024x768 HMI. QNX `pidin` reports about 200 MiB of process data after
+loading OsmAnd, its
 resources, Qt, the Kyiv OBF, LVGL, and the graphics stack.
 
 The performance milestone is not an average FPS number. It requires a
@@ -25,6 +25,12 @@ repeatable moving-camera trace with:
 - the same result with the guidance UI visible;
 - CPU and memory reported with the result. A cached-map run alone does not
   qualify cold movement.
+
+Thirty fps is the acceptance floor, not a limiter or final target. Candidate
+renderers also report uncapped weighted rate, rolling minimum, and CPU/GPU
+headroom. Do not add a 30 Hz pacer: lower frame cost and higher achievable FPS
+remain valuable for input latency, burst recovery, richer future scenes, and a
+possible 60 Hz/direct-presentation path.
 
 The provider owns the Screen window, EGL surface/context, and buffer swap. The
 backend renders only while that context is current. Any design must preserve
@@ -209,16 +215,50 @@ deadline limiter only if the natural Screen backpressure remains materially
 above the desired 30 fps; do not reintroduce a fixed sleep ahead of a blocking
 swap.
 
+### Sustained moving-basemap qualification
+
+The short shootout left one ambiguity: its symbol-free phase was only 15
+seconds long. A dedicated mode therefore kept the real OsmAnd raster basemap,
+route, moving camera, and guidance UI active while removing only the independent
+`MapObjectsSymbolsProvider`. It did not cycle into a synthetic route-only phase.
+
+On a 5.6 km Kyiv simulation at 20 m/s, the last uninterrupted trace contained
+188 complete one-second movement windows. After discarding the first ten
+seconds, all 174 rolling five-second windows remained above 30 fps:
+
+| Metric | Result |
+|---|---:|
+| Weighted presented rate | 32.06 fps |
+| Minimum rolling five-second rate | 30.77 fps |
+| Maximum rolling five-second rate | 33.65 fps |
+| Rolling windows below 30 fps | 0 / 174 |
+| Median total p95 / map p95 | 3 ms / 2 ms |
+| Worst observed frame | 119 ms |
+| Renderer faults | 0 |
+
+The long frame occurred at resource churn, but the retained neighboring frames
+kept every five-second interval above the target. A separate 20-second active
+movement sample accrued 4.894 CPU-seconds: 24.5% of one core, or 12.2% of the
+radio's two-core capacity. Process data was approximately 200 MiB. Screenshots
+at 4.5 km and 1.2 km remaining confirmed that the camera, route, basemap, and
+guidance UI were genuinely moving rather than replaying a static surface.
+
+This changes the first production choice. CPU-raster basemap generation is not
+the immediate blocker once the surface is restricted to the visible band. The
+independent OsmAnd symbol provider is. Replacing the entire basemap renderer
+before replacing symbols would add the largest porting risk without solving the
+now-measured bottleneck first.
+
 ## Approaches considered
 
 | Approach | Runtime load | Porting risk | Map/data impact | 30 fps judgment |
 |---|---:|---:|---|---|
-| Tune current OsmAnd raster pipeline | Medium/high CPU while tiles appear; low GPU | Low | Keeps OBF and style | Useful short-term baseline, but cannot guarantee cold tile-boundary pacing because rasterization remains CPU work. |
+| OsmAnd raster basemap without its independent symbol provider | 24.5% of one core during measured warm movement; low GPU | Low | Keeps OBF and style | **Selected first usable baseline.** Sustained live movement held every rolling five-second window above 30 fps. It still needs a replacement symbol layer and cold-start qualification, and its roughly 32 fps presentation rate is not treated as an optimization ceiling. |
 | Pre-rendered raster/MBTiles basemap | Lowest CPU; simple GLES2 textured quads | Medium | Requires a second, potentially large map package and loses dynamic vector styling | Strong fallback and excellent benchmark control; viable for bounded regions, unattractive as the primary worldwide format. |
 | Current MapLibre Native | GPU vector render with a good worker model | Very high on QNX 6.6/GCC 8/GLES2 | Requires MVT/PMTiles plus OsmAnd OBF for routing/search, or a new data pipeline | Rejected for the radio baseline. Current builds expose EGL/OpenGL backends, but the project is moving toward GLES3-era capabilities and a much newer toolchain/platform layer. |
 | Tangram ES | GPU vector renderer designed for GLES2 and embedded Linux/Raspberry Pi | Medium/high | Requires MVT and a separate style/data package | Best external prototype/reference. Its small GLES2 core is attractive, but adopting it creates two map databases and depends on a comparatively quiet project. |
 | Organic Maps drape | Mature GPU navigation renderer | Very high | Requires Organic Maps data/tooling and duplicates much of the navigation stack | Valuable design reference, not a practical component extraction for this provider. |
-| Custom GLES2 renderer over OsmAnd primitives | Low render-thread CPU after tile preparation; bounded worker CPU | Medium/high but controllable | Keeps OBF, search, routing, and one installed map set | **Selected.** It removes CPU pixel rasterization while preserving the already-working OsmAnd integration and old GLES2 driver compatibility. |
+| Custom GLES2 renderer over OsmAnd primitives | Lowest render-thread CPU after tile preparation; bounded worker CPU | Medium/high but controllable | Keeps OBF, search, routing, and one installed map set | Retained as the performance track. Promote it whenever equal-content live tests show higher sustained FPS or meaningfully lower load, even if the raster baseline already clears 30 fps. |
 
 References consulted:
 
@@ -245,40 +285,38 @@ References consulted:
 ## Selected architecture
 
 Keep OsmAnd as the offline map reader, search engine, router, guidance source,
-and render-style evaluator. Replace only the final basemap rasterizer and the
-software UI compositor.
+style evaluator, and raster basemap producer. Do not attach its independent
+dynamic symbol provider. Add labels and icons through a small retained GLES2
+layer, and keep the already-optimized dirty-rectangle LVGL overlay until a
+retained GPU UI is proven on the radio.
 
 ```text
-                         immutable, revisioned tile products
-OBF -> OsmAnd objects -> style evaluation -> geometry/label workers
-                                                |
-                                                v
-                                      bounded CPU tile cache
-                                                |
-                         newest camera only     v
-GPS/guidance -> camera mailbox ---------> GLES2 render owner
-                                           | polygons: indexed VBOs
-                                           | roads: extruded line meshes
-                                           | icons/glyphs: texture atlases
-                                           | route/marker: dynamic VBOs
-                                           | UI: retained GPU overlay
-                                           v
-                                     borrowed default FBO
-                                           v
-                                      provider swap
+OBF -> OsmAnd raster tile workers -> retained tile textures ----+
+OBF -> bounded label selection -> retained glyph/icon atlases --+
+GPS/guidance -> newest-camera mailbox --------------------------+--> GLES2 owner
+route/marker -> small dynamic VBOs ------------------------------+       |
+LVGL -> dirty rectangles -> retained overlay texture ------------+       v
+                                                               provider swap
 ```
 
-The render owner never waits for tile I/O, OBF parsing, style evaluation,
-triangulation, labels, search, or routing. Worker output is immutable. Uploads
-are budgeted and consumed only at frame boundaries. When data is late, the
-renderer reprojects the best already-resident parent/neighbor tile instead of
-stalling or presenting an old camera.
+The render owner never waits for tile I/O, OBF parsing, label selection,
+search, or routing. Worker output is immutable. Uploads are budgeted and
+consumed only at frame boundaries. When data is late, the renderer keeps the
+best already-resident tile instead of stalling or presenting an old camera.
 
-This is “full GPU rendering” in the useful embedded sense: polygons, road
-strokes, symbols, route, marker, and UI are rasterized by GLES2. OBF decoding,
-style evaluation, geometry construction, glyph shaping, and routing remain CPU
-tasks off the render thread. Moving those control tasks to shaders would add
-complexity without improving frame pacing on this GPU.
+The retained symbol layer follows the useful parts of mature GPU renderers
+without importing their full platform stacks: cache glyph/icon textures,
+retain drawables across camera frames, perform collision/priority work only
+when the visible tile set changes, and adjust placement with uniforms. MapLibre
+Native's dynamic atlases and cross-tile symbol index, Tangram ES's prioritized
+collision model, and Organic Maps' split between scene/resource management and
+graphics core all support this boundary.
+
+A full GLES2 geometry backend remains behind the same renderer seam. It is not
+the first implementation path because the measured raster baseline reaches a
+usable result sooner. It remains the performance path even if raster plus
+symbols clears 30 fps: promote it whenever an apples-to-apples live trace shows
+higher sustained FPS or meaningfully lower load without losing visual quality.
 
 ### Map renderer scope
 
@@ -381,10 +419,19 @@ or complicates frame ownership.
 
 ## Immediate decision
 
-Gate 0 and Gate 1 are complete. Build the custom OsmAnd-primitives GLES2
-backend next, beginning with polygon and road meshes plus parent-tile fallback.
-Run it beside a pre-rendered-raster control through the same renderer seam.
-Keep the persistent context, non-blocking swap, bounded uploads, and explicit
-frame pacing in both controls. Do not spend the next iteration tuning Skia CPU
-rasterization as if it can become a GPU-vector renderer, and do not port all of
-MapLibre or Organic Maps before the small renderer proves the hardware budget.
+Gate 0, Gate 1, and the sustained basemap control are complete. Build the
+retained GLES2 symbol layer next: one bounded glyph atlas, one icon atlas,
+priority-based collision, cross-tile identity, and camera-uniform updates with
+no per-frame allocation. Keep the visible-band Screen surface, persistent EGL
+context, triple buffering, no fixed pre-swap sleep, bounded uploads, and the
+dirty-rectangle LVGL path.
+
+Re-run the same sustained route with road/place labels enabled. If every
+rolling five-second window remains at or above 30 fps and cold movement stays
+within the CPU/memory budget, it qualifies as the first usable renderer—not as
+the end of performance work. In parallel with subsequent product features,
+activate stage two through the existing renderer seam and compare raster tiles
+against OsmAnd-primitives polygon/road meshes uncapped. Prefer the faster,
+lower-load result once it preserves the same visual content; do not import all
+of MapLibre or Organic Maps before that smaller renderer proves the hardware
+budget.
