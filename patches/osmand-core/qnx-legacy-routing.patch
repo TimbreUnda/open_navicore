@@ -1,0 +1,41 @@
+diff --git a/core/CMakeLists.txt b/core/CMakeLists.txt
+--- a/core/CMakeLists.txt
++++ b/core/CMakeLists.txt
+@@ -208,7 +208,14 @@ target_include_directories(OsmAndCore_obj PRIVATE
+ 	${legacy_shared_dirs_public}
+ )
+ 
+-if (CMAKE_TARGET_OS STREQUAL "ios")
++if (CMAKE_TARGET_OS STREQUAL "ios" OR CMAKE_TARGET_OS STREQUAL "qnx")
++	if (CMAKE_TARGET_OS STREQUAL "qnx")
++		# Legacy routing includes rendering declarations which still reference
++		# SkDrawLooper. Routing does not instantiate those deprecated effects.
++		set(target_specific_private_definitions ${target_specific_private_definitions}
++			-DSK_SUPPORT_LEGACY_DRAWLOOPER
++		)
++	endif()
+ 	set(legacy_sources
+ 		"${LEGACY_SRC}/routeTypeRule.h"
+ 		"${LEGACY_SRC}/routeTypeRule.cpp"
+diff --git a/core-legacy/native/src/binaryRead.cpp b/core-legacy/native/src/binaryRead.cpp
+--- a/core-legacy/native/src/binaryRead.cpp
++++ b/core-legacy/native/src/binaryRead.cpp
+@@ -9,8 +9,8 @@
+ 
+ #include "Logging.h"
+ #include "google/protobuf/io/zero_copy_stream_impl.h"
+-#include "google/protobuf/wire_format_lite.cc"
+ #include "google/protobuf/wire_format_lite.h"
++#include "google/protobuf/wire_format_lite_inl.h"
+ #include "proto/OBF.pb.h"
+ #include "proto/osmand_index.pb.h"
+ #if defined(WIN32)
+diff --git a/core-legacy/native/src/transportRoutePlanner.cpp b/core-legacy/native/src/transportRoutePlanner.cpp
+--- a/core-legacy/native/src/transportRoutePlanner.cpp
++++ b/core-legacy/native/src/transportRoutePlanner.cpp
+@@ -1,4 +1,4 @@
+-#include <inttypes.h>
++#include <cinttypes>
+ #ifndef _OSMAND_TRANSPORT_ROUTE_PLANNER_CPP
+ #define _OSMAND_TRANSPORT_ROUTE_PLANNER_CPP
+ #include "transportRoutePlanner.h"

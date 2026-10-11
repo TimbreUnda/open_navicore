@@ -155,6 +155,8 @@ The optional Make targets need:
 - `OSMAND_QNX_ROOT`: workspace with `source/core`, `gcc-out` and PIC Qt;
 - `OSMAND_CORE_LIB_DIR`: renderer-enabled `libOsmAndCore_shared.so` and resource
   bundle (default `source/binaries/qnx/gcc-armv7/Release` below the root);
+- `OSMAND_LEGACY_ROOT`: matching `core-legacy` sources used by offline routing
+  (default `source/core-legacy` below the root);
 - `OSMAND_QT_PREFIX`: the PIC Qt build used by that core (default `qt-pic-prefix`);
 - `OSMAND_CXX`: its matching C++17 ARM/QNX compiler (default under `gcc-out/bin`);
 - `QNX_SDK` and `QNX_HOST_LIBS`: licensed SDK and required host libraries;
@@ -162,12 +164,28 @@ The optional Make targets need:
   `local-unqualified` for exploration.
 
 ```sh
-make osmand-check osmand-obf-smoke osmand-plugin-smoke osmand-manifest \
+make osmand-check osmand-obf-smoke osmand-route-smoke \
+  osmand-plugin-smoke osmand-manifest \
   QNX_SDK=/path/to/qnx660-sdk \
   QNX_HOST_LIBS=/path/to/qnx-host-libs \
   OSMAND_QNX_ROOT=/path/to/osmand-qnx-build \
   OSMAND_BUNDLE_ID=reviewed-bundle-001
 ```
+
+The external Core must export its legacy native routing implementation. Apply
+[`qnx-legacy-routing.patch`](../../patches/osmand-core/qnx-legacy-routing.patch)
+from the OsmAnd source-aggregate root before building Core. The patch enables
+the already-listed legacy routing sources for QNX and makes two QNX/GCC 8
+compatibility corrections; it does not revive the abandoned `core/Routing`
+implementation.
+
+```sh
+git apply --ignore-space-change \
+  "$OPEN_NAVICORE_ROOT/patches/osmand-core/qnx-legacy-routing.patch"
+```
+
+`--ignore-space-change` accommodates the CRLF line endings retained by the
+legacy transport source; it does not broaden the patch's file or hunk scope.
 
 Objects and linked artifacts live in `build/osmand/<configuration-key>/`,
 independent of the shared legacy `BUILD_DIR`. The key includes worktree,
@@ -224,8 +242,9 @@ not establish equivalence to the radio's graphics implementation.
 
 1. Preserve stock/active-file backups and recovery access. Record the complete
    provider/plugin/core/resources/map/font bundle and target graphics versions.
-2. Run the OBF and plugin-query smoke executables; verify query selection and
-   expected resources before rendering. Cross-building them does not run them.
+2. Run the OBF, route and plugin-query smoke executables; verify map/routing
+   indexes, a non-empty route geometry, query selection and expected resources
+   before rendering. Cross-building them does not run them.
 3. Start navigation, verify the fixed Kyiv map and Ukrainian labels in the stock
    tile, then confirm hide/show and normal teardown/start cycles.
 4. Observe prepare/render pending followed by `frame_rendered=kyiv`; check core
