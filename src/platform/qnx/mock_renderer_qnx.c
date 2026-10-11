@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200112L
+
 #include "mock_renderer_platform.h"
 #include "mock_screen_input.h"
 
@@ -8,6 +10,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+#define MOCK_TARGET_FRAME_NANOSECONDS UINT64_C(33333333)
 
 typedef struct {
     screen_context_t screen_context;
@@ -17,12 +22,43 @@ typedef struct {
     EGLSurface surface;
     EGLContext context;
     MockScreenInputState input;
+    uint64_t next_present_nanoseconds;
+    int asynchronous_swap;
     uint32_t ignored_events;
     uint32_t event_errors;
     uint32_t window_lost;
 } QnxRenderer;
 
 static QnxRenderer g_qnx;
+
+static uint64_t monotonic_nanoseconds(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0u;
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+           (uint64_t)now.tv_nsec;
+}
+
+static void pace_presentation(void)
+{
+    uint64_t now = monotonic_nanoseconds();
+    if (now == 0u) return;
+    if (g_qnx.next_present_nanoseconds == 0u ||
+        now > g_qnx.next_present_nanoseconds +
+              MOCK_TARGET_FRAME_NANOSECONDS) {
+        g_qnx.next_present_nanoseconds = now;
+    }
+    while (now < g_qnx.next_present_nanoseconds) {
+        const uint64_t remaining = g_qnx.next_present_nanoseconds - now;
+        struct timespec delay;
+        delay.tv_sec = (time_t)(remaining / UINT64_C(1000000000));
+        delay.tv_nsec = (long)(remaining % UINT64_C(1000000000));
+        if (nanosleep(&delay, NULL) == 0 || errno != EINTR) break;
+        now = monotonic_nanoseconds();
+        if (now == 0u) return;
+    }
+    g_qnx.next_present_nanoseconds += MOCK_TARGET_FRAME_NANOSECONDS;
+}
 
 static void set_diagnostic(char *output, size_t capacity,
                            const char *format, ...)
@@ -132,6 +168,8 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     };
     EGLConfig config = NULL;
     EGLint config_id = 0;
+    EGLint min_swap_interval = -1;
+    EGLint max_swap_interval = -1;
     int size[2] = { 0, 0 };
     int window_position[2] = { 0, 0 };
     int window_size[2] = { 0, 0 };
@@ -175,6 +213,25 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
         (void)egl_error(diagnostic, capacity, "EGL surface/context creation");
         goto fail;
     }
+    (void)eglGetConfigAttrib(g_qnx.display, config, EGL_MIN_SWAP_INTERVAL,
+                             &min_swap_interval);
+    (void)eglGetConfigAttrib(g_qnx.display, config, EGL_MAX_SWAP_INTERVAL,
+                             &max_swap_interval);
+    if (eglMakeCurrent(g_qnx.display, g_qnx.surface, g_qnx.surface,
+                       g_qnx.context) == EGL_TRUE) {
+        g_qnx.asynchronous_swap =
+            eglSwapInterval(g_qnx.display, 0) == EGL_TRUE;
+        if (eglMakeCurrent(g_qnx.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                           EGL_NO_CONTEXT) != EGL_TRUE) {
+            (void)egl_error(diagnostic, capacity,
+                            "eglMakeCurrent(release after swap interval)");
+            goto fail;
+        }
+    } else {
+        (void)egl_error(diagnostic, capacity,
+                        "eglMakeCurrent(configure swap interval)");
+        goto fail;
+    }
     if (screen_get_window_property_iv(g_qnx.window,
                                       SCREEN_PROPERTY_BUFFER_SIZE, size) != 0) {
         (void)screen_error(diagnostic, capacity,
@@ -216,9 +273,11 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     target->native_egl_context = (uintptr_t)g_qnx.context;
     set_diagnostic(diagnostic, capacity,
                    "backend renderer live: class=NAV_main config=0x%x "
-                   "buffers=2 geometry=%ux%u input_identity=%d sensitivity=%d",
+                   "buffers=2 geometry=%ux%u input_identity=%d sensitivity=%d "
+                   "swap_range=%d..%d swap0=%d target_fps=30",
                    (unsigned int)config_id, target->width, target->height,
-                   identity_coordinates, sensitivity);
+                   identity_coordinates, sensitivity, min_swap_interval,
+                   max_swap_interval, g_qnx.asynchronous_swap);
     return 0;
 fail:
     mock_renderer_platform_destroy();
@@ -237,9 +296,10 @@ int mock_renderer_platform_end_frame(int present, char *diagnostic,
                                      size_t capacity)
 {
     int result = 0;
-    if (present != 0 &&
-        eglSwapBuffers(g_qnx.display, g_qnx.surface) != EGL_TRUE) {
-        result = egl_error(diagnostic, capacity, "eglSwapBuffers");
+    if (present != 0) {
+        pace_presentation();
+        if (eglSwapBuffers(g_qnx.display, g_qnx.surface) != EGL_TRUE)
+            result = egl_error(diagnostic, capacity, "eglSwapBuffers");
     }
     if (eglMakeCurrent(g_qnx.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
                        EGL_NO_CONTEXT) != EGL_TRUE && result == 0) {

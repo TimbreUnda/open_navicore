@@ -118,6 +118,28 @@ basemap backend. The controls are needed because the current `map_render`
 stage includes textured basemap tiles, a large independent symbol provider,
 route vectors, resource upload, and driver synchronization.
 
+### Live renderer shootout
+
+The three-phase shootout ran on the radio with the same continuously moving
+20 m/s Kyiv route. Each phase lasted 15 seconds and reset the synthetic camera
+to the route start. Discarding the first two transition windows gave:
+
+| Phase | Weighted presented fps | Stable range | Median total p95 | Median map p95 |
+|---|---:|---:|---:|---:|
+| Full OsmAnd map | 15.1 | 8.6--17.8 | 62.5 ms | 50.0 ms |
+| Raster without the independent symbol provider | 18.4 | 14.5--20.5 | 54.0 ms | 33.5 ms |
+| Route and marker only | 20.4 | 20.0--20.8 | 2.5 ms | 2.0 ms |
+
+Removing symbols helps, but does not make the raster path viable. More
+importantly, the route-only phase is locked near 20 fps despite requiring only
+2--3 ms of measured backend work. The remaining roughly 47 ms is outside the
+backend measurement and is consistent with the default `eglSwapBuffers`
+cadence on this QNX/PowerVR window. The next radio build therefore requests
+swap interval zero and explicitly paces presentation to 30 Hz. That separates
+the compositor limit from renderer cost without busy-looping. If the route-only
+control then holds 30 fps, the custom GLES2 renderer remains viable; if it does
+not, the provider/window path must be fixed before investing in map meshes.
+
 ## Approaches considered
 
 | Approach | Runtime load | Porting risk | Map/data impact | 30 fps judgment |
