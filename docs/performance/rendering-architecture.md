@@ -6,7 +6,8 @@ Status: selected architecture; implementation and bench qualification remain.
 
 The target is the VP4R bench radio: two Cortex-A15 cores at 1.5 GHz, 2 GiB RAM,
 and the IMG/PowerVR OpenGL ES 2 driver exposed through QNX Screen/EGL. The
-navigation surface is 1024x576 inside the stock 1024x768 HMI. QNX `pidin`
+visible navigation region is about 1024x576 inside the stock 1024x768 HMI,
+but the provider target and LVGL overlay canvas are the full 1024x768. QNX `pidin`
 reports a 215 MiB data/address-space figure for the current replacement process
 after loading OsmAnd, its
 resources, Qt, the Kyiv OBF, LVGL, and the graphics stack.
@@ -51,13 +52,13 @@ contains `TODO: SkGpuDevice` and allocates the same CPU `SkBitmap` and
 
 The UI path has four avoidable costs on every requested frame:
 
-1. `NavigationView::render()` clears the entire 2.25 MiB ARGB canvas.
+1. `NavigationView::render()` clears the entire 3 MiB ARGB canvas.
 2. It invalidates the whole LVGL screen and forces an immediate refresh.
 3. Guidance updates delete and recreate the whole LVGL object tree.
 4. `GlOverlayCompositor::present()` uses `glTexImage2D` for the entire surface
    and saves/restores GL state using many synchronous `glGet*` calls.
 
-At 30 fps the UI upload alone is about 67.5 MiB/s before driver copies. More
+At 30 fps the UI upload alone is about 90 MiB/s before driver copies. More
 importantly, reallocating the texture and querying GL state can serialize the
 CPU with the PowerVR driver. This work continues even when most UI pixels have
 not changed.
@@ -76,8 +77,27 @@ states, so it cannot establish FPS.
 The first optimization patch adds opt-in one-second frame aggregates, retains
 guidance widgets, suppresses repeated GPS-state logging, and reuses the overlay
 texture. An unchanged UI is still composited after every map draw, but its
-2.25 MiB canvas is no longer uploaded again. These changes need a live baseline
+3 MiB canvas is no longer uploaded again. These changes need a live baseline
 run; they do not establish that the current raster pipeline meets the target.
+
+### First live baseline
+
+The first instrumented simulation run used a 5.2 km route, a 200 m/s synthetic
+position, rotating guidance, and the full 1024x768 target. After initial tile
+arrival, one-second windows produced 10.7--19.2 presented fps, usually
+13--17 fps. Representative p95 stages were 35--73 ms for map draw, 17--112 ms
+for renderer update, and 25--54 ms for UI composition on the roughly one frame
+per second that uploaded a changed guidance canvas. Those uploads were exactly
+3,145,728 bytes each; unchanged frames uploaded zero bytes. The process accrued
+about 5.35 seconds of user CPU time during a 10-second moving sample. No frame
+fault occurred.
+
+This run validates the measurement path and the retained-overlay optimization.
+It also rejects “keep tuning the present raster pipeline” as the primary plan:
+both OsmAnd CPU-side tile/update work and a full-canvas guidance upload can
+independently exceed a 33.3 ms frame budget. The mixed-size tile mosaic visible
+during movement confirms that resource arrival, not only swap cadence, is part
+of the user-visible problem.
 
 ## Approaches considered
 
