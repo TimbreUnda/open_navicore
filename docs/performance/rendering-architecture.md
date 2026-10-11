@@ -102,6 +102,22 @@ independently exceed a 33.3 ms frame budget. The mixed-size tile mosaic visible
 during movement confirms that resource arrival, not only swap cadence, is part
 of the user-visible problem.
 
+A second build corrected simulation to interpolate the camera continuously at
+20 m/s, changed LVGL to a 64-row partial draw buffer, uploaded only the union of
+dirty rectangles, and stopped rewriting unchanged labels. In a 20-second warm
+moving sample it accrued 11.11 seconds of user CPU time and settled near
+9--10 presented fps. Map-draw p95 was generally 89--152 ms, with a 2.98-second
+total-frame outlier. UI composition was 0--5 ms p95 and UI traffic was only
+about 17--68 KiB per second. The rendered guidance view remained visually
+complete.
+
+That result isolates the next decision: further LVGL tuning cannot recover the
+missing 20 fps. The existing OsmAnd atlas path itself must be split into a
+minimal GPU floor test, raster-without-symbols control, and replacement
+basemap backend. The controls are needed because the current `map_render`
+stage includes textured basemap tiles, a large independent symbol provider,
+route vectors, resource upload, and driver synchronization.
+
 ## Approaches considered
 
 | Approach | Runtime load | Porting risk | Map/data impact | 30 fps judgment |
