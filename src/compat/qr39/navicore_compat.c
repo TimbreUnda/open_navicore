@@ -39,6 +39,18 @@
 #ifndef MOCK_NAVICORE_TRACE_PATH
 #define MOCK_NAVICORE_TRACE_PATH "/tmp/mock-navicore.log"
 #endif
+#if defined(__QNXNTO__)
+/*
+ * The QR39 consumer starts five proxy-worker singletons in parallel with the
+ * provider.  After panaGetSoftwareInfrastructure() it waits only 200 ms for
+ * those singletons before abandoning the provider for the lifetime of the
+ * process.  The stock provider's initialization naturally covers that race;
+ * this lightweight replacement must preserve the same timing boundary.
+ */
+#define MOCK_QR39_CONSUMER_SETTLE_MS 500u
+#else
+#define MOCK_QR39_CONSUMER_SETTLE_MS 0u
+#endif
 
 typedef struct {
     const PanaGenericVirtual *vptr;
@@ -2555,6 +2567,11 @@ uint32_t panaInitialize(const void *init_record)
     g_state = MOCK_ACTIVE;
     (void)pthread_cond_broadcast(&g_lifecycle_condition);
     (void)pthread_mutex_unlock(&g_lifecycle_lock);
+    if (MOCK_QR39_CONSUMER_SETTLE_MS != 0u) {
+        mock_log(LOG_NOTICE, "panaInitialize consumer settle=%u ms",
+                 MOCK_QR39_CONSUMER_SETTLE_MS);
+        (void)mock_worker_delay(MOCK_QR39_CONSUMER_SETTLE_MS);
+    }
     return 0u;
 }
 

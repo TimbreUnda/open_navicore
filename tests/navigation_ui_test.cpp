@@ -13,10 +13,19 @@ int main()
 
     NavigationView view(model, 1024, 574);
     assert(view.render(16));
+    // Startup Screen events are quarantined until the first stable frames.
+    view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 80, 40);
+    view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 80, 40);
+    assert(view.render(16));
+    assert(model.screen() == Screen::FreeDrive);
+    for (int frame = 2; frame < 30; ++frame)
+        assert(view.render(16));
     // Exercise the real provider action constants through LVGL's input queue.
     view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 80, 40);
     assert(view.render(16));
+    assert(view.render(16));
     view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 80, 40);
+    assert(view.render(16));
     assert(view.render(16));
     assert(model.screen() == Screen::Search);
 
@@ -31,8 +40,16 @@ int main()
           "9.4 km", 50.43, 30.51}}));
     assert(model.results().size() == 2);
     assert(view.render(16));
-    const auto stale_route_revision = view.select_result(0);
-    const auto route_revision = view.select_result(0);
+    view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 100, 120);
+    assert(view.render(16));
+    assert(view.render(16));
+    view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 100, 120);
+    assert(view.render(16));
+    assert(view.render(16));
+    assert(model.destination());
+    assert(model.destination()->id == "house-12");
+    const auto route_revision = model.route_revision();
+    const auto stale_route_revision = route_revision - 1;
     assert(!view.apply_routes(stale_route_revision,
         {{"stale", "99 min", "99 km", "", "Must be rejected", 0.0, 0.0, {}}}));
     assert(view.apply_routes(route_revision,

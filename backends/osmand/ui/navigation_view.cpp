@@ -1,9 +1,12 @@
 #include "navigation_view.h"
 
+#include "../diagnostics.h"
+
 #include <lvgl.h>
 #include <open_navicore/backend.h>
 
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -18,6 +21,9 @@ constexpr uint32_t secondary = 0xa4abb5;
 constexpr uint32_t tertiary = 0x6f7782;
 constexpr uint32_t accent = 0x3d7bff;
 constexpr uint32_t maneuver = 0x1f4fd1;
+constexpr int stock_chrome_top = 72;
+constexpr int stock_chrome_bottom = 122;
+constexpr uint32_t input_quarantine_frames = 30;
 
 lv_color_t color(uint32_t value) { return lv_color_hex(value); }
 
@@ -35,6 +41,18 @@ void panel(lv_obj_t* object, uint32_t background, int radius = 0)
     lv_obj_set_style_radius(object, radius, 0);
     lv_obj_set_style_pad_all(object, 0, 0);
     no_scroll(object);
+}
+
+int content_top(uint32_t height)
+{
+    return height >= 700u ? stock_chrome_top : 0;
+}
+
+int content_height(uint32_t height)
+{
+    const int top = content_top(height);
+    const int bottom = height >= 700u ? stock_chrome_bottom : 0;
+    return std::max(1, static_cast<int>(height) - top - bottom);
 }
 
 } // namespace
@@ -150,7 +168,8 @@ void NavigationView::build_free_drive()
     const int rail_width = std::min<int>(336, width_);
     lv_obj_t* rail = lv_obj_create(screen_);
     panel(rail, base);
-    lv_obj_set_size(rail, rail_width, height_);
+    lv_obj_set_pos(rail, 0, content_top(height_));
+    lv_obj_set_size(rail, rail_width, content_height(height_));
     lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(rail, 16, 0);
     lv_obj_set_style_pad_row(rail, 12, 0);
@@ -181,8 +200,11 @@ void NavigationView::build_free_drive()
 
 void NavigationView::build_search()
 {
+    const int top = content_top(height_);
+    const int available_height = content_height(height_);
     lv_obj_t* header = lv_obj_create(screen_);
     panel(header, base);
+    lv_obj_set_pos(header, 0, top);
     lv_obj_set_size(header, LV_PCT(100), 80);
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_all(header, 12, 0);
@@ -206,8 +228,8 @@ void NavigationView::build_search()
 
     lv_obj_t* body = lv_obj_create(screen_);
     panel(body, base);
-    lv_obj_set_pos(body, 0, 80);
-    lv_obj_set_size(body, width_, static_cast<int>(height_) - 80);
+    lv_obj_set_pos(body, 0, top + 80);
+    lv_obj_set_size(body, width_, std::max(1, available_height - 80));
     lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
     results_panel_ = lv_obj_create(body);
     panel(results_panel_, base);
@@ -263,7 +285,8 @@ void NavigationView::build_route_preview()
     const int rail_width = std::min<int>(336, width_);
     lv_obj_t* rail = lv_obj_create(screen_);
     panel(rail, base);
-    lv_obj_set_size(rail, rail_width, height_);
+    lv_obj_set_pos(rail, 0, content_top(height_));
+    lv_obj_set_size(rail, rail_width, content_height(height_));
     lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(rail, 16, 0);
     lv_obj_set_style_pad_row(rail, 10, 0);
@@ -304,7 +327,7 @@ void NavigationView::build_guidance()
     build_route_preview();
     lv_obj_t* banner = lv_obj_create(screen_);
     panel(banner, maneuver, 8);
-    lv_obj_set_pos(banner, 16, 16);
+    lv_obj_set_pos(banner, 16, content_top(height_) + 16);
     lv_obj_set_size(banner, std::min<int>(304, width_), 112);
     lv_obj_t* text = label(banner, "Route started", primary, 24);
     lv_obj_center(text);
@@ -312,9 +335,22 @@ void NavigationView::build_guidance()
 
 void NavigationView::pointer(int action, int32_t x, int32_t y)
 {
+    if (rendered_frames_ < input_quarantine_frames) {
+        trace_pointer("quarantined", static_cast<uint32_t>(action), x, y);
+        return;
+    }
+    if (action == MOCK_NAV_BACKEND_POINTER_PRESS) {
+        input_sequence_active_ = true;
+    } else if (!input_sequence_active_) {
+        trace_pointer("orphaned", static_cast<uint32_t>(action), x, y);
+        return;
+    }
     if (pointer_queue_.size() == 32)
         pointer_queue_.pop_front();
     pointer_queue_.push_back({action, x, y});
+    trace_pointer("queued", static_cast<uint32_t>(action), x, y);
+    if (action == MOCK_NAV_BACKEND_POINTER_RELEASE)
+        input_sequence_active_ = false;
 }
 
 bool NavigationView::render(uint32_t elapsed_ms)
@@ -325,10 +361,17 @@ bool NavigationView::render(uint32_t elapsed_ms)
     lv_obj_invalidate(screen_);
     (void)lv_timer_handler();
     lv_refr_now(display_);
+    if (rendered_frames_ != UINT32_MAX)
+        ++rendered_frames_;
     return dirty_;
 }
 
-void NavigationView::open_search() { model_.open_search(); rebuild(); }
+void NavigationView::open_search()
+{
+    trace("ui=open_search");
+    model_.open_search();
+    rebuild();
+}
 std::uint64_t NavigationView::set_query(std::string query)
 {
     if (model_.screen() != Screen::Search) model_.open_search();
@@ -339,9 +382,11 @@ std::uint64_t NavigationView::set_query(std::string query)
 bool NavigationView::apply_search_results(std::uint64_t revision,
                                           std::vector<Destination> results)
 {
+    trace_result("ui=search_results", revision, results.size());
     const bool accepted = model_.apply_search_results(revision,
                                                       std::move(results));
-    rebuild();
+    if (accepted)
+        refresh_results();
     return accepted;
 }
 std::uint64_t NavigationView::select_result(std::size_t index)
@@ -386,6 +431,7 @@ void NavigationView::pointer_cb(lv_indev_t* indev, lv_indev_data_t* data)
 
 void NavigationView::open_search_cb(lv_event_t* event)
 {
+    trace("ui=open_search_click");
     static_cast<NavigationView*>(lv_event_get_user_data(event))->open_search();
 }
 void NavigationView::close_search_cb(lv_event_t* event)
@@ -396,21 +442,28 @@ void NavigationView::close_search_cb(lv_event_t* event)
 void NavigationView::query_changed_cb(lv_event_t* event)
 {
     auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
-    self->model_.set_query(lv_textarea_get_text(self->query_field_));
+    const char* query = lv_textarea_get_text(self->query_field_);
+    trace_result("ui=query_changed", self->model_.search_revision() + 1u,
+                 query ? std::strlen(query) : 0u);
+    self->model_.set_query(query ? query : "");
     self->refresh_results();
 }
 void NavigationView::result_cb(lv_event_t* event)
 {
     auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
     const auto value = reinterpret_cast<std::size_t>(
-        lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(event))));
-    if (value && self->model_.select_destination(value - 1)) self->rebuild();
+        lv_obj_get_user_data(static_cast<lv_obj_t*>(
+            lv_event_get_current_target(event))));
+    trace_result("ui=result_click", self->model_.route_revision(), value);
+    if (value && self->model_.select_destination(value - 1))
+        self->rebuild();
 }
 void NavigationView::route_cb(lv_event_t* event)
 {
     auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
     const auto value = reinterpret_cast<std::size_t>(
-        lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_target(event))));
+        lv_obj_get_user_data(static_cast<lv_obj_t*>(
+            lv_event_get_current_target(event))));
     if (value && self->model_.select_route(value - 1)) self->rebuild();
 }
 void NavigationView::start_cb(lv_event_t* event)

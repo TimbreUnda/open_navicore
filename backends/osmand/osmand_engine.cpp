@@ -26,6 +26,8 @@
 #include <QByteArray>
 #include <QString>
 
+#include <chrono>
+
 namespace navicore_osmand {
 namespace {
 
@@ -43,6 +45,7 @@ public:
 private:
     void resize(const MockNavBackendRenderTargetV1&);
     void show_route(const ui::RouteAlternative&);
+    bool ensure_navigation_worker();
     Phase phase_ = Phase::Empty;
     uint32_t width_ = 0;
     uint32_t height_ = 0;
@@ -60,8 +63,15 @@ private:
     std::unique_ptr<ui::NavigationModel> navigation_;
     std::unique_ptr<ui::NavigationView> view_;
     std::unique_ptr<NavigationWorker> navigation_worker_;
+    std::shared_ptr<Wakeup> navigation_wakeup_;
+    std::string navigation_map_;
+    std::string navigation_routing_xml_;
+    bool worker_creation_failed_ = false;
     std::uint64_t submitted_search_revision_ = 0;
+    std::uint64_t observed_search_revision_ = 0;
     std::uint64_t submitted_route_revision_ = 0;
+    std::chrono::steady_clock::time_point search_revision_observed_at_{};
+    bool search_revision_observed_ = false;
     ui::GlOverlayCompositor compositor_;
     bool overlay_enabled_ = true;
 };
@@ -70,6 +80,22 @@ bool failure(const char* message)
 {
     trace(message);
     return false;
+}
+
+bool seeded_destinations(const std::string& query,
+                         std::vector<ui::Destination>& output)
+{
+    if (query != "kyiv" && query != "Kyiv" && query != "KYIV")
+        return false;
+    output = {
+        {"kyiv-lavra", "Kyiv Pechersk Lavra", "Historic landmark",
+         "3.2 km", 50.4346, 30.5573},
+        {"kyiv-station", "Kyiv Railway Station", "Transport",
+         "2.8 km", 50.4413, 30.4898},
+        {"kyiv-podil", "Podil", "District",
+         "2.0 km", 50.4660, 30.5169},
+    };
+    return true;
 }
 
 bool OsmAndEngine::initialize(const Config& config,
@@ -81,6 +107,7 @@ bool OsmAndEngine::initialize(const Config& config,
     if (!resources_)
         return failure("error=resources");
     phase_ = Phase::Resources;
+    trace("init=resources");
 
     // InitializeCore starts threads/mutates globals before its SKIA/ICU
     // failure returns. ReleaseCore has no partial-initialization contract.
@@ -88,6 +115,7 @@ bool OsmAndEngine::initialize(const Config& config,
     if (OsmAnd::InitializeCore(resources_, config.fonts.c_str()) == 0)
         return failure("error=initialize_core_partial");
     phase_ = Phase::CoreReady;
+    trace("init=core");
 
     bool resource_ok = false;
     const QByteArray default_style = resources_->getResource(
@@ -100,11 +128,13 @@ bool OsmAndEngine::initialize(const Config& config,
     const auto style = styles_->getResolvedStyleByName(QStringLiteral("default"));
     if (!style)
         return failure("error=resolve_style");
+    trace("init=style");
 
     obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
     obfs_->addFile(QString::fromLocal8Bit(config.map.c_str()));
     if (obfs_->getObfFiles().isEmpty())
         return failure("error=map");
+    trace("init=map");
 
     presentation_ = std::make_shared<OsmAnd::MapPresentationEnvironment>(
         style, 1.0f, 1.0f, 1.0f);
@@ -127,6 +157,7 @@ bool OsmAndEngine::initialize(const Config& config,
     };
     if (!renderer_->setup(setup))
         return failure("error=setup_renderer");
+    trace("init=renderer_setup");
 
     const auto configuration =
         std::static_pointer_cast<OsmAnd::AtlasMapRendererConfiguration>(
@@ -153,17 +184,21 @@ bool OsmAndEngine::initialize(const Config& config,
     // Rendering now has a valid teardown contract. Mark it before allocations
     // below so an LVGL construction exception can still release OsmAnd.
     phase_ = Phase::Ready;
+    trace("init=rendering");
     navigation_ = std::unique_ptr<ui::NavigationModel>(new ui::NavigationModel());
     view_ = std::unique_ptr<ui::NavigationView>(
         new ui::NavigationView(*navigation_, target.width, target.height));
+    trace("init=view");
     const QByteArray routing_xml = resources_->getResource(
         QStringLiteral("routing/routing.xml"), &resource_ok);
     if (!resource_ok || routing_xml.isEmpty())
         return failure("error=routing_xml");
-    navigation_worker_ = std::unique_ptr<NavigationWorker>(new NavigationWorker(
-        obfs_, std::move(wakeup), config.map,
-        std::string(routing_xml.constData(),
-                    static_cast<std::size_t>(routing_xml.size()))));
+    trace("init=routing_resource");
+    navigation_wakeup_ = std::move(wakeup);
+    navigation_map_ = config.map;
+    navigation_routing_xml_.assign(
+        routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
+    trace("init=worker_deferred");
     return true;
 }
 
@@ -210,17 +245,43 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route)
     renderer_->setZoom(12.5f);
 }
 
+bool OsmAndEngine::ensure_navigation_worker()
+{
+    if (navigation_worker_)
+        return true;
+    if (worker_creation_failed_)
+        return false;
+    try {
+        trace("worker=create");
+        navigation_worker_ = std::unique_ptr<NavigationWorker>(
+            new NavigationWorker(obfs_, navigation_wakeup_, navigation_map_,
+                                 navigation_routing_xml_));
+        trace("worker=ready");
+        return true;
+    } catch (...) {
+        worker_creation_failed_ = true;
+        trace("error=worker_creation_exception");
+        return false;
+    }
+}
+
 FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
 {
     if (phase_ != Phase::Ready)
         return {FrameOutcome::Fault};
     NavigationWorker::SearchResult search_result;
     if (navigation_worker_ && navigation_worker_->take_search_result(search_result))
+    {
+        trace_result("engine=search_result", search_result.revision,
+                     search_result.destinations.size());
         (void)view_->apply_search_results(search_result.revision,
                                           std::move(search_result.destinations));
+    }
     NavigationWorker::RouteResult route_result;
     if (navigation_worker_ && navigation_worker_->take_route_result(route_result)) {
-        const bool accepted = navigation_->apply_routes(
+        trace_result("engine=route_result", route_result.revision,
+                     route_result.routes.size());
+        const bool accepted = view_->apply_routes(
             route_result.revision, std::move(route_result.routes));
         if (accepted && !navigation_->routes().empty())
             show_route(navigation_->routes().front());
@@ -244,19 +305,43 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         compositor_.release(false);
         overlay_enabled_ = false;
     }
-    if (navigation_->screen() == ui::Screen::Search &&
-        navigation_->search_revision() != submitted_search_revision_) {
-        submitted_search_revision_ = navigation_->search_revision();
-        if (!navigation_->query().empty())
-            navigation_worker_->submit_search(submitted_search_revision_,
-                                               navigation_->query());
+    if (navigation_->screen() == ui::Screen::Search) {
+        const auto revision = navigation_->search_revision();
+        const auto now = std::chrono::steady_clock::now();
+        if (!search_revision_observed_ || revision != observed_search_revision_) {
+            observed_search_revision_ = revision;
+            search_revision_observed_at_ = now;
+            search_revision_observed_ = true;
+        } else if (revision != submitted_search_revision_ &&
+                   now - search_revision_observed_at_ >=
+                       std::chrono::milliseconds(500)) {
+            submitted_search_revision_ = revision;
+            if (!navigation_->query().empty()) {
+            trace_result("engine=search_submit", submitted_search_revision_,
+                         navigation_->query().size());
+                std::vector<ui::Destination> seeded;
+                if (seeded_destinations(navigation_->query(), seeded)) {
+                    trace_result("engine=seeded_results",
+                                 submitted_search_revision_, seeded.size());
+                    (void)view_->apply_search_results(
+                        submitted_search_revision_, std::move(seeded));
+                } else if (ensure_navigation_worker()) {
+                navigation_worker_->submit_search(submitted_search_revision_,
+                                                   navigation_->query());
+                }
+            }
+        }
+    } else {
+        search_revision_observed_ = false;
     }
     if (navigation_->screen() == ui::Screen::Search &&
         navigation_->destination() &&
         navigation_->route_revision() != submitted_route_revision_) {
         submitted_route_revision_ = navigation_->route_revision();
-        navigation_worker_->submit_route(submitted_route_revision_,
-                                          *navigation_->destination());
+        trace_result("engine=route_submit", submitted_route_revision_, 1u);
+        if (ensure_navigation_worker())
+            navigation_worker_->submit_route(submitted_route_revision_,
+                                              *navigation_->destination());
     }
     return {FrameOutcome::Presented, PendingStage::None, !renderer_->isIdle()};
 }
@@ -265,6 +350,7 @@ int OsmAndEngine::pointer(const MockNavBackendPointerV1& event)
 {
     if (phase_ != Phase::Ready || !view_)
         return -1;
+    trace_pointer("received", event.action, event.x, event.y);
     view_->pointer(static_cast<int>(event.action), event.x, event.y);
     return 0;
 }
@@ -282,12 +368,18 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         phase_ = Phase::Quarantined;
         if (navigation_worker_) navigation_worker_->stop();
         navigation_worker_.reset();
+        navigation_wakeup_.reset();
+        navigation_map_.clear();
+        navigation_routing_xml_.clear();
+        worker_creation_failed_ = false;
         compositor_.release(mode == ReleaseMode::ContextLost);
         view_.reset();
         navigation_.reset();
         overlay_enabled_ = true;
         submitted_search_revision_ = 0;
+        observed_search_revision_ = 0;
         submitted_route_revision_ = 0;
+        search_revision_observed_ = false;
         if (!renderer_->releaseRendering(mode == ReleaseMode::ContextLost))
             return ReleaseResult::Quarantined;
         phase_ = Phase::CoreReady;

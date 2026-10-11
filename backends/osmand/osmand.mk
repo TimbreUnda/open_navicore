@@ -182,6 +182,7 @@ navigation-ui-test: $(LVGL_HOST_BUILD_DIR)/liblvgl.a
 	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror \
 		-Iinclude -Ibackends/osmand -Ithird_party/lvgl -I$(CURDIR) \
 		-DLV_CONF_PATH='"backends/osmand/ui/lv_conf.h"' \
+		backends/osmand/diagnostics.cpp \
 		backends/osmand/ui/navigation_model.cpp \
 		backends/osmand/ui/navigation_view.cpp tests/navigation_ui_test.cpp \
 		$(LVGL_HOST_BUILD_DIR)/liblvgl.a -lm -o $(LVGL_HOST_BUILD_DIR)/navigation-ui-test

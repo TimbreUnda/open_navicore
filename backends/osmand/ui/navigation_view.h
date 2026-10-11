@@ -76,6 +76,8 @@ private:
     lv_obj_t* query_field_ = nullptr;
     std::deque<PointerSample> pointer_queue_;
     PointerSample last_pointer_{2, 0, 0};
+    uint32_t rendered_frames_ = 0;
+    bool input_sequence_active_ = false;
     bool pointer_down_ = false;
     bool dirty_ = false;
 };

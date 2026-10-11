@@ -174,9 +174,13 @@ public:
          std::string map_path,
          std::string routing_xml)
         : obfs_(std::move(obfs)), wakeup_(std::move(wakeup)),
-          map_path_(std::move(map_path)), routing_xml_(std::move(routing_xml)),
-          thread_(&Impl::run, this)
+          map_path_(std::move(map_path)), routing_xml_(std::move(routing_xml))
     {
+        // Start only after every request/result flag below has completed
+        // construction. Starting in the member initializer races run()
+        // against later members such as has_pending_ and stopping_.
+        thread_ = std::thread(&Impl::run, this);
+        trace("worker=thread_started");
     }
 
     ~Impl() { stop(); }
@@ -188,6 +192,7 @@ public:
         if (active_) active_->cancel();
         pending_ = Request::search(revision, std::move(query));
         has_pending_ = true;
+        trace_result("worker=search_queued", revision, pending_.query.size());
         condition_.notify_one();
     }
 
@@ -198,6 +203,7 @@ public:
         if (active_) active_->cancel();
         pending_ = Request::route(revision, std::move(destination));
         has_pending_ = true;
+        trace_result("worker=route_queued", revision, 1u);
         condition_.notify_one();
     }
 
@@ -386,6 +392,12 @@ private:
                 cancel = active_;
             }
 
+            trace_result(request.kind == Request::Kind::Search
+                             ? "worker=search_begin" : "worker=route_begin",
+                         request.revision,
+                         request.kind == Request::Kind::Search
+                             ? request.query.size() : 1u);
+
             std::vector<ui::Destination> destinations;
             std::vector<ui::RouteAlternative> routes;
             try {
@@ -402,21 +414,30 @@ private:
                 // by submit(), and remains excluded by the check below.
             }
             bool published = false;
+            std::size_t published_count = 0;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (stopping_) return;
                 if (active_ == cancel && !cancel->superseded()) {
                     if (request.kind == Request::Kind::Search) {
                         result_ = {request.revision, std::move(destinations)};
+                        published_count = result_.destinations.size();
                         has_result_ = true;
                     } else {
                         route_result_ = {request.revision, std::move(routes)};
+                        published_count = route_result_.routes.size();
                         has_route_result_ = true;
                     }
                     published = true;
                 }
                 if (active_ == cancel) active_.reset();
             }
+            if (published)
+                trace_result(request.kind == Request::Kind::Search
+                                 ? "worker=search_published"
+                                 : "worker=route_published",
+                             request.revision,
+                             published_count);
             if (published && wakeup_) (void)wakeup_->request();
         }
     }
