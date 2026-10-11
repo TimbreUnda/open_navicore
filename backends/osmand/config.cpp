@@ -11,13 +11,12 @@ std::string path(const char* variable, const char* fallback)
     return value && *value ? value : fallback;
 }
 
-bool simulation_enabled()
+bool marker_or_environment(const char* variable, const char* marker_path)
 {
-    const char* value = std::getenv("OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE");
+    const char* value = std::getenv(variable);
     if (value && value[0] == '1' && value[1] == '\0')
         return true;
-    std::FILE* marker = std::fopen(
-        "/datastore/navicore-backend/enable-route-simulation", "r");
+    std::FILE* marker = std::fopen(marker_path, "r");
     if (!marker)
         return false;
     std::fclose(marker);
@@ -32,7 +31,15 @@ Config Config::from_environment()
              "/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so"),
         path("OPEN_NAVICORE_OSMAND_MAP", "/datastore/navicore-backend/maps/kyiv.obf"),
         path("OPEN_NAVICORE_OSMAND_FONTS", "/datastore/navicore-backend/fonts"),
-        simulation_enabled(),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE",
+            "/datastore/navicore-backend/enable-route-simulation"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS",
+            "/datastore/navicore-backend/enable-performance-metrics"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_DETAILED_TILE_METRICS",
+            "/datastore/navicore-backend/enable-detailed-tile-metrics"),
         200.0
     };
 }

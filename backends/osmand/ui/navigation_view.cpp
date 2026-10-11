@@ -164,8 +164,7 @@ void NavigationView::destroy_display() noexcept
         lv_display_delete(display_);
     display_ = nullptr;
     screen_ = nullptr;
-    results_panel_ = nullptr;
-    query_field_ = nullptr;
+    clear_object_references();
 }
 
 void NavigationView::resize(uint32_t width, uint32_t height)
@@ -208,6 +207,7 @@ void NavigationView::rebuild()
 {
     lv_display_set_default(display_);
     lv_obj_t* old_screen = screen_;
+    clear_object_references();
     screen_ = lv_obj_create(nullptr);
     panel(screen_, base);
     if (model_.screen() != Screen::Search)
@@ -219,9 +219,11 @@ void NavigationView::rebuild()
     case Screen::RoutePreview: build_route_preview(); break;
     case Screen::Guidance: build_guidance(); break;
     }
+    built_screen_ = model_.screen();
     lv_screen_load(screen_);
     if (old_screen)
         lv_obj_delete_async(old_screen);
+    full_clear_pending_ = true;
     lv_obj_invalidate(screen_);
 }
 
@@ -421,7 +423,7 @@ void NavigationView::build_guidance()
         std::string instruction = maneuver_action(guidance.maneuver.kind);
         if (!guidance.maneuver.road.empty())
             instruction += "  " + guidance.maneuver.road;
-        label(next, instruction.c_str(), secondary, 18);
+        guidance_instruction_ = label(next, instruction.c_str(), secondary, 18);
     } else {
         lv_obj_t* primary_card = lv_obj_create(rail);
         panel(primary_card, maneuver);
@@ -430,27 +432,29 @@ void NavigationView::build_guidance()
         lv_obj_set_style_pad_all(primary_card, 18, 0);
         lv_obj_set_style_pad_column(primary_card, 14, 0);
         lv_obj_set_flex_flow(primary_card, LV_FLEX_FLOW_ROW);
-        lv_obj_t* symbol = label(primary_card,
+        guidance_symbol_ = label(primary_card,
             maneuver_symbol(guidance.maneuver.kind), primary, 28);
-        lv_obj_set_width(symbol, 48);
-        lv_obj_set_style_text_align(symbol, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(guidance_symbol_, 48);
+        lv_obj_set_style_text_align(guidance_symbol_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_t* copy = lv_obj_create(primary_card);
         panel(copy, maneuver);
         lv_obj_set_flex_grow(copy, 1);
         lv_obj_set_height(copy, LV_PCT(100));
         lv_obj_set_flex_flow(copy, LV_FLEX_FLOW_COLUMN);
-        if (guidance.simulated)
-            label(copy, "ROUTE SIMULATION", 0xffd166, 14);
+        guidance_simulation_ = label(copy, "ROUTE SIMULATION", 0xffd166, 14);
+        if (!guidance.simulated)
+            lv_obj_set_hidden(guidance_simulation_, true);
         const std::string next_distance = guidance.arrived ? "0 m" :
             distance_text(guidance.distance_to_maneuver_metres);
-        label(copy, next_distance.c_str(), primary, 28);
-        label(copy, maneuver_action(guidance.maneuver.kind), primary, 20);
+        guidance_distance_ = label(copy, next_distance.c_str(), primary, 28);
+        guidance_action_ = label(
+            copy, maneuver_action(guidance.maneuver.kind), primary, 20);
         const char* road = !guidance.maneuver.road.empty()
             ? guidance.maneuver.road.c_str()
             : (destination ? destination->title.c_str() : "Route");
-        lv_obj_t* road_label = label(copy, road, 0xc9d6ff, 14);
-        lv_obj_set_width(road_label, LV_PCT(100));
-        lv_label_set_long_mode(road_label, LV_LABEL_LONG_DOT);
+        guidance_road_ = label(copy, road, 0xc9d6ff, 14);
+        lv_obj_set_width(guidance_road_, LV_PCT(100));
+        lv_label_set_long_mode(guidance_road_, LV_LABEL_LONG_DOT);
 
         lv_obj_t* following = lv_obj_create(rail);
         panel(following, 0x183ea8);
@@ -463,16 +467,18 @@ void NavigationView::build_guidance()
             then += maneuver_action(guidance.following_maneuver.kind);
             if (!guidance.following_maneuver.road.empty())
                 then += "  " + guidance.following_maneuver.road;
-            label(following, then.c_str(), 0xc9d6ff, 14);
+            guidance_following_ = label(
+                following, then.c_str(), 0xc9d6ff, 14);
         } else {
-            label(following, "Continue to destination", 0xc9d6ff, 14);
+            guidance_following_ = label(
+                following, "Continue to destination", 0xc9d6ff, 14);
         }
         lv_obj_t* lanes = lv_obj_create(rail);
         panel(lanes, base);
         lv_obj_set_width(lanes, LV_PCT(100));
         lv_obj_set_height(lanes, 44);
         lv_obj_set_style_pad_left(lanes, 20, 0);
-        label(lanes, guidance.simulated ?
+        guidance_lanes_ = label(lanes, guidance.simulated ?
             "SIMULATION - Lane info unavailable" :
             "Lane info not available here", tertiary, 14);
     }
@@ -493,9 +499,9 @@ void NavigationView::build_guidance()
     if (guidance.position_available) {
         const std::string trip = duration_text(guidance.remaining_seconds) +
             "  " + distance_text(guidance.remaining_metres);
-        label(summary, trip.c_str(), primary, 20);
+        guidance_summary_ = label(summary, trip.c_str(), primary, 20);
     } else {
-        label(summary, "--:--  ETA paused", tertiary, 20);
+        guidance_summary_ = label(summary, "--:--  ETA paused", tertiary, 20);
     }
 
     lv_obj_t* controls = lv_obj_create(rail);
@@ -534,6 +540,77 @@ void NavigationView::build_guidance()
     }
 }
 
+void NavigationView::refresh_guidance()
+{
+    const auto& guidance = model_.guidance();
+    const Destination* destination = model_.destination();
+    if (!guidance.position_available) {
+        if (guidance_instruction_) {
+            std::string instruction = maneuver_action(guidance.maneuver.kind);
+            if (!guidance.maneuver.road.empty())
+                instruction += "  " + guidance.maneuver.road;
+            lv_label_set_text(guidance_instruction_, instruction.c_str());
+        }
+        if (guidance_summary_)
+            lv_label_set_text(guidance_summary_, "--:--  ETA paused");
+        return;
+    }
+
+    if (guidance_symbol_)
+        lv_label_set_text(guidance_symbol_,
+                          maneuver_symbol(guidance.maneuver.kind));
+    if (guidance_simulation_) {
+        lv_obj_set_hidden(guidance_simulation_, !guidance.simulated);
+    }
+    const std::string next_distance = guidance.arrived ? "0 m" :
+        distance_text(guidance.distance_to_maneuver_metres);
+    if (guidance_distance_)
+        lv_label_set_text(guidance_distance_, next_distance.c_str());
+    if (guidance_action_)
+        lv_label_set_text(guidance_action_,
+                          maneuver_action(guidance.maneuver.kind));
+    if (guidance_road_) {
+        const char* road = !guidance.maneuver.road.empty()
+            ? guidance.maneuver.road.c_str()
+            : (destination ? destination->title.c_str() : "Route");
+        lv_label_set_text(guidance_road_, road);
+    }
+    if (guidance_following_) {
+        std::string following = "Continue to destination";
+        if (guidance.has_following_maneuver) {
+            following = "Then  ";
+            following += maneuver_action(guidance.following_maneuver.kind);
+            if (!guidance.following_maneuver.road.empty())
+                following += "  " + guidance.following_maneuver.road;
+        }
+        lv_label_set_text(guidance_following_, following.c_str());
+    }
+    if (guidance_lanes_)
+        lv_label_set_text(guidance_lanes_, guidance.simulated ?
+            "SIMULATION - Lane info unavailable" :
+            "Lane info not available here");
+    if (guidance_summary_) {
+        const std::string trip = duration_text(guidance.remaining_seconds) +
+            "  " + distance_text(guidance.remaining_metres);
+        lv_label_set_text(guidance_summary_, trip.c_str());
+    }
+}
+
+void NavigationView::clear_object_references() noexcept
+{
+    results_panel_ = nullptr;
+    query_field_ = nullptr;
+    guidance_symbol_ = nullptr;
+    guidance_simulation_ = nullptr;
+    guidance_distance_ = nullptr;
+    guidance_action_ = nullptr;
+    guidance_road_ = nullptr;
+    guidance_following_ = nullptr;
+    guidance_lanes_ = nullptr;
+    guidance_summary_ = nullptr;
+    guidance_instruction_ = nullptr;
+}
+
 void NavigationView::pointer(int action, int32_t x, int32_t y)
 {
     if (rendered_frames_ < input_quarantine_frames) {
@@ -557,14 +634,18 @@ void NavigationView::pointer(int action, int32_t x, int32_t y)
 bool NavigationView::render(uint32_t elapsed_ms)
 {
     dirty_ = false;
-    std::fill(pixels_.begin(), pixels_.end(), 0u);
     lv_tick_inc(elapsed_ms);
-    lv_obj_invalidate(screen_);
+    const bool forced_present = full_clear_pending_;
+    if (full_clear_pending_) {
+        std::fill(pixels_.begin(), pixels_.end(), 0u);
+        lv_obj_invalidate(screen_);
+        full_clear_pending_ = false;
+    }
     (void)lv_timer_handler();
     lv_refr_now(display_);
     if (rendered_frames_ != UINT32_MAX)
         ++rendered_frames_;
-    return dirty_;
+    return dirty_ || forced_present;
 }
 
 void NavigationView::open_search()
@@ -606,9 +687,15 @@ bool NavigationView::apply_routes(std::uint64_t revision,
 
 bool NavigationView::apply_guidance(GuidanceState guidance)
 {
+    const bool structure_changed = built_screen_ != model_.screen() ||
+        model_.guidance().position_available != guidance.position_available;
     const bool accepted = model_.update_guidance(std::move(guidance));
-    if (accepted)
-        rebuild();
+    if (accepted) {
+        if (structure_changed)
+            rebuild();
+        else
+            refresh_guidance();
+    }
     return accepted;
 }
 

@@ -100,6 +100,12 @@ void lifecycle()
     assert(setenv("OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE", "1", 1) == 0);
     assert(Config::from_environment().simulate_route);
     assert(unsetenv("OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE") == 0);
+    assert(setenv("OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS", "1", 1) == 0);
+    assert(Config::from_environment().performance_metrics);
+    assert(unsetenv("OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS") == 0);
+    assert(setenv("OPEN_NAVICORE_OSMAND_DETAILED_TILE_METRICS", "1", 1) == 0);
+    assert(Config::from_environment().detailed_tile_metrics);
+    assert(unsetenv("OPEN_NAVICORE_OSMAND_DETAILED_TILE_METRICS") == 0);
 
     probe = std::make_shared<Probe>();
     unsigned requests = 0, new_requests = 0;

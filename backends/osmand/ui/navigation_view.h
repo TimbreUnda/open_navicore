@@ -51,6 +51,8 @@ private:
     void build_search();
     void build_route_preview();
     void build_guidance();
+    void refresh_guidance();
+    void clear_object_references() noexcept;
     void refresh_results();
     _lv_obj_t* label(_lv_obj_t* parent, const char* text, uint32_t color,
                      int font_size = 14);
@@ -68,6 +70,7 @@ private:
     static void end_cb(lv_event_t* event);
 
     NavigationModel& model_;
+    Screen built_screen_ = Screen::FreeDrive;
     uint32_t width_;
     uint32_t height_;
     std::vector<uint32_t> pixels_;
@@ -76,12 +79,22 @@ private:
     lv_obj_t* screen_ = nullptr;
     lv_obj_t* results_panel_ = nullptr;
     lv_obj_t* query_field_ = nullptr;
+    lv_obj_t* guidance_symbol_ = nullptr;
+    lv_obj_t* guidance_simulation_ = nullptr;
+    lv_obj_t* guidance_distance_ = nullptr;
+    lv_obj_t* guidance_action_ = nullptr;
+    lv_obj_t* guidance_road_ = nullptr;
+    lv_obj_t* guidance_following_ = nullptr;
+    lv_obj_t* guidance_lanes_ = nullptr;
+    lv_obj_t* guidance_summary_ = nullptr;
+    lv_obj_t* guidance_instruction_ = nullptr;
     std::deque<PointerSample> pointer_queue_;
     PointerSample last_pointer_{2, 0, 0};
     uint32_t rendered_frames_ = 0;
     bool input_sequence_active_ = false;
     bool pointer_down_ = false;
     bool dirty_ = false;
+    bool full_clear_pending_ = true;
 };
 
 } // namespace navicore_osmand::ui

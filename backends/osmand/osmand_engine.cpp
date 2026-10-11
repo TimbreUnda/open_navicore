@@ -1,6 +1,7 @@
 #include "engine.h"
 #include "session.h"
 #include "diagnostics.h"
+#include "frame_metrics.h"
 #include "guidance_tracker.h"
 #include "navigation_worker.h"
 #include "ui/gl_overlay_compositor.h"
@@ -80,6 +81,8 @@ private:
     GuidanceTracker guidance_tracker_;
     MockNavBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
+    bool gps_state_observed_ = false;
+    bool last_logged_gps_valid_ = false;
     bool gps_dirty_ = false;
     bool guidance_active_ = false;
     bool simulation_enabled_ = false;
@@ -90,6 +93,7 @@ private:
     std::chrono::steady_clock::time_point simulation_updated_at_{};
     ui::GlOverlayCompositor compositor_;
     bool overlay_enabled_ = true;
+    FrameMetrics frame_metrics_{false};
 };
 
 bool failure(const char* message)
@@ -173,6 +177,12 @@ bool OsmAndEngine::initialize(const Config& config,
                              std::shared_ptr<Wakeup> wakeup)
 {
     simulation_enabled_ = config.simulate_route;
+    frame_metrics_ = FrameMetrics(config.performance_metrics);
+    OsmAnd::enablePerformanceMetrics(config.detailed_tile_metrics);
+    if (config.performance_metrics)
+        trace("performance_metrics=enabled");
+    if (config.detailed_tile_metrics)
+        trace("detailed_tile_metrics=enabled");
     simulation_speed_metres_per_second_ =
         config.simulation_speed_metres_per_second;
     if (simulation_enabled_)
@@ -410,8 +420,24 @@ bool OsmAndEngine::ensure_navigation_worker()
 
 FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
 {
+    using Clock = std::chrono::steady_clock;
+    const auto frame_started = Clock::now();
+    FrameMeasurement measurement;
+    const auto elapsed_us = [](Clock::time_point started) {
+        const auto value = std::chrono::duration_cast<std::chrono::microseconds>(
+            Clock::now() - started).count();
+        return static_cast<std::uint32_t>(std::min<std::int64_t>(
+            value, static_cast<std::int64_t>(UINT32_MAX)));
+    };
+    const auto finish = [&](FrameResult result,
+                            MeasuredFrameOutcome outcome) -> FrameResult {
+        measurement.outcome = outcome;
+        measurement.total_us = elapsed_us(frame_started);
+        frame_metrics_.record(measurement);
+        return result;
+    };
     if (phase_ != Phase::Ready)
-        return {FrameOutcome::Fault};
+        return finish({FrameOutcome::Fault}, MeasuredFrameOutcome::Fault);
     NavigationWorker::SearchResult search_result;
     if (navigation_worker_ && navigation_worker_->take_search_result(search_result))
     {
@@ -442,22 +468,45 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     }
     if (target.width != width_ || target.height != height_)
         resize(target);
-    if (!renderer_->update()) {
+    auto stage_started = Clock::now();
+    const bool update_ok = renderer_->update();
+    measurement.update_us = elapsed_us(stage_started);
+    if (!update_ok) {
         trace("error=update");
-        return {FrameOutcome::Fault};
+        return finish({FrameOutcome::Fault}, MeasuredFrameOutcome::Fault);
     }
-    if (!renderer_->prepareFrame())
-        return {FrameOutcome::Pending, PendingStage::Prepare, !renderer_->isIdle()};
+    stage_started = Clock::now();
+    const bool prepared = renderer_->prepareFrame();
+    measurement.prepare_us = elapsed_us(stage_started);
+    if (!prepared)
+        return finish(
+            {FrameOutcome::Pending, PendingStage::Prepare, !renderer_->isIdle()},
+            MeasuredFrameOutcome::PreparePending);
     // The bool API collapses StageResult::Wait and ::Fail. Preserve the live
     // resource-wait behavior, but let Session report sustained lack of progress.
-    if (!renderer_->renderFrame())
-        return {FrameOutcome::Pending, PendingStage::Render, true};
+    stage_started = Clock::now();
+    const bool map_rendered = renderer_->renderFrame();
+    measurement.map_render_us = elapsed_us(stage_started);
+    if (!map_rendered)
+        return finish({FrameOutcome::Pending, PendingStage::Render, true},
+                      MeasuredFrameOutcome::RenderPending);
     view_->resize(target.width, target.height);
-    if (overlay_enabled_ && view_->render(16u) &&
-        !compositor_.present(view_->pixels(), view_->width(), view_->height())) {
-        trace("error=ui_composite");
-        compositor_.release(false);
-        overlay_enabled_ = false;
+    stage_started = Clock::now();
+    const bool ui_dirty = overlay_enabled_ && view_->render(16u);
+    measurement.ui_render_us = elapsed_us(stage_started);
+    if (overlay_enabled_) {
+        if (ui_dirty)
+            measurement.ui_upload_bytes = view_->width() * view_->height() *
+                                          sizeof(std::uint32_t);
+        stage_started = Clock::now();
+        const bool presented = compositor_.present(
+            view_->pixels(), view_->width(), view_->height(), ui_dirty);
+        measurement.ui_composite_us = elapsed_us(stage_started);
+        if (!presented) {
+            trace("error=ui_composite");
+            compositor_.release(false);
+            overlay_enabled_ = false;
+        }
     }
     // A Start/End click is dispatched by LVGL above. Apply the new camera and
     // guidance model now, then request the frame that presents that rebuild.
@@ -517,8 +566,9 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
                                               *navigation_->destination(), origin);
         }
     }
-    return {FrameOutcome::Presented, PendingStage::None,
-            guidance_changed || !renderer_->isIdle()};
+    return finish({FrameOutcome::Presented, PendingStage::None,
+                   guidance_changed || !renderer_->isIdle()},
+                  MeasuredFrameOutcome::Presented);
 }
 
 int OsmAndEngine::gps(const MockNavBackendGpsV1& event)
@@ -526,8 +576,12 @@ int OsmAndEngine::gps(const MockNavBackendGpsV1& event)
     latest_gps_ = event;
     has_valid_position_ = valid_coordinates(event);
     gps_dirty_ = true;
-    trace(has_valid_position_ ? "gps=position_received"
-                              : "gps=position_unavailable");
+    if (!gps_state_observed_ || has_valid_position_ != last_logged_gps_valid_) {
+        trace(has_valid_position_ ? "gps=position_received"
+                                  : "gps=position_unavailable");
+        gps_state_observed_ = true;
+        last_logged_gps_valid_ = has_valid_position_;
+    }
     return navigation_wakeup_ ? navigation_wakeup_->request() : 0;
 }
 
@@ -559,6 +613,8 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         worker_creation_failed_ = false;
         latest_gps_ = {};
         has_valid_position_ = false;
+        gps_state_observed_ = false;
+        last_logged_gps_valid_ = false;
         gps_dirty_ = false;
         guidance_active_ = false;
         simulation_enabled_ = false;

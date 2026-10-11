@@ -255,6 +255,19 @@ labelled `ROUTE SIMULATION`, diagnostics record start/arrival, and deleting the
 marker affects the next provider start. This mode is test instrumentation, not
 a navigation fallback for normal use.
 
+For a bounded performance run, set
+`OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS=1` before provider start or create
+`/datastore/navicore-backend/enable-performance-metrics`. The backend emits one
+`perf` aggregate per second with presented FPS, pending/fault counts,
+p50/p95/p99 frame time, stage p95 values, and UI upload bytes. This counter path
+does not enable OsmAnd's verbose per-tile logging. For a short diagnostic run,
+that separate instrumentation can be enabled with
+`OPEN_NAVICORE_OSMAND_DETAILED_TILE_METRICS=1` or the marker
+`/datastore/navicore-backend/enable-detailed-tile-metrics`; it perturbs timing
+and must not be used for qualification. The selected renderer direction and
+benchmark gates are in
+[`rendering-architecture.md`](../../docs/performance/rendering-architecture.md).
+
 ## Stationary bench qualification checklist
 
 1. Preserve stock/active-file backups and recovery access. Record the complete

@@ -168,7 +168,7 @@ bool GlOverlayCompositor::initialize()
 }
 
 bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
-                                  uint32_t height)
+                                  uint32_t height, bool pixels_dirty)
 {
     if (!pixels || width == 0 || height == 0)
         return false;
@@ -182,9 +182,18 @@ bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
     }
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width),
-                 static_cast<GLsizei>(height), 0, GL_RGBA,
-                 GL_UNSIGNED_BYTE, pixels);
+    if (width != texture_width_ || height != texture_height_) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width),
+                     static_cast<GLsizei>(height), 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, pixels);
+        texture_width_ = width;
+        texture_height_ = height;
+    } else if (pixels_dirty) {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                        static_cast<GLsizei>(width),
+                        static_cast<GLsizei>(height), GL_RGBA,
+                        GL_UNSIGNED_BYTE, pixels);
+    }
     glUseProgram(program_);
     glUniform1i(texture_uniform_, 0);
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_);
@@ -216,6 +225,8 @@ void GlOverlayCompositor::release(bool context_lost) noexcept
     texture_ = 0;
     vertex_buffer_ = 0;
     texture_uniform_ = -1;
+    texture_width_ = 0;
+    texture_height_ = 0;
 }
 
 } // namespace navicore_osmand::ui
