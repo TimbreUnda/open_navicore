@@ -158,16 +158,22 @@ must not be represented as stock-integrated capabilities.
 
 ## Current OsmAnd gaps, not hard API limits
 
-The present OsmAnd backend is a rendering proof, not the finished navigation
-application. These limitations can be removed without changing the stock
+The present OsmAnd backend is an evolving navigation application, not only a
+rendering proof. It uses LVGL for the in-canvas UI, performs offline search and
+routing, draws route geometry, and follows valid GPS coordinates with basic
+maneuver/remaining-trip guidance. Without a usable position it presents a
+paused state and retains the Kyiv fallback only for browse/search routing.
+
+The remaining implementation gaps can be removed without changing the stock
 provider boundary:
 
-- the camera is fixed on Kyiv at 50.4501, 30.5234 and zoom 13.5;
-- GPS is accepted but not used to move the map;
-- pan, zoom, search, routing, rerouting and guidance are not implemented;
-- no route, maneuver, audio or cluster state is produced;
+- position freshness, off-route detection and automatic rerouting;
+- pan, zoom controls and an explicit browse/recenter interaction;
+- qualified heading/speed/fix-type meanings and heading-aware camera behavior;
+- audio prompts and stock cluster maneuver output;
 - the plugin advertises V2 rather than the available V5 backend seam;
-- no final UI toolkit or component system has been selected.
+- target performance budgets and renderer-quality tradeoffs are not yet
+  measured on the bench.
 
 The API does **not** require LVGL. The backend can use direct GLES2, a custom
 scene/UI layer, LVGL with a suitable OpenGL integration, or another renderer
@@ -182,7 +188,7 @@ architecture and resource-budget decision.
 | Tap, one-finger pan and UI buttons | Available | Implement pointer handling |
 | Pinch zoom or two-finger rotate | Blocked by Pointer V1; hardware path unverified | Capture raw QNX events, then extend input ABI with contact IDs/count |
 | Stock keyboard or text input | Hard restriction | Recover a text/IME service, or ship our own keyboard |
-| Route search and guidance in our canvas | Implementation gap | Add OsmAnd navigation/application layers |
+| Route search and guidance in our canvas | Implemented; live qualification in progress | Complete bench and driven/simulated-route qualification |
 | Stock UI starts or edits our route | Hard restriction | Recover and qualify destination/route request contracts |
 | Spoken maneuver prompts | Hard restriction | Qualify PCM/TTS, audio focus and ducking contracts |
 | Cluster maneuver fields | API available, plugin gap | Upgrade to V3+ and qualify enum semantics live |

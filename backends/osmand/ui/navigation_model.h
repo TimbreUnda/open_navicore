@@ -9,6 +9,21 @@ namespace navicore_osmand::ui {
 
 enum class Screen { FreeDrive, Search, RoutePreview, Guidance };
 
+enum class ManeuverKind {
+    Straight,
+    Left,
+    SlightLeft,
+    SharpLeft,
+    Right,
+    SlightRight,
+    SharpRight,
+    KeepLeft,
+    KeepRight,
+    UTurn,
+    Roundabout,
+    Arrive
+};
+
 struct Destination {
     std::string id;
     std::string title;
@@ -23,6 +38,14 @@ struct GeoPoint {
     double longitude = 0.0;
 };
 
+struct Maneuver {
+    ManeuverKind kind = ManeuverKind::Straight;
+    std::string road;
+    double distance_from_start_metres = 0.0;
+    std::size_t geometry_index = 0;
+    int roundabout_exit = 0;
+};
+
 struct RouteAlternative {
     std::string id;
     std::string duration;
@@ -32,6 +55,21 @@ struct RouteAlternative {
     double duration_seconds = 0.0;
     double distance_metres = 0.0;
     std::vector<GeoPoint> geometry;
+    std::vector<Maneuver> maneuvers;
+};
+
+struct GuidanceState {
+    bool position_available = false;
+    bool simulated = false;
+    bool arrived = false;
+    GeoPoint position;
+    double progress_metres = 0.0;
+    double remaining_metres = 0.0;
+    double remaining_seconds = 0.0;
+    double distance_to_maneuver_metres = 0.0;
+    Maneuver maneuver;
+    Maneuver following_maneuver;
+    bool has_following_maneuver = false;
 };
 
 // Renderer-thread UI state only. Slow search and routing work is deliberately
@@ -46,6 +84,7 @@ public:
     const std::vector<RouteAlternative>& routes() const noexcept { return routes_; }
     std::size_t selected_route() const noexcept { return selected_route_; }
     const std::string& message() const noexcept { return message_; }
+    const GuidanceState& guidance() const noexcept { return guidance_; }
     std::uint64_t search_revision() const noexcept { return search_revision_; }
     std::uint64_t route_revision() const noexcept { return route_revision_; }
 
@@ -59,6 +98,8 @@ public:
                       std::vector<RouteAlternative> routes);
     bool select_route(std::size_t index) noexcept;
     bool start_guidance() noexcept;
+    bool update_guidance(GuidanceState guidance) noexcept;
+    bool end_guidance() noexcept;
 
 private:
     Screen screen_ = Screen::FreeDrive;
@@ -69,6 +110,7 @@ private:
     std::vector<RouteAlternative> routes_;
     std::size_t selected_route_ = 0;
     std::string message_;
+    GuidanceState guidance_;
     std::uint64_t search_revision_ = 0;
     std::uint64_t route_revision_ = 0;
 };

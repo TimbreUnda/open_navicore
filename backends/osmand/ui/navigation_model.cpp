@@ -25,6 +25,7 @@ void NavigationModel::close_search() noexcept
     ++search_revision_;
     ++route_revision_;
     message_.clear();
+    guidance_ = {};
 }
 
 std::uint64_t NavigationModel::set_query(std::string query)
@@ -93,6 +94,32 @@ bool NavigationModel::start_guidance() noexcept
         selected_route_ >= routes_.size())
         return false;
     screen_ = Screen::Guidance;
+    guidance_ = {};
+    return true;
+}
+
+bool NavigationModel::update_guidance(GuidanceState guidance) noexcept
+{
+    if (screen_ != Screen::Guidance)
+        return false;
+    guidance_ = std::move(guidance);
+    return true;
+}
+
+bool NavigationModel::end_guidance() noexcept
+{
+    if (screen_ != Screen::Guidance)
+        return false;
+    screen_ = Screen::FreeDrive;
+    query_.clear();
+    results_.clear();
+    routes_.clear();
+    has_destination_ = false;
+    selected_route_ = 0;
+    guidance_ = {};
+    message_.clear();
+    ++search_revision_;
+    ++route_revision_;
     return true;
 }
 

@@ -23,6 +23,8 @@ struct Probe {
     FrameResult frame{FrameOutcome::Presented};
     std::shared_ptr<Wakeup> wakeup;
     Config config;
+    MockNavBackendGpsV1 gps{};
+    unsigned gps_events = 0;
 };
 std::shared_ptr<Probe> probe;
 std::vector<std::string> diagnostics;
@@ -50,6 +52,12 @@ public:
         if (p_->failure == Failure::FrameException)
             throw std::runtime_error("frame");
         return p_->frame;
+    }
+    int gps(const MockNavBackendGpsV1& event) override
+    {
+        p_->gps = event;
+        ++p_->gps_events;
+        return 0;
     }
     int pointer(const MockNavBackendPointerV1&) override { return 0; }
     ReleaseResult release(ReleaseMode mode) override
@@ -89,6 +97,10 @@ MockNavBackendRenderTargetV1 target()
 
 void lifecycle()
 {
+    assert(setenv("OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE", "1", 1) == 0);
+    assert(Config::from_environment().simulate_route);
+    assert(unsetenv("OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE") == 0);
+
     probe = std::make_shared<Probe>();
     unsigned requests = 0, new_requests = 0;
     Session session(make_engine);
@@ -98,7 +110,15 @@ void lifecycle()
     session.stop();
     assert(session.start(services(requests), {"resources", "map", "fonts"}) == 0);
     assert(session.start(services(new_requests), {}) != 0);
+    MockNavBackendGpsV1 gps{};
+    gps.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    gps.struct_size = sizeof(gps);
+    gps.latitude_e7 = 504501000;
+    gps.longitude_e7 = 305234000;
+    assert(session.gps(gps) == 0);
     assert(session.attach(target()) == 0);
+    assert(probe->gps_events == 1);
+    assert(probe->gps.latitude_e7 == gps.latitude_e7);
     assert(probe->config.map == "map");
     assert(session.attach(target()) != 0);
     assert(probe->created == 1);
@@ -112,6 +132,7 @@ void lifecycle()
     assert(probe->released == 1);
     assert(old_wakeup->request() != 0);
     assert(session.attach(target()) == 0);
+    assert(probe->gps_events == 2);
     assert(probe->wakeup->generation() > old_wakeup->generation());
     assert(old_wakeup->request() != 0);
     session.stop(); // An omitted detach has no current-context guarantee.
@@ -290,6 +311,8 @@ void c_boundary()
     CHECK_EVENT(plugin.backend.gps_interval_changed, MockNavBackendGpsIntervalV2, 2);
     CHECK_EVENT(plugin.backend.audio_changed, MockNavBackendAudioV2, 2);
 #undef CHECK_EVENT
+    assert(probe->gps_events == 1);
+    assert(probe->gps.latitude_e7 == 0 && probe->gps.longitude_e7 == 0);
     probe->failure = Failure::FrameException;
     assert(api.render_frame(context, &surface, &frame) != 0);
     current = 0;

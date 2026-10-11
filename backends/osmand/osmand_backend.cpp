@@ -85,6 +85,13 @@ int backend_pointer(void* context, const MockNavBackendPointerV1* event) noexcep
     return static_cast<Session*>(context)->pointer(*event);
 }
 
+int backend_gps(void* context, const MockNavBackendGpsV1* event) noexcept
+{
+    if (!context || !valid(event))
+        return -1;
+    return static_cast<Session*>(context)->gps(*event);
+}
+
 int backend_render(void* context, const MockNavBackendRenderTargetV1* target,
                    const MockNavBackendFrameV1* frame) noexcept
 {
@@ -133,7 +140,7 @@ void fill_v1_query(MockNavBackendPluginV1* output)
     output->backend.v1.visibility_changed =
         accept_event<MockNavBackendVisibilityV1>;
     output->backend.v1.screen_changed = accept_event<MockNavBackendScreenV1>;
-    output->backend.v1.gps_changed = accept_event<MockNavBackendGpsV1>;
+    output->backend.v1.gps_changed = backend_gps;
     output->backend.v1.pointer_changed = backend_pointer;
     output->backend.v1.render_frame = backend_render;
     output->backend.vehicle_changed = accept_event<MockNavBackendVehicleV2, MOCK_NAV_BACKEND_ABI_V2>;

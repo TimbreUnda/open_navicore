@@ -1,6 +1,7 @@
 #include "engine.h"
 #include "session.h"
 #include "diagnostics.h"
+#include "guidance_tracker.h"
 #include "navigation_worker.h"
 #include "ui/gl_overlay_compositor.h"
 #include "ui/navigation_model.h"
@@ -26,7 +27,9 @@
 #include <QByteArray>
 #include <QString>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 
 namespace navicore_osmand {
 namespace {
@@ -39,12 +42,14 @@ public:
     bool initialize(const Config&, const MockNavBackendRenderTargetV1&,
                     std::shared_ptr<Wakeup>) override;
     FrameResult frame(const MockNavBackendRenderTargetV1&) override;
+    int gps(const MockNavBackendGpsV1&) override;
     int pointer(const MockNavBackendPointerV1&) override;
     ReleaseResult release(ReleaseMode) override;
 
 private:
     void resize(const MockNavBackendRenderTargetV1&);
     void show_route(const ui::RouteAlternative&);
+    bool update_guidance();
     bool ensure_navigation_worker();
     Phase phase_ = Phase::Empty;
     uint32_t width_ = 0;
@@ -72,6 +77,17 @@ private:
     std::uint64_t submitted_route_revision_ = 0;
     std::chrono::steady_clock::time_point search_revision_observed_at_{};
     bool search_revision_observed_ = false;
+    GuidanceTracker guidance_tracker_;
+    MockNavBackendGpsV1 latest_gps_{};
+    bool has_valid_position_ = false;
+    bool gps_dirty_ = false;
+    bool guidance_active_ = false;
+    bool simulation_enabled_ = false;
+    bool simulation_running_ = false;
+    bool simulation_arrival_reported_ = false;
+    double simulation_progress_metres_ = 0.0;
+    double simulation_speed_metres_per_second_ = 200.0;
+    std::chrono::steady_clock::time_point simulation_updated_at_{};
     ui::GlOverlayCompositor compositor_;
     bool overlay_enabled_ = true;
 };
@@ -80,6 +96,60 @@ bool failure(const char* message)
 {
     trace(message);
     return false;
+}
+
+bool valid_coordinates(const MockNavBackendGpsV1& gps)
+{
+    constexpr int32_t latitude_limit = 900000000;
+    constexpr int32_t longitude_limit = 1800000000;
+    return gps.latitude_e7 >= -latitude_limit &&
+           gps.latitude_e7 <= latitude_limit &&
+           gps.longitude_e7 >= -longitude_limit &&
+           gps.longitude_e7 <= longitude_limit &&
+           (gps.latitude_e7 != 0 || gps.longitude_e7 != 0);
+}
+
+double geometry_distance(const ui::GeoPoint& a, const ui::GeoPoint& b)
+{
+    constexpr double metres_per_degree = 111320.0;
+    constexpr double radians_per_degree =
+        3.14159265358979323846 / 180.0;
+    const double latitude = (a.latitude + b.latitude) * 0.5 *
+                            radians_per_degree;
+    const double x = (b.longitude - a.longitude) * metres_per_degree *
+                     std::cos(latitude);
+    const double y = (b.latitude - a.latitude) * metres_per_degree;
+    return std::hypot(x, y);
+}
+
+ui::GeoPoint simulated_position(const ui::RouteAlternative& route,
+                                double progress_metres)
+{
+    if (route.geometry.empty())
+        return {};
+    if (route.geometry.size() == 1 || route.distance_metres <= 0.0)
+        return route.geometry.front();
+    double geometry_length = 0.0;
+    for (std::size_t index = 1; index < route.geometry.size(); ++index)
+        geometry_length += geometry_distance(route.geometry[index - 1],
+                                             route.geometry[index]);
+    if (geometry_length <= 0.0)
+        return route.geometry.front();
+    const double wanted = std::clamp(
+        progress_metres / route.distance_metres, 0.0, 1.0) * geometry_length;
+    double traversed = 0.0;
+    for (std::size_t index = 1; index < route.geometry.size(); ++index) {
+        const auto& a = route.geometry[index - 1];
+        const auto& b = route.geometry[index];
+        const double segment = geometry_distance(a, b);
+        if (traversed + segment >= wanted && segment > 0.0) {
+            const double fraction = (wanted - traversed) / segment;
+            return {a.latitude + (b.latitude - a.latitude) * fraction,
+                    a.longitude + (b.longitude - a.longitude) * fraction};
+        }
+        traversed += segment;
+    }
+    return route.geometry.back();
 }
 
 bool seeded_destinations(const std::string& query,
@@ -102,6 +172,11 @@ bool OsmAndEngine::initialize(const Config& config,
                              const MockNavBackendRenderTargetV1& target,
                              std::shared_ptr<Wakeup> wakeup)
 {
+    simulation_enabled_ = config.simulate_route;
+    simulation_speed_metres_per_second_ =
+        config.simulation_speed_metres_per_second;
+    if (simulation_enabled_)
+        trace("simulation=enabled");
     resources_ = OsmAnd::CoreResourcesEmbeddedBundle::loadFromLibrary(
         QString::fromLocal8Bit(config.resources.c_str()));
     if (!resources_)
@@ -243,6 +318,74 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route)
         (min_latitude + max_latitude) * 0.5,
         (min_longitude + max_longitude) * 0.5)));
     renderer_->setZoom(12.5f);
+    guidance_tracker_.reset();
+    guidance_active_ = false;
+    simulation_running_ = false;
+    simulation_progress_metres_ = 0.0;
+    simulation_arrival_reported_ = false;
+}
+
+bool OsmAndEngine::update_guidance()
+{
+    if (navigation_->screen() != ui::Screen::Guidance ||
+        navigation_->selected_route() >= navigation_->routes().size())
+        return false;
+    const auto& route = navigation_->routes()[navigation_->selected_route()];
+    ui::GuidanceState state;
+    ui::GeoPoint position;
+    bool position_available = false;
+    bool simulated = false;
+    if (has_valid_position_) {
+        position = {
+            static_cast<double>(latest_gps_.latitude_e7) / 10000000.0,
+            static_cast<double>(latest_gps_.longitude_e7) / 10000000.0};
+        position_available = true;
+        simulation_running_ = false;
+    } else if (simulation_enabled_ && route.geometry.size() >= 2) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!simulation_running_) {
+            simulation_running_ = true;
+            simulation_updated_at_ = now;
+            simulation_progress_metres_ = 0.0;
+            simulation_arrival_reported_ = false;
+            trace("simulation=route_started");
+        } else {
+            const double seconds = std::chrono::duration<double>(
+                now - simulation_updated_at_).count();
+            simulation_progress_metres_ = std::min(
+                route.distance_metres,
+                simulation_progress_metres_ +
+                    seconds * simulation_speed_metres_per_second_);
+            simulation_updated_at_ = now;
+        }
+        position = simulated_position(route, simulation_progress_metres_);
+        position_available = true;
+        simulated = true;
+    }
+    if (position_available) {
+        state = guidance_tracker_.update(route, {
+            position.latitude, position.longitude});
+        state.simulated = simulated;
+        const auto location = OsmAnd::Utilities::convertLatLonTo31(OsmAnd::LatLon(
+            state.position.latitude, state.position.longitude));
+        const int32_t rail = width_ >= 600u ? 336 : 0;
+        const int32_t top = height_ >= 700u ? 72 : 0;
+        const int32_t bottom = height_ >= 700u ? 122 : 0;
+        const int32_t map_x = rail + (static_cast<int32_t>(width_) - rail) / 2;
+        const int32_t map_y = top +
+            (static_cast<int32_t>(height_) - top - bottom) / 2;
+        (void)renderer_->setMapTarget(OsmAnd::PointI(map_x, map_y), location);
+        (void)renderer_->setZoom(16.0f);
+        if (simulated && state.arrived && !simulation_arrival_reported_) {
+            simulation_arrival_reported_ = true;
+            trace("simulation=arrived");
+        }
+    } else {
+        state = guidance_tracker_.unavailable(route);
+    }
+    gps_dirty_ = false;
+    guidance_active_ = true;
+    return view_->apply_guidance(std::move(state));
 }
 
 bool OsmAndEngine::ensure_navigation_worker()
@@ -286,6 +429,17 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         if (accepted && !navigation_->routes().empty())
             show_route(navigation_->routes().front());
     }
+    bool guidance_changed = false;
+    if (navigation_->screen() == ui::Screen::Guidance &&
+        (!guidance_active_ || gps_dirty_)) {
+        guidance_changed = update_guidance();
+    } else if (navigation_->screen() != ui::Screen::Guidance &&
+               guidance_active_) {
+        guidance_active_ = false;
+        guidance_tracker_.reset();
+        simulation_running_ = false;
+        (void)renderer_->resetMapTarget();
+    }
     if (target.width != width_ || target.height != height_)
         resize(target);
     if (!renderer_->update()) {
@@ -304,6 +458,18 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         trace("error=ui_composite");
         compositor_.release(false);
         overlay_enabled_ = false;
+    }
+    // A Start/End click is dispatched by LVGL above. Apply the new camera and
+    // guidance model now, then request the frame that presents that rebuild.
+    if (navigation_->screen() == ui::Screen::Guidance && !guidance_active_)
+        guidance_changed = update_guidance() || guidance_changed;
+    else if (navigation_->screen() != ui::Screen::Guidance &&
+             guidance_active_) {
+        guidance_active_ = false;
+        guidance_tracker_.reset();
+        simulation_running_ = false;
+        (void)renderer_->resetMapTarget();
+        guidance_changed = true;
     }
     if (navigation_->screen() == ui::Screen::Search) {
         const auto revision = navigation_->search_revision();
@@ -339,11 +505,30 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         navigation_->route_revision() != submitted_route_revision_) {
         submitted_route_revision_ = navigation_->route_revision();
         trace_result("engine=route_submit", submitted_route_revision_, 1u);
-        if (ensure_navigation_worker())
+        if (ensure_navigation_worker()) {
+            ui::GeoPoint origin{50.4501, 30.5234};
+            if (has_valid_position_) {
+                origin.latitude = static_cast<double>(latest_gps_.latitude_e7) /
+                                  10000000.0;
+                origin.longitude = static_cast<double>(latest_gps_.longitude_e7) /
+                                   10000000.0;
+            }
             navigation_worker_->submit_route(submitted_route_revision_,
-                                              *navigation_->destination());
+                                              *navigation_->destination(), origin);
+        }
     }
-    return {FrameOutcome::Presented, PendingStage::None, !renderer_->isIdle()};
+    return {FrameOutcome::Presented, PendingStage::None,
+            guidance_changed || !renderer_->isIdle()};
+}
+
+int OsmAndEngine::gps(const MockNavBackendGpsV1& event)
+{
+    latest_gps_ = event;
+    has_valid_position_ = valid_coordinates(event);
+    gps_dirty_ = true;
+    trace(has_valid_position_ ? "gps=position_received"
+                              : "gps=position_unavailable");
+    return navigation_wakeup_ ? navigation_wakeup_->request() : 0;
 }
 
 int OsmAndEngine::pointer(const MockNavBackendPointerV1& event)
@@ -372,6 +557,15 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         navigation_map_.clear();
         navigation_routing_xml_.clear();
         worker_creation_failed_ = false;
+        latest_gps_ = {};
+        has_valid_position_ = false;
+        gps_dirty_ = false;
+        guidance_active_ = false;
+        simulation_enabled_ = false;
+        simulation_running_ = false;
+        simulation_progress_metres_ = 0.0;
+        simulation_arrival_reported_ = false;
+        guidance_tracker_.reset();
         compositor_.release(mode == ReleaseMode::ContextLost);
         view_.reset();
         navigation_.reset();

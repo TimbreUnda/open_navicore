@@ -33,6 +33,7 @@ public:
     int start(const MockNavBackendServicesV1&, Config) noexcept;
     int attach(const MockNavBackendRenderTargetV1&) noexcept;
     FrameResult frame(const MockNavBackendRenderTargetV1&) noexcept;
+    int gps(const MockNavBackendGpsV1&) noexcept;
     int pointer(const MockNavBackendPointerV1&) noexcept;
     void detach(uintptr_t current_context) noexcept;
     void stop() noexcept;
@@ -56,6 +57,8 @@ private:
     bool prepare_reported_ = false;
     bool render_reported_ = false;
     bool first_presented_ = false;
+    MockNavBackendGpsV1 gps_{};
+    bool has_gps_ = false;
 };
 
 } // namespace navicore_osmand

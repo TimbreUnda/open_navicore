@@ -88,6 +88,8 @@ int Session::attach(const MockNavBackendRenderTargetV1& target) noexcept
         engine_ = factory_();
         if (engine_ && engine_->initialize(config_, target, wakeup_)) {
             state_ = State::Attached;
+            if (has_gps_ && engine_->gps(gps_) != 0)
+                trace("warning=initial_gps_rejected");
             trace("surface_created=kyiv");
             (void)wakeup_->request();
             return 0;
@@ -99,6 +101,22 @@ int Session::attach(const MockNavBackendRenderTargetV1& target) noexcept
     // Roll back here, while surface_created still has the expected context.
     release(ReleaseMode::CurrentContext);
     return -1;
+}
+
+int Session::gps(const MockNavBackendGpsV1& event) noexcept
+{
+    if (state_ != State::Started && state_ != State::Attached)
+        return -1;
+    gps_ = event;
+    has_gps_ = true;
+    if (state_ == State::Started || !engine_)
+        return 0;
+    try {
+        return engine_->gps(event);
+    } catch (...) {
+        trace("error=exception_gps");
+        return -1;
+    }
 }
 
 void Session::pending(PendingStage stage) noexcept
@@ -175,6 +193,8 @@ void Session::stop() noexcept
     if (state_ == State::Attached || state_ == State::Faulted)
         release(ReleaseMode::ContextLost);
     services_ = {};
+    gps_ = {};
+    has_gps_ = false;
     if (state_ != State::Quarantined)
         state_ = State::Stopped;
 }

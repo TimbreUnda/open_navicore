@@ -1,3 +1,5 @@
+#include "guidance_tracker.h"
+#include "ui/compact_text.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
 #include <open_navicore/backend.h>
@@ -5,9 +7,14 @@
 #include <cassert>
 
 using namespace navicore_osmand::ui;
+using navicore_osmand::GuidanceTracker;
 
 int main()
 {
+    assert(compact_font_text(u8"Січневого Повстання") ==
+           "Sichnevoho Povstannya");
+    assert(compact_font_text("E95") == "E95");
+
     NavigationModel model;
     assert(model.screen() == Screen::FreeDrive);
 
@@ -51,16 +58,51 @@ int main()
     const auto route_revision = model.route_revision();
     const auto stale_route_revision = route_revision - 1;
     assert(!view.apply_routes(stale_route_revision,
-        {{"stale", "99 min", "99 km", "", "Must be rejected", 0.0, 0.0, {}}}));
-    assert(view.apply_routes(route_revision,
-        {{"fast", "14 min", "10.6 km", "08:15", "Fastest", 0.0, 0.0, {}},
-         {"quiet", "17 min", "11.2 km", "08:18", "Fewer major roads", 0.0, 0.0, {}}}));
+        {{"stale", "99 min", "99 km", "", "Must be rejected", 0.0, 0.0,
+          {}, {}}}));
+    RouteAlternative fast;
+    fast.id = "fast";
+    fast.duration = "10 min";
+    fast.distance = "1.8 km";
+    fast.arrival = "--";
+    fast.reason = "Fastest";
+    fast.duration_seconds = 600.0;
+    fast.distance_metres = 1828.0;
+    fast.geometry = {{50.0, 30.0}, {50.0, 30.01}, {50.01, 30.01}};
+    fast.maneuvers = {
+        {ManeuverKind::Right, "River Road", 716.0, 1, 0},
+        {ManeuverKind::Arrive, "Riverside Ave 12", 1828.0, 2, 0}};
+    RouteAlternative quiet = fast;
+    quiet.id = "quiet";
+    quiet.duration = "12 min";
+    quiet.reason = "Fewer major roads";
+    assert(view.apply_routes(route_revision, {fast, quiet}));
     assert(model.screen() == Screen::RoutePreview);
     assert(model.routes().size() == 2);
-    assert(model.select_route(1));
+    assert(model.select_route(0));
     assert(model.start_guidance());
     assert(model.screen() == Screen::Guidance);
+    GuidanceTracker tracker;
+    assert(view.apply_guidance(tracker.unavailable(model.routes().front())));
+    assert(!model.guidance().position_available);
+    assert(model.guidance().maneuver.kind == ManeuverKind::Right);
     assert(view.render(16));
+    assert(view.apply_guidance(tracker.update(model.routes().front(),
+                                              {50.0, 30.005})));
+    assert(model.guidance().position_available);
+    assert(model.guidance().progress_metres > 300.0);
+    assert(model.guidance().distance_to_maneuver_metres < 400.0);
+    const double progress = model.guidance().progress_metres;
+    assert(view.apply_guidance(tracker.update(model.routes().front(),
+                                              {50.0, 30.004})));
+    assert(model.guidance().progress_metres >= progress);
+    assert(view.apply_guidance(tracker.update(model.routes().front(),
+                                              {50.01, 30.01})));
+    assert(model.guidance().arrived);
+    assert(model.guidance().maneuver.kind == ManeuverKind::Arrive);
+    assert(view.render(16));
+    assert(model.end_guidance());
+    assert(model.screen() == Screen::FreeDrive);
 
     model.close_search();
     model.open_search();

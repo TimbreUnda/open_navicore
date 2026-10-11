@@ -12,7 +12,7 @@ actual render-target dimensions and degrade to a single pane on narrow targets.
 
 - `NavigationModel` owns screen transitions and has no LVGL, GLES, Qt or
   OsmAnd types. Search and route requests carry monotonically increasing
-  revisions; a future coordinator can run slow work off-thread and the model
+  revisions; the navigation worker runs slow work off-thread and the model
   rejects stale copied results when they return.
 - `NavigationView` maps model state to LVGL widgets. LVGL 9.6.0 is pinned as a
   Git submodule. Its software renderer writes one owned, full-screen ARGB8888
@@ -37,14 +37,21 @@ including provider press/release input and stale-result rejection.
 
 ## Honest current boundary
 
-The target plugin does not yet install a search/routing coordinator. The
-inspected QNX OsmAnd archive exposes offline address/amenity search primitives,
-but they are not wired by this slice. It exposes no route-planner symbols and
-its QNX build excludes routing. Therefore this change establishes the working
-UI, input and rendering architecture, but does **not** claim working radio-side
-destination search, calculated route geometry or guidance.
+The target plugin now installs an asynchronous offline OsmAnd search/routing
+worker. Results are copied back to the renderer thread, stale revisions are
+rejected, and calculated route geometry is drawn in the preview. Starting a
+route enables coordinate-based map following, remaining-distance/time updates,
+and maneuver presentation. Missing coordinates produce an explicit paused
+"No GPS fix" state instead of fabricated guidance.
 
-The next implementation step is an offline OsmAnd search adapter that copies
-results back to the renderer thread. A real route planner must then be added to
-the QNX dependency bundle (or implemented as a separate qualified service)
-before the route preview can display calculated alternatives and geometry.
+Host tests cover search/route UI state, GPS delivery, progress projection,
+maneuver advancement, monotonic behavior under backward jitter, arrival and
+surface reattachment. Radio-side guidance remains bench qualification, not a
+claim of a completed driven route. Position freshness, off-route detection,
+rerouting, spoken prompts, and qualified speed/heading semantics remain to be
+implemented.
+
+An opt-in stationary-bench simulator can advance along calculated geometry
+when the receiver has no fix. Simulated guidance is visibly labelled and uses
+the same projection, maneuver and camera path as real coordinates; it does not
+alter or fabricate incoming GPS events.

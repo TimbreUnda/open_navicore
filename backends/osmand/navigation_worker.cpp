@@ -1,5 +1,7 @@
 #include "navigation_worker.h"
 
+#include "ui/compact_text.h"
+
 #include "diagnostics.h"
 #include "session.h"
 
@@ -165,6 +167,25 @@ std::string duration_label(double seconds)
     return text;
 }
 
+ui::ManeuverKind maneuver_kind(int value)
+{
+    switch (value) {
+    case TurnType::TL: return ui::ManeuverKind::Left;
+    case TurnType::TSLL: return ui::ManeuverKind::SlightLeft;
+    case TurnType::TSHL: return ui::ManeuverKind::SharpLeft;
+    case TurnType::TR: return ui::ManeuverKind::Right;
+    case TurnType::TSLR: return ui::ManeuverKind::SlightRight;
+    case TurnType::TSHR: return ui::ManeuverKind::SharpRight;
+    case TurnType::KL: return ui::ManeuverKind::KeepLeft;
+    case TurnType::KR: return ui::ManeuverKind::KeepRight;
+    case TurnType::TU:
+    case TurnType::TRU: return ui::ManeuverKind::UTurn;
+    case TurnType::RNDB:
+    case TurnType::RNLB: return ui::ManeuverKind::Roundabout;
+    default: return ui::ManeuverKind::Straight;
+    }
+}
+
 } // namespace
 
 class NavigationWorker::Impl {
@@ -196,12 +217,13 @@ public:
         condition_.notify_one();
     }
 
-    void submit_route(std::uint64_t revision, ui::Destination destination)
+    void submit_route(std::uint64_t revision, ui::Destination destination,
+                      ui::GeoPoint origin)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) return;
         if (active_) active_->cancel();
-        pending_ = Request::route(revision, std::move(destination));
+        pending_ = Request::route(revision, std::move(destination), origin);
         has_pending_ = true;
         trace_result("worker=route_queued", revision, 1u);
         condition_.notify_one();
@@ -247,6 +269,7 @@ private:
         std::uint64_t revision = 0;
         std::string query;
         ui::Destination destination;
+        ui::GeoPoint origin;
 
         static Request search(std::uint64_t revision, std::string query)
         {
@@ -256,12 +279,15 @@ private:
             request.query = std::move(query);
             return request;
         }
-        static Request route(std::uint64_t revision, ui::Destination destination)
+        static Request route(std::uint64_t revision,
+                             ui::Destination destination,
+                             ui::GeoPoint origin)
         {
             Request request;
             request.kind = Kind::Route;
             request.revision = revision;
             request.destination = std::move(destination);
+            request.origin = origin;
             return request;
         }
     };
@@ -342,10 +368,10 @@ private:
         context->progress = std::make_shared<RouteProgress>(cancel);
         std::vector<int> intermediates_x;
         std::vector<int> intermediates_y;
-        const auto segments = front_end.searchRoute(
+        auto segments = front_end.searchRoute(
             context,
-            get31TileNumberX(kDemoOrigin.longitude),
-            get31TileNumberY(kDemoOrigin.latitude),
+            get31TileNumberX(request.origin.longitude),
+            get31TileNumberY(request.origin.latitude),
             get31TileNumberX(request.destination.longitude),
             get31TileNumberY(request.destination.latitude),
             intermediates_x, intermediates_y, nullptr);
@@ -355,8 +381,24 @@ private:
         alternative.id = "car-fastest";
         alternative.reason = "Fastest";
         alternative.arrival = "--";
-        for (const auto& segment : segments) {
+        for (std::size_t segment_index = 0; segment_index < segments.size();
+             ++segment_index) {
+            const auto& segment = segments[segment_index];
             if (!segment) continue;
+            const double distance_at_start = alternative.distance_metres;
+            const std::size_t geometry_at_start = alternative.geometry.size();
+            if (segment->turnType &&
+                segment->turnType->getValue() != TurnType::C) {
+                // The compact embedded LVGL font is Latin-only. Prefer an
+                // English OBF name and ask legacy OsmAnd to transliterate the
+                // default name when no localized value exists.
+                std::string road = ui::compact_font_text(segment->getStreetName(
+                    "en", true, segments, static_cast<int>(segment_index)));
+                alternative.maneuvers.push_back({
+                    maneuver_kind(segment->turnType->getValue()),
+                    std::move(road), distance_at_start, geometry_at_start,
+                    segment->turnType->getExitOut()});
+            }
             alternative.distance_metres += segment->distance;
             alternative.duration_seconds += segment->segmentTime;
             const int start = segment->getStartPointIndex();
@@ -374,6 +416,11 @@ private:
         alternative.duration = duration_label(alternative.duration_seconds);
         alternative.distance = distance_label(alternative.distance_metres);
         if (alternative.geometry.size() < 2) return {};
+        alternative.maneuvers.push_back({
+            ui::ManeuverKind::Arrive, request.destination.title,
+            alternative.distance_metres, alternative.geometry.size() - 1u, 0});
+        trace_result("worker=route_maneuvers", request.revision,
+                     alternative.maneuvers.size());
         return {std::move(alternative)};
     }
 
@@ -471,9 +518,10 @@ NavigationWorker::NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
 }
 
 void NavigationWorker::submit_route(std::uint64_t revision,
-                                    ui::Destination destination)
+                                    ui::Destination destination,
+                                    ui::GeoPoint origin)
 {
-    impl_->submit_route(revision, std::move(destination));
+    impl_->submit_route(revision, std::move(destination), origin);
 }
 
 NavigationWorker::~NavigationWorker() = default;

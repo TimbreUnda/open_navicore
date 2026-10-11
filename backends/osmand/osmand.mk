@@ -52,8 +52,8 @@ OSMAND_BINUTILS_DIR := $(OSMAND_BUILD_DIR)/binutils
 OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 OSMAND_PLUGIN_TARGET := $(OSMAND_BUILD_DIR)/libMockNavBackendOsmAnd.so
 OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
-	session.o diagnostics.o osmand_engine.o navigation_worker.o navigation_model.o \
-	navigation_view.o gl_overlay_compositor.o)
+	session.o diagnostics.o osmand_engine.o navigation_worker.o compact_text.o navigation_model.o \
+	guidance_tracker.o navigation_view.o gl_overlay_compositor.o)
 LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
 OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
 OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)
@@ -183,6 +183,8 @@ navigation-ui-test: $(LVGL_HOST_BUILD_DIR)/liblvgl.a
 		-Iinclude -Ibackends/osmand -Ithird_party/lvgl -I$(CURDIR) \
 		-DLV_CONF_PATH='"backends/osmand/ui/lv_conf.h"' \
 		backends/osmand/diagnostics.cpp \
+		backends/osmand/guidance_tracker.cpp \
+		backends/osmand/ui/compact_text.cpp \
 		backends/osmand/ui/navigation_model.cpp \
 		backends/osmand/ui/navigation_view.cpp tests/navigation_ui_test.cpp \
 		$(LVGL_HOST_BUILD_DIR)/liblvgl.a -lm -o $(LVGL_HOST_BUILD_DIR)/navigation-ui-test

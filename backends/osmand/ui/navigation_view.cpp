@@ -6,6 +6,8 @@
 #include <open_navicore/backend.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -53,6 +55,66 @@ int content_height(uint32_t height)
     const int top = content_top(height);
     const int bottom = height >= 700u ? stock_chrome_bottom : 0;
     return std::max(1, static_cast<int>(height) - top - bottom);
+}
+
+std::string distance_text(double metres)
+{
+    char text[32] = {};
+    if (metres < 1000.0)
+        std::snprintf(text, sizeof(text), "%.0f m", std::max(0.0, metres));
+    else
+        std::snprintf(text, sizeof(text), "%.1f km", metres / 1000.0);
+    return text;
+}
+
+std::string duration_text(double seconds)
+{
+    const int minutes = std::max(0, static_cast<int>(std::ceil(seconds / 60.0)));
+    char text[32] = {};
+    if (minutes < 60)
+        std::snprintf(text, sizeof(text), "%d min", minutes);
+    else
+        std::snprintf(text, sizeof(text), "%d h %02d min", minutes / 60,
+                      minutes % 60);
+    return text;
+}
+
+const char* maneuver_action(ManeuverKind kind)
+{
+    switch (kind) {
+    case ManeuverKind::Left: return "Turn left";
+    case ManeuverKind::SlightLeft: return "Slight left";
+    case ManeuverKind::SharpLeft: return "Sharp left";
+    case ManeuverKind::Right: return "Turn right";
+    case ManeuverKind::SlightRight: return "Slight right";
+    case ManeuverKind::SharpRight: return "Sharp right";
+    case ManeuverKind::KeepLeft: return "Keep left";
+    case ManeuverKind::KeepRight: return "Keep right";
+    case ManeuverKind::UTurn: return "Make a U-turn";
+    case ManeuverKind::Roundabout: return "Enter roundabout";
+    case ManeuverKind::Arrive: return "Arriving at";
+    case ManeuverKind::Straight: return "Continue";
+    }
+    return "Continue";
+}
+
+const char* maneuver_symbol(ManeuverKind kind)
+{
+    switch (kind) {
+    case ManeuverKind::Left:
+    case ManeuverKind::SlightLeft:
+    case ManeuverKind::SharpLeft:
+    case ManeuverKind::KeepLeft: return "<";
+    case ManeuverKind::Right:
+    case ManeuverKind::SlightRight:
+    case ManeuverKind::SharpRight:
+    case ManeuverKind::KeepRight: return ">";
+    case ManeuverKind::UTurn: return "U";
+    case ManeuverKind::Roundabout: return "O";
+    case ManeuverKind::Arrive: return "X";
+    case ManeuverKind::Straight: return "^";
+    }
+    return "^";
 }
 
 } // namespace
@@ -324,13 +386,152 @@ void NavigationView::build_route_preview()
 
 void NavigationView::build_guidance()
 {
-    build_route_preview();
-    lv_obj_t* banner = lv_obj_create(screen_);
-    panel(banner, maneuver, 8);
-    lv_obj_set_pos(banner, 16, content_top(height_) + 16);
-    lv_obj_set_size(banner, std::min<int>(304, width_), 112);
-    lv_obj_t* text = label(banner, "Route started", primary, 24);
-    lv_obj_center(text);
+    const int rail_width = std::min<int>(336, width_);
+    const auto& guidance = model_.guidance();
+    const Destination* destination = model_.destination();
+    lv_obj_t* rail = lv_obj_create(screen_);
+    panel(rail, base);
+    lv_obj_set_pos(rail, 0, content_top(height_));
+    lv_obj_set_size(rail, rail_width, content_height(height_));
+    lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_COLUMN);
+
+    if (!guidance.position_available) {
+        lv_obj_t* warning = lv_obj_create(rail);
+        panel(warning, 0x2a2414);
+        lv_obj_set_width(warning, LV_PCT(100));
+        lv_obj_set_height(warning, 132);
+        lv_obj_set_style_pad_all(warning, 20, 0);
+        lv_obj_set_style_pad_row(warning, 8, 0);
+        lv_obj_set_flex_flow(warning, LV_FLEX_FLOW_COLUMN);
+        label(warning, "No GPS fix", 0xf6c86a, 24);
+        lv_obj_t* explanation = label(
+            warning, "Guidance is paused until a position is available.",
+            0xe6dcc4, 14);
+        lv_obj_set_width(explanation, LV_PCT(100));
+        lv_label_set_long_mode(explanation, LV_LABEL_LONG_WRAP);
+
+        lv_obj_t* next = lv_obj_create(rail);
+        panel(next, base);
+        lv_obj_set_width(next, LV_PCT(100));
+        lv_obj_set_height(next, 86);
+        lv_obj_set_style_pad_all(next, 18, 0);
+        lv_obj_set_style_pad_row(next, 5, 0);
+        lv_obj_set_flex_flow(next, LV_FLEX_FLOW_COLUMN);
+        label(next, "NEXT ON ROUTE", tertiary, 14);
+        std::string instruction = maneuver_action(guidance.maneuver.kind);
+        if (!guidance.maneuver.road.empty())
+            instruction += "  " + guidance.maneuver.road;
+        label(next, instruction.c_str(), secondary, 18);
+    } else {
+        lv_obj_t* primary_card = lv_obj_create(rail);
+        panel(primary_card, maneuver);
+        lv_obj_set_width(primary_card, LV_PCT(100));
+        lv_obj_set_height(primary_card, 142);
+        lv_obj_set_style_pad_all(primary_card, 18, 0);
+        lv_obj_set_style_pad_column(primary_card, 14, 0);
+        lv_obj_set_flex_flow(primary_card, LV_FLEX_FLOW_ROW);
+        lv_obj_t* symbol = label(primary_card,
+            maneuver_symbol(guidance.maneuver.kind), primary, 28);
+        lv_obj_set_width(symbol, 48);
+        lv_obj_set_style_text_align(symbol, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_t* copy = lv_obj_create(primary_card);
+        panel(copy, maneuver);
+        lv_obj_set_flex_grow(copy, 1);
+        lv_obj_set_height(copy, LV_PCT(100));
+        lv_obj_set_flex_flow(copy, LV_FLEX_FLOW_COLUMN);
+        if (guidance.simulated)
+            label(copy, "ROUTE SIMULATION", 0xffd166, 14);
+        const std::string next_distance = guidance.arrived ? "0 m" :
+            distance_text(guidance.distance_to_maneuver_metres);
+        label(copy, next_distance.c_str(), primary, 28);
+        label(copy, maneuver_action(guidance.maneuver.kind), primary, 20);
+        const char* road = !guidance.maneuver.road.empty()
+            ? guidance.maneuver.road.c_str()
+            : (destination ? destination->title.c_str() : "Route");
+        lv_obj_t* road_label = label(copy, road, 0xc9d6ff, 14);
+        lv_obj_set_width(road_label, LV_PCT(100));
+        lv_label_set_long_mode(road_label, LV_LABEL_LONG_DOT);
+
+        lv_obj_t* following = lv_obj_create(rail);
+        panel(following, 0x183ea8);
+        lv_obj_set_width(following, LV_PCT(100));
+        lv_obj_set_height(following, 48);
+        lv_obj_set_style_pad_left(following, 20, 0);
+        lv_obj_set_flex_flow(following, LV_FLEX_FLOW_ROW);
+        if (guidance.has_following_maneuver) {
+            std::string then = "Then  ";
+            then += maneuver_action(guidance.following_maneuver.kind);
+            if (!guidance.following_maneuver.road.empty())
+                then += "  " + guidance.following_maneuver.road;
+            label(following, then.c_str(), 0xc9d6ff, 14);
+        } else {
+            label(following, "Continue to destination", 0xc9d6ff, 14);
+        }
+        lv_obj_t* lanes = lv_obj_create(rail);
+        panel(lanes, base);
+        lv_obj_set_width(lanes, LV_PCT(100));
+        lv_obj_set_height(lanes, 44);
+        lv_obj_set_style_pad_left(lanes, 20, 0);
+        label(lanes, guidance.simulated ?
+            "SIMULATION - Lane info unavailable" :
+            "Lane info not available here", tertiary, 14);
+    }
+
+    lv_obj_t* spacer = lv_obj_create(rail);
+    panel(spacer, base);
+    lv_obj_set_flex_grow(spacer, 1);
+    lv_obj_set_width(spacer, 1);
+
+    lv_obj_t* summary = lv_obj_create(rail);
+    panel(summary, base);
+    lv_obj_set_width(summary, LV_PCT(100));
+    lv_obj_set_height(summary, 58);
+    lv_obj_set_style_pad_left(summary, 20, 0);
+    lv_obj_set_style_border_width(summary, 1, 0);
+    lv_obj_set_style_border_side(summary, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(summary, color(line), 0);
+    if (guidance.position_available) {
+        const std::string trip = duration_text(guidance.remaining_seconds) +
+            "  " + distance_text(guidance.remaining_metres);
+        label(summary, trip.c_str(), primary, 20);
+    } else {
+        label(summary, "--:--  ETA paused", tertiary, 20);
+    }
+
+    lv_obj_t* controls = lv_obj_create(rail);
+    panel(controls, base);
+    lv_obj_set_width(controls, LV_PCT(100));
+    lv_obj_set_height(controls, 76);
+    lv_obj_set_style_pad_all(controls, 8, 0);
+    lv_obj_set_style_pad_column(controls, 8, 0);
+    lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
+    lv_obj_t* info = button(controls,
+        guidance.position_available ? "Steps" : "GPS info");
+    lv_obj_set_flex_grow(info, 1);
+    lv_obj_set_height(info, 60);
+    lv_obj_t* end = button(controls, "End");
+    lv_obj_set_flex_grow(end, 1);
+    lv_obj_set_height(end, 60);
+    lv_obj_set_style_bg_color(end, color(0x3a1614), 0);
+    lv_obj_set_style_text_color(end, color(0xff8a80), 0);
+    lv_obj_add_event_cb(end, end_cb, LV_EVENT_CLICKED, this);
+
+    if (guidance.position_available && width_ > static_cast<uint32_t>(rail_width)) {
+        const int map_x = rail_width +
+            (static_cast<int>(width_) - rail_width) / 2;
+        const int map_y = content_top(height_) + content_height(height_) / 2;
+        lv_obj_t* halo = lv_obj_create(screen_);
+        panel(halo, accent, 26);
+        lv_obj_set_style_bg_opa(halo, LV_OPA_30, 0);
+        lv_obj_set_size(halo, 52, 52);
+        lv_obj_set_pos(halo, map_x - 26, map_y - 26);
+        lv_obj_t* marker = lv_obj_create(halo);
+        panel(marker, accent, 13);
+        lv_obj_set_size(marker, 26, 26);
+        lv_obj_set_style_border_width(marker, 4, 0);
+        lv_obj_set_style_border_color(marker, color(primary), 0);
+        lv_obj_center(marker);
+    }
 }
 
 void NavigationView::pointer(int action, int32_t x, int32_t y)
@@ -403,6 +604,14 @@ bool NavigationView::apply_routes(std::uint64_t revision,
     return accepted;
 }
 
+bool NavigationView::apply_guidance(GuidanceState guidance)
+{
+    const bool accepted = model_.update_guidance(std::move(guidance));
+    if (accepted)
+        rebuild();
+    return accepted;
+}
+
 void NavigationView::flush_cb(lv_display_t* display, const lv_area_t*,
                               unsigned char*)
 {
@@ -470,6 +679,12 @@ void NavigationView::start_cb(lv_event_t* event)
 {
     auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
     if (self->model_.start_guidance()) self->rebuild();
+}
+
+void NavigationView::end_cb(lv_event_t* event)
+{
+    auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
+    if (self->model_.end_guidance()) self->rebuild();
 }
 
 } // namespace navicore_osmand::ui

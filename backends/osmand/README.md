@@ -1,11 +1,12 @@
 # OsmAnd backend
 
-This optional ARM/QNX backend renders a fixed Kyiv viewport into Open NaviCore's
-borrowed EGL target. PR #2 (`9d87881624ad1609449dc9200dcef582e297a2ed`) proved that
-map in the stock UI on an unlocked stationary bench unit. The foundation
-refactor has host and cross-build verification; it still needs the bench
-qualification below. GPS, pan/zoom, routing, guidance, audio and cluster output
-are not implemented.
+This optional ARM/QNX backend renders OsmAnd into Open NaviCore's borrowed EGL
+target. PR #2 (`9d87881624ad1609449dc9200dcef582e297a2ed`) proved the Kyiv map in
+the stock UI on an unlocked stationary bench unit. It now includes an LVGL
+search/route/guidance flow, asynchronous offline routing, route geometry and
+coordinate-based map following. The new guidance slice has host and cross-build
+verification and still needs the bench qualification below. Pan/zoom controls,
+rerouting, audio and cluster output are not implemented.
 
 ## Components and ownership
 
@@ -16,6 +17,9 @@ are not implemented.
 | `session.*` | Lifecycle, attachment generations, worker wakeups, frame policy and rollback decisions |
 | `engine.h` | Small injectable engine interface; no Qt/OsmAnd types |
 | `osmand_engine.cpp` | Core, resource bundle, map pipeline and renderer ownership |
+| `navigation_worker.*` | Off-thread offline search and legacy OsmAnd route calculation |
+| `guidance_tracker.*` | Route projection, monotonic progress and maneuver selection |
+| `ui/compact_text.*` | Bounded Cyrillic-to-Latin conversion for the compact LVGL font |
 | `ui/navigation_model.*` | Host-testable destination/search/route state with revisioned asynchronous result seams |
 | `ui/navigation_view.*` | LVGL 9.6 software-rendered 2a/2b/2c/1b screen flow |
 | `ui/gl_overlay_compositor.*` | GLES2 texture composition inside the already-current borrowed context |
@@ -77,9 +81,13 @@ frame request and carries no old engine state.
 
 The concrete engine preserves the proven order and settings: embedded default
 style, Ukrainian labels, 256-pixel primitives/symbol providers, software raster
-provider, Kyiv 50.4501/30.5234, zoom 13.5, azimuth 0, elevation 90, and no GPU
-worker thread. Camera, symbols and raster providers are installed before
-`initializeRendering(true)`. Each frame runs update, prepare, then render.
+provider, Kyiv 50.4501/30.5234 browse fallback, zoom 13.5, azimuth 0, elevation
+90, and no GPU worker thread. Guidance targets the latest valid coordinate and
+uses zoom 16. Camera, symbols and raster providers are installed before
+`initializeRendering(true)`. Each frame runs update, prepare, then render. The
+map renderer is OpenGL ES; vector-tile preparation and rasterization remain
+CPU-side, so progressive population on the bench is a performance constraint,
+not by itself a rendering fault.
 
 | Engine observation | Internal outcome | Plugin return / wakeup |
 |---|---|---|
@@ -237,6 +245,15 @@ the next start only. The sole runtime search path is
 files/licenses with the bundle. Map data, fonts and binary/resource bundles
 are not committed. SDK library hashes identify offline link inputs; they do
 not establish equivalence to the radio's graphics implementation.
+
+For a stationary-bench route-following test, set
+`OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE=1` before provider start or create the
+marker `/datastore/navicore-backend/enable-route-simulation`. When no real
+coordinate is available, guidance then advances over calculated route geometry
+at 200 m/s. Real coordinates take precedence. The guidance rail is explicitly
+labelled `ROUTE SIMULATION`, diagnostics record start/arrival, and deleting the
+marker affects the next provider start. This mode is test instrumentation, not
+a navigation fallback for normal use.
 
 ## Stationary bench qualification checklist
 

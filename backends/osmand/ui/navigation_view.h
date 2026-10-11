@@ -39,6 +39,7 @@ public:
     std::uint64_t select_result(std::size_t index);
     bool apply_routes(std::uint64_t revision,
                       std::vector<RouteAlternative> routes);
+    bool apply_guidance(GuidanceState guidance);
 
 private:
     struct PointerSample { int action; int32_t x; int32_t y; };
@@ -64,6 +65,7 @@ private:
     static void result_cb(lv_event_t* event);
     static void route_cb(lv_event_t* event);
     static void start_cb(lv_event_t* event);
+    static void end_cb(lv_event_t* event);
 
     NavigationModel& model_;
     uint32_t width_;

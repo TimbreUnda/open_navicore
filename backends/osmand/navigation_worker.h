@@ -38,7 +38,8 @@ public:
     NavigationWorker& operator=(const NavigationWorker&) = delete;
 
     void submit_search(std::uint64_t revision, std::string query);
-    void submit_route(std::uint64_t revision, ui::Destination destination);
+    void submit_route(std::uint64_t revision, ui::Destination destination,
+                      ui::GeoPoint origin);
     bool take_search_result(SearchResult& output);
     bool take_route_result(RouteResult& output);
     void stop() noexcept;
