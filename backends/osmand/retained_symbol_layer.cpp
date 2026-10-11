@@ -325,9 +325,13 @@ class RetainedSymbolLayer::Impl {
 public:
     Impl(std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> provider,
          std::shared_ptr<Wakeup> wakeup)
-        : provider_(std::move(provider)), wakeup_(std::move(wakeup)),
-          worker_([this]() { worker_loop(); })
+        : provider_(std::move(provider)), wakeup_(std::move(wakeup))
     {
+        // Start only after every request/result field below has completed
+        // construction. Starting in the member initializer races worker_loop()
+        // against later members such as has_pending_ and generation_.
+        worker_ = std::thread([this]() { worker_loop(); });
+        trace("retained_symbols=thread_started");
     }
 
     ~Impl() { stop(); }

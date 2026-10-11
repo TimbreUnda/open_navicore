@@ -166,6 +166,10 @@ drift from looking like compatibility.
 
 ## Roadmap
 
+The evidence-gated implementation plan and current ready points live in
+[ROADMAP.md](ROADMAP.md). Thirty FPS is an acceptance floor there, not a cap;
+renderer candidates are measured uncapped and higher sustained FPS is preferred.
+
 The [navigation feature landscape](docs/research/navigation-feature-landscape.md)
 compares official product capabilities with the stock integration evidence and
 proposes design priorities. It describes possible future capabilities, not

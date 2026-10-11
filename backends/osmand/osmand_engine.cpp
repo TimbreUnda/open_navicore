@@ -686,9 +686,14 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     if (retained_map_symbols_ && !retained_symbols_ &&
         !retained_symbols_creation_attempted_) {
         retained_symbols_creation_attempted_ = true;
-        retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
-            symbols_, navigation_wakeup_);
-        trace("init=retained_symbols_after_first_frame");
+        try {
+            retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
+                symbols_, navigation_wakeup_);
+            trace("init=retained_symbols_after_first_frame");
+        } catch (...) {
+            retained_map_symbols_ = false;
+            trace("error=retained_symbols_thread_start");
+        }
     }
     return finish({FrameOutcome::Presented, PendingStage::None,
                    guidance_changed || !renderer_->isIdle()},
