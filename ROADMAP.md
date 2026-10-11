@@ -4,6 +4,20 @@ This document tracks demonstrated project readiness, not intent. A checked box
 means that the listed acceptance evidence exists. It does not imply that a
 larger milestone containing it is complete.
 
+## Paused bench state (2026-10-11)
+
+- Branch: `perf/gpu-render-architecture`
+- Installed backend source revision: `bdf98b1`
+- Active mode: symbol-free OsmAnd raster renderer; all symbol experiment markers
+  are disabled.
+- Live state at pause: one supervised `nv_navigation` process, Kyiv frame
+  presented, zero reported faults, and no process restart after cold startup.
+- Stable moving-route reference: 32.06 weighted FPS and 30.77 minimum across
+  174 rolling five-second windows over 188 seconds.
+- Retained-atlas status: not enabled. Correcting construction order allowed the
+  worker to start after the first presented frame, but concurrent symbol
+  extraction still restarted the process before any atlas was published.
+
 ## Performance policy
 
 - 30 FPS in **every rolling five-second moving-map window** is the acceptance
@@ -38,9 +52,10 @@ larger milestone containing it is complete.
 - [x] Reject baked symbols: 18.67 weighted FPS on the live radio.
 - [x] Reject the bounded stock symbol path: 17.99 weighted FPS after warm-up,
   plus malformed oversized imagery.
-- [x] Reject the first retained-atlas worker lifecycle: its initializer started
-  the thread before later request-state members were constructed and crashed the
-  QNX process. The corrected construction order still awaits live qualification.
+- [x] Eliminate the retained-atlas constructor race and verify live that the
+  worker starts only after the first presented frame.
+- [x] Reject concurrent symbol extraction through the shared
+  `MapObjectsSymbolsProvider`: the process restarts before atlas publication.
 - [ ] Render a visually complete moving map with labels and icons while keeping
   every rolling five-second window at or above 30 FPS.
 - [ ] Improve beyond the current floor; no artificial 30 Hz pacing is planned.
@@ -60,8 +75,8 @@ larger milestone containing it is complete.
 
 ## Milestone 2 — production map renderer
 
-- [ ] Live-qualify the corrected retained-atlas construction order; if it still
-  fails, replace the extra thread with a renderer-owned asynchronous path.
+- [ ] Replace shared-provider concurrent extraction with serialized ownership,
+  a dedicated provider graph, or a renderer-owned asynchronous path.
 - [ ] Retain labels/icons across moving frames; recompute only when visibility or
   collision state materially changes.
 - [ ] Preserve road-label orientation, icon anchors, ordering, collision rules,
