@@ -1,6 +1,8 @@
 # Optional modern-C++ toolchain; the provider/reference backend keep qcc.
 OSMAND_QNX_ROOT ?=
 OSMAND_CORE_LIB_DIR ?= $(OSMAND_QNX_ROOT)/source/binaries/qnx/gcc-armv7/Release
+OSMAND_LEGACY_ROOT ?= $(OSMAND_QNX_ROOT)/source/core-legacy
+OSMAND_LEGACY_SRC_DIR := $(OSMAND_LEGACY_ROOT)/native/src
 OSMAND_QT_PREFIX ?= $(OSMAND_QNX_ROOT)/qt-pic-prefix
 OSMAND_CXX ?= $(OSMAND_QNX_ROOT)/gcc-out/bin/arm-unknown-nto-qnx6.6.0eabi-g++
 OSMAND_CC ?= $(OSMAND_QNX_ROOT)/gcc-out/bin/arm-unknown-nto-qnx6.6.0eabi-gcc
@@ -8,18 +10,26 @@ OSMAND_CC ?= $(OSMAND_QNX_ROOT)/gcc-out/bin/arm-unknown-nto-qnx6.6.0eabi-gcc
 OSMAND_BUNDLE_ID ?= local-unqualified
 OSMAND_CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -Werror \
 	-Wno-error=ignored-attributes -Wno-error=deprecated-declarations \
+	-Wno-error=unused-function -Wno-error=unused-parameter \
+	-Wno-error=unused-variable -Wno-error=sign-compare \
+	-Wno-error=ignored-qualifiers \
 	-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=softfp \
 	-D_HAS_C9X=1 -D_NO_CPP_INLINES=1 -D_HAS_GENERIC_TEMPLATES=0 \
 	-DOSMAND_COMPILER_FAMILY_gcc -DOSMAND_TARGET_OS_qnx \
 	-DOSMAND_TARGET_CPU_ARCH_armv7 -DOSMAND_TARGET_CPU_ARCH_FAMILY_arm \
-	-DOSMAND_OPENGLES2PLUS_RENDERER_SUPPORTED \
+	-DOSMAND_OPENGLES2PLUS_RENDERER_SUPPORTED -DSK_SUPPORT_LEGACY_DRAWLOOPER \
 	-fPIC -fvisibility=hidden -ffunction-sections -fdata-sections
 OSMAND_INCLUDES := -I$(CURDIR)/include -I$(OSMAND_QNX_ROOT)/source/core/include \
 	-I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
+	-I$(OSMAND_LEGACY_ROOT)/native/include -I$(OSMAND_LEGACY_SRC_DIR) \
+	-I$(OSMAND_QNX_ROOT)/source/core/externals/protobuf/upstream.patched/src \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/glm/upstream.patched \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/boost/upstream.patched \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched/include/core \
+	-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched/include/effects \
+	-I$(OSMAND_QNX_ROOT)/source/core/externals/skia/upstream.patched/src/core \
+	-I$(OSMAND_QNX_ROOT)/source/core/externals/expat/upstream.patched/lib \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/harfbuzz/upstream.patched/src \
 	-I$(OSMAND_QNX_ROOT)/source/core/externals/freetype/upstream.patched/include \
 	-I$(OSMAND_QT_PREFIX)/include -I$(OSMAND_QT_PREFIX)/include/QtCore \
@@ -42,24 +52,28 @@ OSMAND_BINUTILS_DIR := $(OSMAND_BUILD_DIR)/binutils
 OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 OSMAND_PLUGIN_TARGET := $(OSMAND_BUILD_DIR)/libMockNavBackendOsmAnd.so
 OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
-	session.o diagnostics.o osmand_engine.o navigation_model.o \
+	session.o diagnostics.o osmand_engine.o navigation_worker.o navigation_model.o \
 	navigation_view.o gl_overlay_compositor.o)
 LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
 OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
 OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)
 OSMAND_OBF_SMOKE_TARGET := $(OSMAND_BUILD_DIR)/qnx-osmand-obf-smoke
+OSMAND_ROUTE_SMOKE_TARGET := $(OSMAND_BUILD_DIR)/qnx-osmand-route-smoke
 OSMAND_PLUGIN_SMOKE_TARGET := $(OSMAND_BUILD_DIR)/qnx-osmand-plugin-smoke
 OSMAND_ENV = QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOST_LIBS)
 OSMAND_COMPILE = $(OSMAND_ENV) $(OSMAND_CXX) --sysroot=$(QNX_TARGET) \
 	-B$(OSMAND_BINUTILS_DIR)/ $(OSMAND_CXXFLAGS) $(OSMAND_INCLUDES) $(OSMAND_LVGL_FLAGS)
 
-.PHONY: osmand-check osmand-manifest osmand-session-test
+.PHONY: osmand-check osmand-manifest osmand-session-test osmand-route-smoke
 
 osmand-backend: $(OSMAND_PLUGIN_TARGET) | $(DIST_DIR)
 	cp $< $(DIST_DIR)/libMockNavBackendOsmAnd.so
 
 osmand-obf-smoke: $(OSMAND_OBF_SMOKE_TARGET) | $(DIST_DIR)
 	cp $< $(DIST_DIR)/qnx-osmand-obf-smoke
+
+osmand-route-smoke: $(OSMAND_ROUTE_SMOKE_TARGET) | $(DIST_DIR)
+	cp $< $(DIST_DIR)/qnx-osmand-route-smoke
 
 osmand-plugin-smoke: $(OSMAND_PLUGIN_SMOKE_TARGET) | $(DIST_DIR)
 	cp $< $(DIST_DIR)/qnx-osmand-plugin-smoke
@@ -108,6 +122,18 @@ $(OSMAND_OBF_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_obf_smoke.o \
 		-L$(OSMAND_CORE_LIB_DIR) -lOsmAndCore_shared \
 		-lsocket -lEGL -lGLESv2 -lslog2 -lz -lpps -lm
 
+$(OSMAND_BUILD_DIR)/qnx_osmand_route_smoke.o: tests/qnx_osmand_route_smoke.cpp \
+		backends/osmand/osmand.mk $(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
+	$(OSMAND_COMPILE) -MMD -MP -c $< -o $@
+
+$(OSMAND_ROUTE_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_route_smoke.o \
+		$(OSMAND_CORE_LIB_DIR)/libOsmAndCore_shared.so
+	$(OSMAND_ENV) $(OSMAND_CXX) --sysroot=$(QNX_TARGET) -B$(OSMAND_BINUTILS_DIR)/ \
+		-static-libstdc++ -static-libgcc -Wl,--allow-shlib-undefined \
+		-Wl,-rpath,/datastore/navicore-backend -o $@ $< \
+		-L$(OSMAND_CORE_LIB_DIR) -lOsmAndCore_shared \
+		-lsocket -lslog2 -lz -lpps -lEGL -lGLESv2 -lm -lc
+
 $(OSMAND_BUILD_DIR)/qnx_osmand_plugin_smoke.o: tests/qnx_osmand_plugin_smoke.c \
 		backends/osmand/osmand.mk | $(OSMAND_BUILD_DIR)
 	$(OSMAND_ENV) $(QCC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
@@ -116,6 +142,7 @@ $(OSMAND_PLUGIN_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_plugin_smoke.o
 	$(OSMAND_ENV) $(QCC) -Vgcc_ntoarmv7le -o $@ $<
 
 -include $(OSMAND_OBJECTS:.o=.d) $(OSMAND_BUILD_DIR)/qnx_osmand_obf_smoke.d \
+	$(OSMAND_BUILD_DIR)/qnx_osmand_route_smoke.d \
 	$(OSMAND_BUILD_DIR)/qnx_osmand_plugin_smoke.d
 
 osmand-check: osmand-backend

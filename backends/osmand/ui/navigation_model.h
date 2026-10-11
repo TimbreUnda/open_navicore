@@ -18,12 +18,20 @@ struct Destination {
     double longitude = 0.0;
 };
 
+struct GeoPoint {
+    double latitude = 0.0;
+    double longitude = 0.0;
+};
+
 struct RouteAlternative {
     std::string id;
     std::string duration;
     std::string distance;
     std::string arrival;
     std::string reason;
+    double duration_seconds = 0.0;
+    double distance_metres = 0.0;
+    std::vector<GeoPoint> geometry;
 };
 
 // Renderer-thread UI state only. Slow search and routing work is deliberately

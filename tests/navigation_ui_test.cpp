@@ -34,10 +34,10 @@ int main()
     const auto stale_route_revision = view.select_result(0);
     const auto route_revision = view.select_result(0);
     assert(!view.apply_routes(stale_route_revision,
-        {{"stale", "99 min", "99 km", "", "Must be rejected"}}));
+        {{"stale", "99 min", "99 km", "", "Must be rejected", 0.0, 0.0, {}}}));
     assert(view.apply_routes(route_revision,
-        {{"fast", "14 min", "10.6 km", "08:15", "Fastest"},
-         {"quiet", "17 min", "11.2 km", "08:18", "Fewer major roads"}}));
+        {{"fast", "14 min", "10.6 km", "08:15", "Fastest", 0.0, 0.0, {}},
+         {"quiet", "17 min", "11.2 km", "08:18", "Fewer major roads", 0.0, 0.0, {}}}));
     assert(model.screen() == Screen::RoutePreview);
     assert(model.routes().size() == 2);
     assert(model.select_route(1));

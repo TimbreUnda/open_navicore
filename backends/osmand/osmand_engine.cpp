@@ -1,6 +1,7 @@
 #include "engine.h"
 #include "session.h"
 #include "diagnostics.h"
+#include "navigation_worker.h"
 #include "ui/gl_overlay_compositor.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
@@ -19,6 +20,8 @@
 #include <OsmAndCore/Map/MapRasterLayerProvider_Software.h>
 #include <OsmAndCore/Map/MapStylesCollection.h>
 #include <OsmAndCore/Map/ObfMapObjectsProvider.h>
+#include <OsmAndCore/Map/VectorLineBuilder.h>
+#include <OsmAndCore/Map/VectorLinesCollection.h>
 
 #include <QByteArray>
 #include <QString>
@@ -39,6 +42,7 @@ public:
 
 private:
     void resize(const MockNavBackendRenderTargetV1&);
+    void show_route(const ui::RouteAlternative&);
     Phase phase_ = Phase::Empty;
     uint32_t width_ = 0;
     uint32_t height_ = 0;
@@ -52,8 +56,12 @@ private:
     std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> symbols_;
     std::shared_ptr<OsmAnd::MapRasterLayerProvider_Software> raster_;
     std::shared_ptr<OsmAnd::IMapRenderer> renderer_;
+    std::shared_ptr<OsmAnd::VectorLinesCollection> route_lines_;
     std::unique_ptr<ui::NavigationModel> navigation_;
     std::unique_ptr<ui::NavigationView> view_;
+    std::unique_ptr<NavigationWorker> navigation_worker_;
+    std::uint64_t submitted_search_revision_ = 0;
+    std::uint64_t submitted_route_revision_ = 0;
     ui::GlOverlayCompositor compositor_;
     bool overlay_enabled_ = true;
 };
@@ -132,7 +140,9 @@ bool OsmAndEngine::initialize(const Config& config,
     renderer_->setZoom(13.5f);
     renderer_->setAzimuth(0.0f);
     renderer_->setElevationAngle(90.0f);
+    route_lines_ = std::make_shared<OsmAnd::VectorLinesCollection>();
     renderer_->addSymbolsProvider(symbols_);
+    renderer_->addSymbolsProvider(route_lines_);
     renderer_->setMapLayerProvider(0, raster_);
 
     // GPU API/resources/stages may initialize before _isRenderingInitialized
@@ -146,6 +156,14 @@ bool OsmAndEngine::initialize(const Config& config,
     navigation_ = std::unique_ptr<ui::NavigationModel>(new ui::NavigationModel());
     view_ = std::unique_ptr<ui::NavigationView>(
         new ui::NavigationView(*navigation_, target.width, target.height));
+    const QByteArray routing_xml = resources_->getResource(
+        QStringLiteral("routing/routing.xml"), &resource_ok);
+    if (!resource_ok || routing_xml.isEmpty())
+        return failure("error=routing_xml");
+    navigation_worker_ = std::unique_ptr<NavigationWorker>(new NavigationWorker(
+        obfs_, std::move(wakeup), config.map,
+        std::string(routing_xml.constData(),
+                    static_cast<std::size_t>(routing_xml.size()))));
     return true;
 }
 
@@ -159,10 +177,54 @@ void OsmAndEngine::resize(const MockNavBackendRenderTargetV1& target)
     height_ = target.height;
 }
 
+void OsmAndEngine::show_route(const ui::RouteAlternative& route)
+{
+    route_lines_->removeAllLines();
+    QVector<OsmAnd::PointI> points;
+    points.reserve(static_cast<int>(route.geometry.size()));
+    double min_latitude = 90.0;
+    double max_latitude = -90.0;
+    double min_longitude = 180.0;
+    double max_longitude = -180.0;
+    for (const auto& point : route.geometry) {
+        points.push_back(OsmAnd::Utilities::convertLatLonTo31(
+            OsmAnd::LatLon(point.latitude, point.longitude)));
+        min_latitude = std::min(min_latitude, point.latitude);
+        max_latitude = std::max(max_latitude, point.latitude);
+        min_longitude = std::min(min_longitude, point.longitude);
+        max_longitude = std::max(max_longitude, point.longitude);
+    }
+    if (points.size() < 2) return;
+    OsmAnd::VectorLineBuilder()
+        .setLineId(1)
+        .setBaseOrder(-100000)
+        .setLineWidth(10.0)
+        .setOutlineWidth(3.0)
+        .setOutlineColor(OsmAnd::FColorARGB(1.0f, 0.04f, 0.10f, 0.18f))
+        .setFillColor(OsmAnd::FColorARGB(1.0f, 0.10f, 0.55f, 1.0f))
+        .setPoints(points)
+        .buildAndAddToCollection(route_lines_);
+    renderer_->setTarget(OsmAnd::Utilities::convertLatLonTo31(OsmAnd::LatLon(
+        (min_latitude + max_latitude) * 0.5,
+        (min_longitude + max_longitude) * 0.5)));
+    renderer_->setZoom(12.5f);
+}
+
 FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
 {
     if (phase_ != Phase::Ready)
         return {FrameOutcome::Fault};
+    NavigationWorker::SearchResult search_result;
+    if (navigation_worker_ && navigation_worker_->take_search_result(search_result))
+        (void)view_->apply_search_results(search_result.revision,
+                                          std::move(search_result.destinations));
+    NavigationWorker::RouteResult route_result;
+    if (navigation_worker_ && navigation_worker_->take_route_result(route_result)) {
+        const bool accepted = navigation_->apply_routes(
+            route_result.revision, std::move(route_result.routes));
+        if (accepted && !navigation_->routes().empty())
+            show_route(navigation_->routes().front());
+    }
     if (target.width != width_ || target.height != height_)
         resize(target);
     if (!renderer_->update()) {
@@ -181,6 +243,20 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         trace("error=ui_composite");
         compositor_.release(false);
         overlay_enabled_ = false;
+    }
+    if (navigation_->screen() == ui::Screen::Search &&
+        navigation_->search_revision() != submitted_search_revision_) {
+        submitted_search_revision_ = navigation_->search_revision();
+        if (!navigation_->query().empty())
+            navigation_worker_->submit_search(submitted_search_revision_,
+                                               navigation_->query());
+    }
+    if (navigation_->screen() == ui::Screen::Search &&
+        navigation_->destination() &&
+        navigation_->route_revision() != submitted_route_revision_) {
+        submitted_route_revision_ = navigation_->route_revision();
+        navigation_worker_->submit_route(submitted_route_revision_,
+                                          *navigation_->destination());
     }
     return {FrameOutcome::Presented, PendingStage::None, !renderer_->isIdle()};
 }
@@ -204,10 +280,14 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         // Set the failure state BEFORE invoking dependency code that may throw
         // or fail after tearing down only part of the resource graph.
         phase_ = Phase::Quarantined;
+        if (navigation_worker_) navigation_worker_->stop();
+        navigation_worker_.reset();
         compositor_.release(mode == ReleaseMode::ContextLost);
         view_.reset();
         navigation_.reset();
         overlay_enabled_ = true;
+        submitted_search_revision_ = 0;
+        submitted_route_revision_ = 0;
         if (!renderer_->releaseRendering(mode == ReleaseMode::ContextLost))
             return ReleaseResult::Quarantined;
         phase_ = Phase::CoreReady;
@@ -215,6 +295,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
     renderer_.reset();
     raster_.reset();
     symbols_.reset();
+    route_lines_.reset();
     primitives_.reset();
     map_objects_.reset();
     primitiviser_.reset();
