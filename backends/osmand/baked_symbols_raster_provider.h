@@ -3,6 +3,7 @@
 #include <OsmAndCore/Map/MapObjectsSymbolsProvider.h>
 #include <OsmAndCore/Map/MapRasterLayerProvider_Software.h>
 
+#include <functional>
 #include <memory>
 
 namespace navicore_osmand {
@@ -17,8 +18,7 @@ public:
     BakedSymbolsRasterProvider(
         const std::shared_ptr<OsmAnd::MapPrimitivesProvider>& primitives,
         const std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider>& symbols,
-        int viewport_width,
-        int viewport_height);
+        std::function<OsmAnd::MapState()> map_state_provider);
 
     bool obtainData(
         const OsmAnd::IMapDataProvider::Request& request,
@@ -27,7 +27,7 @@ public:
 
 private:
     const std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> symbols_;
-    const OsmAnd::PointI viewport_size_;
+    const std::function<OsmAnd::MapState()> map_state_provider_;
 };
 
 } // namespace navicore_osmand

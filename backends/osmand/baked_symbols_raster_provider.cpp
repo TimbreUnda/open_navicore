@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace navicore_osmand {
@@ -37,6 +38,21 @@ struct Candidate {
     OsmAnd::AreaI margin;
     int order = 0;
     std::uintptr_t instance = 0u;
+};
+
+struct RetainedCacheMetadata final
+    : OsmAnd::IMapDataProvider::RetainableCacheMetadata {
+    explicit RetainedCacheMetadata(
+        std::shared_ptr<const OsmAnd::IMapDataProvider::RetainableCacheMetadata>
+            source_)
+        : source(std::move(source_))
+    {
+    }
+
+    ~RetainedCacheMetadata() override = default;
+
+    const std::shared_ptr<const
+        OsmAnd::IMapDataProvider::RetainableCacheMetadata> source;
 };
 
 bool overlaps(const Rectangle& a, const Rectangle& b)
@@ -124,11 +140,10 @@ void append_additional_instances(
 BakedSymbolsRasterProvider::BakedSymbolsRasterProvider(
     const std::shared_ptr<OsmAnd::MapPrimitivesProvider>& primitives,
     const std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider>& symbols,
-    int viewport_width,
-    int viewport_height)
+    std::function<OsmAnd::MapState()> map_state_provider)
     : OsmAnd::MapRasterLayerProvider_Software(primitives)
     , symbols_(symbols)
-    , viewport_size_(viewport_width, viewport_height)
+    , map_state_provider_(std::move(map_state_provider))
 {
 }
 
@@ -148,9 +163,12 @@ bool BakedSymbolsRasterProvider::obtainData(
 
     const auto raster = std::dynamic_pointer_cast<
         OsmAnd::IRasterMapLayerProvider::Data>(base_data);
+    const auto software_raster = std::dynamic_pointer_cast<
+        OsmAnd::MapRasterLayerProvider::Data>(base_data);
     const auto tiled_request = dynamic_cast<const
         OsmAnd::IMapTiledDataProvider::Request*>(&request);
-    if (!raster || !tiled_request || raster->images.isEmpty()) {
+    if (!raster || !software_raster || !tiled_request ||
+        raster->images.isEmpty()) {
         output = base_data;
         return true;
     }
@@ -168,11 +186,8 @@ bool BakedSymbolsRasterProvider::obtainData(
     symbol_request.visibleArea31 = tiled_request->visibleArea31;
     symbol_request.areaTime = tiled_request->areaTime;
     symbol_request.cacheOnly = tiled_request->cacheOnly;
-    symbol_request.mapState.windowSize = viewport_size_;
-    symbol_request.mapState.viewport = OsmAnd::AreaI(
-        0, 0, viewport_size_.y, viewport_size_.x);
-    symbol_request.mapState.zoomLevel = tiled_request->zoom;
-    symbol_request.mapState.surfaceZoomLevel = tiled_request->zoom;
+    if (map_state_provider_)
+        symbol_request.mapState = map_state_provider_();
 
     std::shared_ptr<OsmAnd::IMapTiledSymbolsProvider::Data> symbol_data;
     if (!symbols_->obtainTiledSymbols(symbol_request, symbol_data) ||
@@ -270,10 +285,13 @@ bool BakedSymbolsRasterProvider::obtainData(
     }
 
     bitmap.setImmutable();
-    output = std::make_shared<OsmAnd::IRasterMapLayerProvider::Data>(
+    const auto metadata = raster->retainableCacheMetadata
+        ? new RetainedCacheMetadata(raster->retainableCacheMetadata)
+        : nullptr;
+    output = std::make_shared<OsmAnd::MapRasterLayerProvider::Data>(
         tiled_request->tileId, tiled_request->zoom,
         raster->alphaChannelPresence, raster->densityFactor,
-        bitmap.asImage());
+        bitmap.asImage(), software_raster->binaryMapData, metadata);
     return true;
 }
 

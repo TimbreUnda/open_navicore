@@ -246,19 +246,21 @@ bool OsmAndEngine::initialize(const Config& config,
     primitives_ = std::make_shared<OsmAnd::MapPrimitivesProvider>(
         map_objects_, primitiviser_, 256u);
     symbols_ = std::make_shared<OsmAnd::MapObjectsSymbolsProvider>(primitives_, 256u);
-    if (baked_map_symbols_) {
-        raster_ = std::make_shared<BakedSymbolsRasterProvider>(
-            primitives_, symbols_, static_cast<int>(target.width),
-            static_cast<int>(target.height));
-    } else {
-        raster_ = std::make_shared<OsmAnd::MapRasterLayerProvider_Software>(
-            primitives_);
-    }
 
     renderer_ = OsmAnd::createMapRenderer(
         OsmAnd::MapRendererClass::AtlasMapRenderer_OpenGLES2plus);
     if (!renderer_)
         return failure("error=create_renderer");
+    if (baked_map_symbols_) {
+        raster_ = std::make_shared<BakedSymbolsRasterProvider>(
+            primitives_, symbols_, [this]() {
+                return renderer_->getMapState();
+            });
+    } else {
+        raster_ = std::make_shared<OsmAnd::MapRasterLayerProvider_Software>(
+            primitives_);
+    }
+
     OsmAnd::MapRendererSetupOptions setup;
     setup.gpuWorkerThreadEnabled = false;
     setup.frameUpdateRequestCallback = [wakeup](const OsmAnd::IMapRenderer*) noexcept {
