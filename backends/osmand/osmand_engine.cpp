@@ -51,6 +51,7 @@ private:
     void resize(const MockNavBackendRenderTargetV1&);
     void show_route(const ui::RouteAlternative&);
     bool update_guidance();
+    void update_render_shootout();
     bool ensure_navigation_worker();
     Phase phase_ = Phase::Empty;
     uint32_t width_ = 0;
@@ -92,6 +93,11 @@ private:
     double simulation_geometry_length_metres_ = 0.0;
     double simulation_speed_metres_per_second_ = 20.0;
     std::chrono::steady_clock::time_point simulation_updated_at_{};
+    bool render_shootout_enabled_ = false;
+    bool render_shootout_active_ = false;
+    bool render_shootout_complete_ = false;
+    unsigned int render_shootout_phase_ = 0u;
+    std::chrono::steady_clock::time_point render_shootout_started_at_{};
     ui::GlOverlayCompositor compositor_;
     bool overlay_enabled_ = true;
     FrameMetrics frame_metrics_{false};
@@ -175,6 +181,7 @@ bool OsmAndEngine::initialize(const Config& config,
                              std::shared_ptr<Wakeup> wakeup)
 {
     simulation_enabled_ = config.simulate_route;
+    render_shootout_enabled_ = config.render_shootout;
     frame_metrics_ = FrameMetrics(config.performance_metrics);
     OsmAnd::enablePerformanceMetrics(config.detailed_tile_metrics);
     if (config.performance_metrics)
@@ -185,6 +192,8 @@ bool OsmAndEngine::initialize(const Config& config,
         config.simulation_speed_metres_per_second;
     if (simulation_enabled_)
         trace("simulation=enabled");
+    if (render_shootout_enabled_)
+        trace("render_shootout=enabled");
     resources_ = OsmAnd::CoreResourcesEmbeddedBundle::loadFromLibrary(
         QString::fromLocal8Bit(config.resources.c_str()));
     if (!resources_)
@@ -336,6 +345,56 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route)
     simulation_running_ = false;
     simulation_progress_metres_ = 0.0;
     simulation_arrival_reported_ = false;
+    render_shootout_active_ = false;
+    render_shootout_complete_ = false;
+    render_shootout_phase_ = 0u;
+}
+
+void OsmAndEngine::update_render_shootout()
+{
+    if (!render_shootout_enabled_ || render_shootout_complete_ ||
+        !simulation_running_)
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!render_shootout_active_) {
+        render_shootout_active_ = true;
+        render_shootout_started_at_ = now;
+        render_shootout_phase_ = 0u;
+        trace("render_shootout=full_map");
+        return;
+    }
+    constexpr auto phase_duration = std::chrono::seconds(15);
+    const auto desired = static_cast<unsigned int>(
+        (now - render_shootout_started_at_) / phase_duration);
+    if (desired <= render_shootout_phase_)
+        return;
+
+    if (desired == 1u) {
+        if (!renderer_->removeSymbolsProvider(symbols_, true))
+            trace("error=render_shootout_remove_symbols");
+        trace("render_shootout=raster_without_symbols");
+    } else if (desired == 2u) {
+        if (!renderer_->resetMapLayerProvider(0, true))
+            trace("error=render_shootout_remove_raster");
+        trace("render_shootout=route_only_gpu_floor");
+    } else {
+        if (!renderer_->setMapLayerProvider(0, raster_, true))
+            trace("error=render_shootout_restore_raster");
+        if (!renderer_->addSymbolsProvider(symbols_, true))
+            trace("error=render_shootout_restore_symbols");
+        trace("render_shootout=complete_full_map_restored");
+        render_shootout_complete_ = true;
+        render_shootout_active_ = false;
+        render_shootout_phase_ = 3u;
+        return;
+    }
+
+    render_shootout_phase_ = desired;
+    simulation_progress_metres_ = 0.0;
+    simulation_updated_at_ = now;
+    simulation_arrival_reported_ = false;
+    guidance_tracker_.reset();
+    gps_dirty_ = true;
 }
 
 bool OsmAndEngine::update_guidance()
@@ -473,6 +532,7 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     }
     if (target.width != width_ || target.height != height_)
         resize(target);
+    update_render_shootout();
     auto stage_started = Clock::now();
     const bool update_ok = renderer_->update();
     measurement.update_us = elapsed_us(stage_started);
@@ -629,6 +689,10 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         simulation_running_ = false;
         simulation_progress_metres_ = 0.0;
         simulation_geometry_length_metres_ = 0.0;
+        render_shootout_enabled_ = false;
+        render_shootout_active_ = false;
+        render_shootout_complete_ = false;
+        render_shootout_phase_ = 0u;
         simulation_arrival_reported_ = false;
         guidance_tracker_.reset();
         compositor_.release(mode == ReleaseMode::ContextLost);

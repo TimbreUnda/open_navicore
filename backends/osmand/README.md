@@ -269,6 +269,15 @@ and must not be used for qualification. The selected renderer direction and
 benchmark gates are in
 [`rendering-architecture.md`](../../docs/performance/rendering-architecture.md).
 
+For the controlled renderer isolation run, additionally set
+`OPEN_NAVICORE_OSMAND_RENDER_SHOOTOUT=1` or create
+`/datastore/navicore-backend/enable-render-shootout`. Once simulated guidance
+starts, the renderer runs 15 seconds of the full map, 15 seconds without the
+independent map-symbol provider, and 15 seconds with only the GPU route layer,
+resetting simulated progress at each boundary. It then restores the full map.
+Trace records identify every phase. This visibly removes layers and is a bench
+diagnostic, not a production fallback.
+
 ## Stationary bench qualification checklist
 
 1. Preserve stock/active-file backups and recovery access. Record the complete

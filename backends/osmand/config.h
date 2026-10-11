@@ -12,6 +12,7 @@ struct Config {
     bool simulate_route = false;
     bool performance_metrics = false;
     bool detailed_tile_metrics = false;
+    bool render_shootout = false;
     double simulation_speed_metres_per_second = 20.0;
 
     static Config from_environment();

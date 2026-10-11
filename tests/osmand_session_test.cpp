@@ -106,6 +106,9 @@ void lifecycle()
     assert(setenv("OPEN_NAVICORE_OSMAND_DETAILED_TILE_METRICS", "1", 1) == 0);
     assert(Config::from_environment().detailed_tile_metrics);
     assert(unsetenv("OPEN_NAVICORE_OSMAND_DETAILED_TILE_METRICS") == 0);
+    assert(setenv("OPEN_NAVICORE_OSMAND_RENDER_SHOOTOUT", "1", 1) == 0);
+    assert(Config::from_environment().render_shootout);
+    assert(unsetenv("OPEN_NAVICORE_OSMAND_RENDER_SHOOTOUT") == 0);
 
     probe = std::make_shared<Probe>();
     unsigned requests = 0, new_requests = 0;
