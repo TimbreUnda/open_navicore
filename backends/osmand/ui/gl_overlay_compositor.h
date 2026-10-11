@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace navicore_osmand::ui {
 
@@ -14,7 +15,8 @@ public:
     GlOverlayCompositor& operator=(const GlOverlayCompositor&) = delete;
 
     bool present(const uint32_t* pixels, uint32_t width, uint32_t height,
-                 bool pixels_dirty);
+                 uint32_t dirty_x, uint32_t dirty_y,
+                 uint32_t dirty_width, uint32_t dirty_height);
     void release(bool context_lost) noexcept;
 
 private:
@@ -25,6 +27,7 @@ private:
     int texture_uniform_ = -1;
     uint32_t texture_width_ = 0;
     uint32_t texture_height_ = 0;
+    std::vector<uint32_t> upload_pixels_;
 };
 
 } // namespace navicore_osmand::ui

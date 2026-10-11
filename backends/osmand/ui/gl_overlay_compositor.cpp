@@ -2,6 +2,8 @@
 
 #include <GLES2/gl2.h>
 
+#include <cstring>
+
 namespace navicore_osmand::ui {
 namespace {
 GLuint compile(GLenum kind, const char* source)
@@ -168,7 +170,9 @@ bool GlOverlayCompositor::initialize()
 }
 
 bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
-                                  uint32_t height, bool pixels_dirty)
+                                  uint32_t height, uint32_t dirty_x,
+                                  uint32_t dirty_y, uint32_t dirty_width,
+                                  uint32_t dirty_height)
 {
     if (!pixels || width == 0 || height == 0)
         return false;
@@ -188,11 +192,31 @@ bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
                      GL_UNSIGNED_BYTE, pixels);
         texture_width_ = width;
         texture_height_ = height;
-    } else if (pixels_dirty) {
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                        static_cast<GLsizei>(width),
-                        static_cast<GLsizei>(height), GL_RGBA,
-                        GL_UNSIGNED_BYTE, pixels);
+    } else if (dirty_width != 0u && dirty_height != 0u &&
+               dirty_width <= width && dirty_height <= height &&
+               dirty_x <= width - dirty_width &&
+               dirty_y <= height - dirty_height) {
+        const uint32_t* upload = pixels +
+            static_cast<std::size_t>(dirty_y) * width + dirty_x;
+        if (dirty_x != 0u || dirty_width != width) {
+            upload_pixels_.resize(static_cast<std::size_t>(dirty_width) *
+                                  dirty_height);
+            for (uint32_t row = 0; row < dirty_height; ++row) {
+                std::memcpy(upload_pixels_.data() +
+                                static_cast<std::size_t>(row) * dirty_width,
+                            pixels + static_cast<std::size_t>(dirty_y + row) *
+                                         width + dirty_x,
+                            static_cast<std::size_t>(dirty_width) *
+                                sizeof(uint32_t));
+            }
+            upload = upload_pixels_.data();
+        }
+        glTexSubImage2D(GL_TEXTURE_2D, 0,
+                        static_cast<GLint>(dirty_x),
+                        static_cast<GLint>(dirty_y),
+                        static_cast<GLsizei>(dirty_width),
+                        static_cast<GLsizei>(dirty_height), GL_RGBA,
+                        GL_UNSIGNED_BYTE, upload);
     }
     glUseProgram(program_);
     glUniform1i(texture_uniform_, 0);

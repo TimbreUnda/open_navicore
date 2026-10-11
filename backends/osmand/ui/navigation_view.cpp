@@ -60,10 +60,16 @@ int content_height(uint32_t height)
 std::string distance_text(double metres)
 {
     char text[32] = {};
-    if (metres < 1000.0)
-        std::snprintf(text, sizeof(text), "%.0f m", std::max(0.0, metres));
-    else
+    metres = std::max(0.0, metres);
+    if (metres < 100.0) {
+        const double rounded = std::round(metres / 5.0) * 5.0;
+        std::snprintf(text, sizeof(text), "%.0f m", rounded);
+    } else if (metres < 1000.0) {
+        const double rounded = std::round(metres / 10.0) * 10.0;
+        std::snprintf(text, sizeof(text), "%.0f m", rounded);
+    } else {
         std::snprintf(text, sizeof(text), "%.1f km", metres / 1000.0);
+    }
     return text;
 }
 
@@ -117,6 +123,23 @@ const char* maneuver_symbol(ManeuverKind kind)
     return "^";
 }
 
+void set_label_text(lv_obj_t* label, const char* text)
+{
+    if (!label || !text)
+        return;
+    const char* current = lv_label_get_text(label);
+    if (!current || std::strcmp(current, text) != 0)
+        lv_label_set_text(label, text);
+}
+
+void set_hidden(lv_obj_t* object, bool hidden)
+{
+    if (!object)
+        return;
+    if (lv_obj_is_hidden(object) != hidden)
+        lv_obj_set_hidden(object, hidden);
+}
+
 } // namespace
 
 NavigationView::NavigationView(NavigationModel& model, uint32_t width,
@@ -135,15 +158,18 @@ NavigationView::~NavigationView() { destroy_display(); }
 void NavigationView::create_display()
 {
     pixels_.assign(static_cast<std::size_t>(width_) * height_, 0u);
+    constexpr uint32_t draw_rows = 64u;
+    draw_buffer_.resize(static_cast<std::size_t>(width_) *
+                        std::min(height_, draw_rows));
     display_ = lv_display_create(static_cast<int32_t>(width_),
                                  static_cast<int32_t>(height_));
     if (!display_)
         throw std::runtime_error("lv_display_create failed");
     lv_display_set_user_data(display_, this);
     lv_display_set_color_format(display_, LV_COLOR_FORMAT_ARGB8888);
-    lv_display_set_buffers(display_, pixels_.data(), nullptr,
-                           pixels_.size() * sizeof(uint32_t),
-                           LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_buffers(display_, draw_buffer_.data(), nullptr,
+                           draw_buffer_.size() * sizeof(uint32_t),
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display_, flush_cb);
     lv_display_set_default(display_);
 
@@ -549,31 +575,23 @@ void NavigationView::refresh_guidance()
             std::string instruction = maneuver_action(guidance.maneuver.kind);
             if (!guidance.maneuver.road.empty())
                 instruction += "  " + guidance.maneuver.road;
-            lv_label_set_text(guidance_instruction_, instruction.c_str());
+            set_label_text(guidance_instruction_, instruction.c_str());
         }
-        if (guidance_summary_)
-            lv_label_set_text(guidance_summary_, "--:--  ETA paused");
+        set_label_text(guidance_summary_, "--:--  ETA paused");
         return;
     }
 
-    if (guidance_symbol_)
-        lv_label_set_text(guidance_symbol_,
-                          maneuver_symbol(guidance.maneuver.kind));
-    if (guidance_simulation_) {
-        lv_obj_set_hidden(guidance_simulation_, !guidance.simulated);
-    }
+    set_label_text(guidance_symbol_, maneuver_symbol(guidance.maneuver.kind));
+    set_hidden(guidance_simulation_, !guidance.simulated);
     const std::string next_distance = guidance.arrived ? "0 m" :
         distance_text(guidance.distance_to_maneuver_metres);
-    if (guidance_distance_)
-        lv_label_set_text(guidance_distance_, next_distance.c_str());
-    if (guidance_action_)
-        lv_label_set_text(guidance_action_,
-                          maneuver_action(guidance.maneuver.kind));
+    set_label_text(guidance_distance_, next_distance.c_str());
+    set_label_text(guidance_action_, maneuver_action(guidance.maneuver.kind));
     if (guidance_road_) {
         const char* road = !guidance.maneuver.road.empty()
             ? guidance.maneuver.road.c_str()
             : (destination ? destination->title.c_str() : "Route");
-        lv_label_set_text(guidance_road_, road);
+        set_label_text(guidance_road_, road);
     }
     if (guidance_following_) {
         std::string following = "Continue to destination";
@@ -583,16 +601,15 @@ void NavigationView::refresh_guidance()
             if (!guidance.following_maneuver.road.empty())
                 following += "  " + guidance.following_maneuver.road;
         }
-        lv_label_set_text(guidance_following_, following.c_str());
+        set_label_text(guidance_following_, following.c_str());
     }
-    if (guidance_lanes_)
-        lv_label_set_text(guidance_lanes_, guidance.simulated ?
-            "SIMULATION - Lane info unavailable" :
-            "Lane info not available here");
+    set_label_text(guidance_lanes_, guidance.simulated ?
+        "SIMULATION - Lane info unavailable" :
+        "Lane info not available here");
     if (guidance_summary_) {
         const std::string trip = duration_text(guidance.remaining_seconds) +
             "  " + distance_text(guidance.remaining_metres);
-        lv_label_set_text(guidance_summary_, trip.c_str());
+        set_label_text(guidance_summary_, trip.c_str());
     }
 }
 
@@ -634,10 +651,13 @@ void NavigationView::pointer(int action, int32_t x, int32_t y)
 bool NavigationView::render(uint32_t elapsed_ms)
 {
     dirty_ = false;
+    dirty_region_ = {};
     lv_tick_inc(elapsed_ms);
     const bool forced_present = full_clear_pending_;
     if (full_clear_pending_) {
         std::fill(pixels_.begin(), pixels_.end(), 0u);
+        dirty_region_ = {0u, 0u, width_, height_};
+        dirty_ = true;
         lv_obj_invalidate(screen_);
         full_clear_pending_ = false;
     }
@@ -699,11 +719,41 @@ bool NavigationView::apply_guidance(GuidanceState guidance)
     return accepted;
 }
 
-void NavigationView::flush_cb(lv_display_t* display, const lv_area_t*,
-                              unsigned char*)
+void NavigationView::flush_cb(lv_display_t* display, const lv_area_t* area,
+                              unsigned char* source_bytes)
 {
     auto* self = static_cast<NavigationView*>(lv_display_get_user_data(display));
-    self->dirty_ = true;
+    if (area && source_bytes && area->x1 >= 0 && area->y1 >= 0 &&
+        area->x2 >= area->x1 && area->y2 >= area->y1 &&
+        static_cast<uint32_t>(area->x2) < self->width_ &&
+        static_cast<uint32_t>(area->y2) < self->height_) {
+        const uint32_t x = static_cast<uint32_t>(area->x1);
+        const uint32_t y = static_cast<uint32_t>(area->y1);
+        const uint32_t width = static_cast<uint32_t>(area->x2 - area->x1 + 1);
+        const uint32_t height = static_cast<uint32_t>(area->y2 - area->y1 + 1);
+        const std::size_t source_stride = lv_draw_buf_width_to_stride(
+            width, LV_COLOR_FORMAT_ARGB8888);
+        for (uint32_t row = 0; row < height; ++row) {
+            std::memcpy(self->pixels_.data() +
+                            static_cast<std::size_t>(y + row) * self->width_ + x,
+                        source_bytes + static_cast<std::size_t>(row) *
+                                           source_stride,
+                        static_cast<std::size_t>(width) * sizeof(uint32_t));
+        }
+        if (!self->dirty_) {
+            self->dirty_region_ = {x, y, width, height};
+        } else {
+            const uint32_t x2 = std::max(
+                self->dirty_region_.x + self->dirty_region_.width, x + width);
+            const uint32_t y2 = std::max(
+                self->dirty_region_.y + self->dirty_region_.height, y + height);
+            self->dirty_region_.x = std::min(self->dirty_region_.x, x);
+            self->dirty_region_.y = std::min(self->dirty_region_.y, y);
+            self->dirty_region_.width = x2 - self->dirty_region_.x;
+            self->dirty_region_.height = y2 - self->dirty_region_.y;
+        }
+        self->dirty_ = true;
+    }
     lv_display_flush_ready(display);
 }
 

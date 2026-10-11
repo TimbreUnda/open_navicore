@@ -16,6 +16,13 @@ namespace navicore_osmand::ui {
 // boundary and is called only by OsmAndEngine::frame on the renderer thread.
 class NavigationView {
 public:
+    struct DirtyRegion {
+        uint32_t x = 0;
+        uint32_t y = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+    };
+
     NavigationView(NavigationModel& model, uint32_t width, uint32_t height);
     ~NavigationView();
     NavigationView(const NavigationView&) = delete;
@@ -29,6 +36,7 @@ public:
     uint32_t width() const noexcept { return width_; }
     uint32_t height() const noexcept { return height_; }
     bool dirty() const noexcept { return dirty_; }
+    DirtyRegion dirty_region() const noexcept { return dirty_region_; }
 
     // Deterministic entry points used by host tests; production input reaches
     // the same model transitions through LVGL callbacks.
@@ -74,6 +82,7 @@ private:
     uint32_t width_;
     uint32_t height_;
     std::vector<uint32_t> pixels_;
+    std::vector<uint32_t> draw_buffer_;
     lv_display_t* display_ = nullptr;
     lv_indev_t* indev_ = nullptr;
     lv_obj_t* screen_ = nullptr;
@@ -95,6 +104,7 @@ private:
     bool pointer_down_ = false;
     bool dirty_ = false;
     bool full_clear_pending_ = true;
+    DirtyRegion dirty_region_{};
 };
 
 } // namespace navicore_osmand::ui

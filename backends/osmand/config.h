@@ -12,7 +12,7 @@ struct Config {
     bool simulate_route = false;
     bool performance_metrics = false;
     bool detailed_tile_metrics = false;
-    double simulation_speed_metres_per_second = 200.0;
+    double simulation_speed_metres_per_second = 20.0;
 
     static Config from_environment();
 };

@@ -40,7 +40,7 @@ Config Config::from_environment()
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_DETAILED_TILE_METRICS",
             "/datastore/navicore-backend/enable-detailed-tile-metrics"),
-        200.0
+        20.0
     };
 }
 } // namespace navicore_osmand

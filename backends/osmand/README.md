@@ -250,7 +250,8 @@ For a stationary-bench route-following test, set
 `OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE=1` before provider start or create the
 marker `/datastore/navicore-backend/enable-route-simulation`. When no real
 coordinate is available, guidance then advances over calculated route geometry
-at 200 m/s. Real coordinates take precedence. The guidance rail is explicitly
+at 20 m/s and requests continuously interpolated camera frames. Real
+coordinates take precedence. The guidance rail is explicitly
 labelled `ROUTE SIMULATION`, diagnostics record start/arrival, and deleting the
 marker affects the next provider start. This mode is test instrumentation, not
 a navigation fallback for normal use.

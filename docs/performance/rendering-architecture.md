@@ -83,7 +83,10 @@ run; they do not establish that the current raster pipeline meets the target.
 ### First live baseline
 
 The first instrumented simulation run used a 5.2 km route, a 200 m/s synthetic
-position, rotating guidance, and the full 1024x768 target. After initial tile
+position, rotating guidance, and the full 1024x768 target. That initial build
+advanced the camera on 1 Hz GPS-unavailable events rather than interpolating
+every presented frame, so this is a tile-churn/UI baseline rather than the final
+smooth-motion qualification. After initial tile
 arrival, one-second windows produced 10.7--19.2 presented fps, usually
 13--17 fps. Representative p95 stages were 35--73 ms for map draw, 17--112 ms
 for renderer update, and 25--54 ms for UI composition on the roughly one frame

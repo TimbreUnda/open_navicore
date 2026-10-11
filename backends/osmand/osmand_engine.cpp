@@ -89,7 +89,8 @@ private:
     bool simulation_running_ = false;
     bool simulation_arrival_reported_ = false;
     double simulation_progress_metres_ = 0.0;
-    double simulation_speed_metres_per_second_ = 200.0;
+    double simulation_geometry_length_metres_ = 0.0;
+    double simulation_speed_metres_per_second_ = 20.0;
     std::chrono::steady_clock::time_point simulation_updated_at_{};
     ui::GlOverlayCompositor compositor_;
     bool overlay_enabled_ = true;
@@ -127,16 +128,13 @@ double geometry_distance(const ui::GeoPoint& a, const ui::GeoPoint& b)
 }
 
 ui::GeoPoint simulated_position(const ui::RouteAlternative& route,
-                                double progress_metres)
+                                double progress_metres,
+                                double geometry_length)
 {
     if (route.geometry.empty())
         return {};
     if (route.geometry.size() == 1 || route.distance_metres <= 0.0)
         return route.geometry.front();
-    double geometry_length = 0.0;
-    for (std::size_t index = 1; index < route.geometry.size(); ++index)
-        geometry_length += geometry_distance(route.geometry[index - 1],
-                                             route.geometry[index]);
     if (geometry_length <= 0.0)
         return route.geometry.front();
     const double wanted = std::clamp(
@@ -306,6 +304,7 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route)
     double max_latitude = -90.0;
     double min_longitude = 180.0;
     double max_longitude = -180.0;
+    simulation_geometry_length_metres_ = 0.0;
     for (const auto& point : route.geometry) {
         points.push_back(OsmAnd::Utilities::convertLatLonTo31(
             OsmAnd::LatLon(point.latitude, point.longitude)));
@@ -313,6 +312,10 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route)
         max_latitude = std::max(max_latitude, point.latitude);
         min_longitude = std::min(min_longitude, point.longitude);
         max_longitude = std::max(max_longitude, point.longitude);
+    }
+    for (std::size_t index = 1; index < route.geometry.size(); ++index) {
+        simulation_geometry_length_metres_ += geometry_distance(
+            route.geometry[index - 1], route.geometry[index]);
     }
     if (points.size() < 2) return;
     OsmAnd::VectorLineBuilder()
@@ -368,7 +371,8 @@ bool OsmAndEngine::update_guidance()
                     seconds * simulation_speed_metres_per_second_);
             simulation_updated_at_ = now;
         }
-        position = simulated_position(route, simulation_progress_metres_);
+        position = simulated_position(route, simulation_progress_metres_,
+                                      simulation_geometry_length_metres_);
         position_available = true;
         simulated = true;
     }
@@ -457,7 +461,8 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     }
     bool guidance_changed = false;
     if (navigation_->screen() == ui::Screen::Guidance &&
-        (!guidance_active_ || gps_dirty_)) {
+        (!guidance_active_ || gps_dirty_ ||
+         (simulation_enabled_ && simulation_running_))) {
         guidance_changed = update_guidance();
     } else if (navigation_->screen() != ui::Screen::Guidance &&
                guidance_active_) {
@@ -495,12 +500,15 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     const bool ui_dirty = overlay_enabled_ && view_->render(16u);
     measurement.ui_render_us = elapsed_us(stage_started);
     if (overlay_enabled_) {
+        const auto dirty = view_->dirty_region();
         if (ui_dirty)
-            measurement.ui_upload_bytes = view_->width() * view_->height() *
+            measurement.ui_upload_bytes = dirty.width * dirty.height *
                                           sizeof(std::uint32_t);
         stage_started = Clock::now();
         const bool presented = compositor_.present(
-            view_->pixels(), view_->width(), view_->height(), ui_dirty);
+            view_->pixels(), view_->width(), view_->height(),
+            ui_dirty ? dirty.x : 0u, ui_dirty ? dirty.y : 0u,
+            ui_dirty ? dirty.width : 0u, ui_dirty ? dirty.height : 0u);
         measurement.ui_composite_us = elapsed_us(stage_started);
         if (!presented) {
             trace("error=ui_composite");
@@ -620,6 +628,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         simulation_enabled_ = false;
         simulation_running_ = false;
         simulation_progress_metres_ = 0.0;
+        simulation_geometry_length_metres_ = 0.0;
         simulation_arrival_reported_ = false;
         guidance_tracker_.reset();
         compositor_.release(mode == ReleaseMode::ContextLost);

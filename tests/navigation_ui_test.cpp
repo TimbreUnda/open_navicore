@@ -4,7 +4,9 @@
 #include "ui/navigation_view.h"
 #include <open_navicore/backend.h>
 
+#include <algorithm>
 #include <cassert>
+#include <cstdint>
 
 using namespace navicore_osmand::ui;
 using navicore_osmand::GuidanceTracker;
@@ -20,6 +22,9 @@ int main()
 
     NavigationView view(model, 1024, 574);
     (void)view.render(16);
+    assert(std::any_of(view.pixels(),
+                       view.pixels() + view.width() * view.height(),
+                       [](std::uint32_t pixel) { return pixel != 0u; }));
     // Startup Screen events are quarantined until the first stable frames.
     view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 80, 40);
     view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 80, 40);

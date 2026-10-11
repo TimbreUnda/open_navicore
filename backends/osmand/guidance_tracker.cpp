@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <vector>
 
 namespace navicore_osmand {
 namespace {
@@ -77,16 +76,9 @@ ui::GuidanceState GuidanceTracker::update(const ui::RouteAlternative& route,
     if (route.geometry.size() < 2)
         return state;
 
-    std::vector<double> cumulative(route.geometry.size(), 0.0);
-    for (std::size_t index = 1; index < route.geometry.size(); ++index)
-        cumulative[index] = cumulative[index - 1] +
-            distance(route.geometry[index - 1], route.geometry[index]);
-    const double geometry_length = cumulative.back();
-    if (geometry_length <= 0.0)
-        return state;
-
     double nearest_squared = std::numeric_limits<double>::max();
     double nearest_along = 0.0;
+    double geometry_length = 0.0;
     for (std::size_t index = 1; index < route.geometry.size(); ++index) {
         const auto& a = route.geometry[index - 1];
         const auto& b = route.geometry[index];
@@ -100,6 +92,7 @@ ui::GuidanceState GuidanceTracker::update(const ui::RouteAlternative& route,
         const double dx = bx - ax;
         const double dy = by - ay;
         const double length_squared = dx * dx + dy * dy;
+        const double segment_length = std::sqrt(length_squared);
         const double projection = length_squared > 0.0
             ? std::clamp(-(ax * dx + ay * dy) / length_squared, 0.0, 1.0)
             : 0.0;
@@ -108,10 +101,12 @@ ui::GuidanceState GuidanceTracker::update(const ui::RouteAlternative& route,
         const double squared = px * px + py * py;
         if (squared < nearest_squared) {
             nearest_squared = squared;
-            nearest_along = cumulative[index - 1] +
-                projection * std::sqrt(length_squared);
+            nearest_along = geometry_length + projection * segment_length;
         }
+        geometry_length += segment_length;
     }
+    if (geometry_length <= 0.0)
+        return state;
 
     const double route_progress = nearest_along / geometry_length *
         route.distance_metres;
