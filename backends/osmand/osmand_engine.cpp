@@ -302,9 +302,6 @@ bool OsmAndEngine::initialize(const Config& config,
         !retained_map_symbols_ &&
         !baked_map_symbols_)
         renderer_->addSymbolsProvider(symbols_);
-    if (retained_map_symbols_)
-        retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
-            symbols_, wakeup);
     renderer_->addSymbolsProvider(route_lines_);
     renderer_->setMapLayerProvider(0, raster_);
 
@@ -327,6 +324,11 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=routing_xml");
     trace("init=routing_resource");
     navigation_wakeup_ = std::move(wakeup);
+    // OsmAnd's rendering initialization creates and primes its own worker
+    // graph. Do not introduce our symbol worker until that graph is complete.
+    if (retained_map_symbols_)
+        retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
+            symbols_, navigation_wakeup_);
     navigation_map_ = config.map;
     navigation_routing_xml_.assign(
         routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
