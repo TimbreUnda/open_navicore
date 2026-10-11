@@ -221,12 +221,6 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                        g_qnx.context) == EGL_TRUE) {
         g_qnx.asynchronous_swap =
             eglSwapInterval(g_qnx.display, 0) == EGL_TRUE;
-        if (eglMakeCurrent(g_qnx.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                           EGL_NO_CONTEXT) != EGL_TRUE) {
-            (void)egl_error(diagnostic, capacity,
-                            "eglMakeCurrent(release after swap interval)");
-            goto fail;
-        }
     } else {
         (void)egl_error(diagnostic, capacity,
                         "eglMakeCurrent(configure swap interval)");
@@ -274,7 +268,8 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     set_diagnostic(diagnostic, capacity,
                    "backend renderer live: class=NAV_main config=0x%x "
                    "buffers=2 geometry=%ux%u input_identity=%d sensitivity=%d "
-                   "swap_range=%d..%d swap0=%d target_fps=30",
+                   "swap_range=%d..%d swap0=%d target_fps=30 "
+                   "persistent_context=1",
                    (unsigned int)config_id, target->width, target->height,
                    identity_coordinates, sensitivity, min_swap_interval,
                    max_swap_interval, g_qnx.asynchronous_swap);
@@ -286,6 +281,10 @@ fail:
 
 int mock_renderer_platform_begin_frame(char *diagnostic, size_t capacity)
 {
+    if (eglGetCurrentContext() == g_qnx.context &&
+        eglGetCurrentSurface(EGL_DRAW) == g_qnx.surface &&
+        eglGetCurrentSurface(EGL_READ) == g_qnx.surface)
+        return 0;
     if (eglMakeCurrent(g_qnx.display, g_qnx.surface, g_qnx.surface,
                        g_qnx.context) != EGL_TRUE)
         return egl_error(diagnostic, capacity, "eglMakeCurrent");
@@ -300,10 +299,6 @@ int mock_renderer_platform_end_frame(int present, char *diagnostic,
         pace_presentation();
         if (eglSwapBuffers(g_qnx.display, g_qnx.surface) != EGL_TRUE)
             result = egl_error(diagnostic, capacity, "eglSwapBuffers");
-    }
-    if (eglMakeCurrent(g_qnx.display, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                       EGL_NO_CONTEXT) != EGL_TRUE && result == 0) {
-        result = egl_error(diagnostic, capacity, "eglMakeCurrent(release)");
     }
     return result;
 }
