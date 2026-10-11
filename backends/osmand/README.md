@@ -278,6 +278,21 @@ resetting simulated progress at each boundary. It then restores the full map.
 Trace records identify every phase. This visibly removes layers and is a bench
 diagnostic, not a production fallback.
 
+For a sustained moving-basemap qualification, set
+`OPEN_NAVICORE_OSMAND_SUSTAINED_BASEMAP_BENCHMARK=1` or create
+`/datastore/navicore-backend/enable-sustained-basemap-benchmark`. This disables
+the phase cycling and leaves the real raster basemap, route, marker, camera and
+guidance UI active without OsmAnd's independent symbol provider.
+
+To benchmark labels without restoring the expensive independent-symbol draw
+path, also set `OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS=1` or create
+`/datastore/navicore-backend/enable-baked-map-symbols`. A bounded set of
+priority-sorted OsmAnd glyph/icon images is then composited into each basemap
+tile once. The renderer retains the resulting tile as one texture, so moving
+frames do not perform dynamic symbol placement or upload one resource per
+label. This is an experimental north-up benchmark candidate: labels crossing a
+tile boundary are omitted, and path text is not yet rotated along roads.
+
 ## Stationary bench qualification checklist
 
 1. Preserve stock/active-file backups and recovery access. Record the complete

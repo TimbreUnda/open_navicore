@@ -1,4 +1,5 @@
 #include "engine.h"
+#include "baked_symbols_raster_provider.h"
 #include "session.h"
 #include "diagnostics.h"
 #include "frame_metrics.h"
@@ -95,6 +96,7 @@ private:
     std::chrono::steady_clock::time_point simulation_updated_at_{};
     bool render_shootout_enabled_ = false;
     bool sustained_basemap_benchmark_ = false;
+    bool baked_map_symbols_ = false;
     bool render_shootout_active_ = false;
     bool render_shootout_complete_ = false;
     unsigned int render_shootout_phase_ = 0u;
@@ -183,6 +185,7 @@ bool OsmAndEngine::initialize(const Config& config,
 {
     simulation_enabled_ = config.simulate_route;
     sustained_basemap_benchmark_ = config.sustained_basemap_benchmark;
+    baked_map_symbols_ = config.baked_map_symbols;
     render_shootout_enabled_ = config.render_shootout &&
                                !sustained_basemap_benchmark_;
     frame_metrics_ = FrameMetrics(config.performance_metrics);
@@ -199,6 +202,8 @@ bool OsmAndEngine::initialize(const Config& config,
         trace("render_shootout=enabled");
     if (sustained_basemap_benchmark_)
         trace("sustained_basemap_benchmark=enabled");
+    if (baked_map_symbols_)
+        trace("baked_map_symbols=enabled");
     resources_ = OsmAnd::CoreResourcesEmbeddedBundle::loadFromLibrary(
         QString::fromLocal8Bit(config.resources.c_str()));
     if (!resources_)
@@ -241,7 +246,14 @@ bool OsmAndEngine::initialize(const Config& config,
     primitives_ = std::make_shared<OsmAnd::MapPrimitivesProvider>(
         map_objects_, primitiviser_, 256u);
     symbols_ = std::make_shared<OsmAnd::MapObjectsSymbolsProvider>(primitives_, 256u);
-    raster_ = std::make_shared<OsmAnd::MapRasterLayerProvider_Software>(primitives_);
+    if (baked_map_symbols_) {
+        raster_ = std::make_shared<BakedSymbolsRasterProvider>(
+            primitives_, symbols_, static_cast<int>(target.width),
+            static_cast<int>(target.height));
+    } else {
+        raster_ = std::make_shared<OsmAnd::MapRasterLayerProvider_Software>(
+            primitives_);
+    }
 
     renderer_ = OsmAnd::createMapRenderer(
         OsmAnd::MapRendererClass::AtlasMapRenderer_OpenGLES2plus);
@@ -269,7 +281,7 @@ bool OsmAndEngine::initialize(const Config& config,
     renderer_->setAzimuth(0.0f);
     renderer_->setElevationAngle(90.0f);
     route_lines_ = std::make_shared<OsmAnd::VectorLinesCollection>();
-    if (!sustained_basemap_benchmark_)
+    if (!sustained_basemap_benchmark_ && !baked_map_symbols_)
         renderer_->addSymbolsProvider(symbols_);
     renderer_->addSymbolsProvider(route_lines_);
     renderer_->setMapLayerProvider(0, raster_);

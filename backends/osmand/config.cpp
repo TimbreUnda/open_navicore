@@ -46,6 +46,9 @@ Config Config::from_environment()
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_SUSTAINED_BASEMAP_BENCHMARK",
             "/datastore/navicore-backend/enable-sustained-basemap-benchmark"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS",
+            "/datastore/navicore-backend/enable-baked-map-symbols"),
         20.0
     };
 }

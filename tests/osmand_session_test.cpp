@@ -112,6 +112,9 @@ void lifecycle()
     assert(setenv("OPEN_NAVICORE_OSMAND_SUSTAINED_BASEMAP_BENCHMARK", "1", 1) == 0);
     assert(Config::from_environment().sustained_basemap_benchmark);
     assert(unsetenv("OPEN_NAVICORE_OSMAND_SUSTAINED_BASEMAP_BENCHMARK") == 0);
+    assert(setenv("OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS", "1", 1) == 0);
+    assert(Config::from_environment().baked_map_symbols);
+    assert(unsetenv("OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS") == 0);
 
     probe = std::make_shared<Probe>();
     unsigned requests = 0, new_requests = 0;
