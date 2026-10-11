@@ -13,6 +13,7 @@
 #include <time.h>
 
 #define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(33333333)
+#define MOCK_WINDOW_BUFFER_COUNT 3
 
 typedef struct {
     screen_context_t screen_context;
@@ -201,7 +202,8 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
         screen_set_window_property_cv(g_qnx.window, SCREEN_PROPERTY_CLASS,
                                       (int)sizeof(window_class),
                                       window_class) != 0 ||
-        screen_create_window_buffers(g_qnx.window, 2) != 0 ||
+        screen_create_window_buffers(g_qnx.window,
+                                     MOCK_WINDOW_BUFFER_COUNT) != 0 ||
         screen_create_event(&g_qnx.event) != 0) {
         (void)screen_error(diagnostic, capacity, "NAV_main window creation");
         goto fail;
@@ -283,12 +285,14 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     target->native_egl_context = (uintptr_t)g_qnx.context;
     set_diagnostic(diagnostic, capacity,
                    "backend renderer live: class=NAV_main config=0x%x "
-                   "buffers=2 geometry=%ux%u input_identity=%d sensitivity=%d "
+                   "requested_buffers=%d geometry=%ux%u input_identity=%d "
+                   "sensitivity=%d "
                    "swap_range=%d..%d swap0=%d screen_swap=%d "
                    "buffer_count=%d render_buffers=%d pipeline=%d "
                    "pace_interval_us=33333 display_goal_fps=30 "
                    "persistent_context=1",
-                   (unsigned int)config_id, target->width, target->height,
+                   (unsigned int)config_id, MOCK_WINDOW_BUFFER_COUNT,
+                   target->width, target->height,
                    identity_coordinates, sensitivity, min_swap_interval,
                    max_swap_interval, g_qnx.asynchronous_swap,
                    screen_swap_interval, buffer_count, render_buffer_count,
