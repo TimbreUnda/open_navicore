@@ -12,7 +12,9 @@
 #include <string.h>
 #include <time.h>
 
-#define MOCK_TARGET_FRAME_NANOSECONDS UINT64_C(33333333)
+/* The live Screen/EGL path adds about 8 ms after the backend measurement.
+ * Leave that budget outside this deadline to target 33.3 ms end to end. */
+#define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(25000000)
 
 typedef struct {
     screen_context_t screen_context;
@@ -45,7 +47,7 @@ static void pace_presentation(void)
     if (now == 0u) return;
     if (g_qnx.next_present_nanoseconds == 0u ||
         now > g_qnx.next_present_nanoseconds +
-              MOCK_TARGET_FRAME_NANOSECONDS) {
+              MOCK_PRESENT_PACING_NANOSECONDS) {
         g_qnx.next_present_nanoseconds = now;
     }
     while (now < g_qnx.next_present_nanoseconds) {
@@ -57,7 +59,7 @@ static void pace_presentation(void)
         now = monotonic_nanoseconds();
         if (now == 0u) return;
     }
-    g_qnx.next_present_nanoseconds += MOCK_TARGET_FRAME_NANOSECONDS;
+    g_qnx.next_present_nanoseconds += MOCK_PRESENT_PACING_NANOSECONDS;
 }
 
 static void set_diagnostic(char *output, size_t capacity,
@@ -268,7 +270,8 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     set_diagnostic(diagnostic, capacity,
                    "backend renderer live: class=NAV_main config=0x%x "
                    "buffers=2 geometry=%ux%u input_identity=%d sensitivity=%d "
-                   "swap_range=%d..%d swap0=%d target_fps=30 "
+                   "swap_range=%d..%d swap0=%d pace_interval_us=25000 "
+                   "display_goal_fps=30 "
                    "persistent_context=1",
                    (unsigned int)config_id, target->width, target->height,
                    identity_coordinates, sensitivity, min_swap_interval,

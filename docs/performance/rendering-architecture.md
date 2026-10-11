@@ -140,6 +140,28 @@ the compositor limit from renderer cost without busy-looping. If the route-only
 control then holds 30 fps, the custom GLES2 renderer remains viable; if it does
 not, the provider/window path must be fixed before investing in map meshes.
 
+Two follow-up provider builds separated more of that external cost. Both used
+the identical route, phase durations, and aggregation method:
+
+| Provider policy | Full map | No symbols | Route-only floor | 52 s user CPU |
+|---|---:|---:|---:|---:|
+| Default swap/context churn | 15.1 fps | 18.4 fps | 20.4 fps | 21.05 s |
+| Swap interval zero, explicit 30 Hz pacing | 17.6 fps | 19.7 fps | 22.5 fps | 14.01 s |
+| Above plus persistent renderer-thread EGL context | 22.2 fps | 23.3 fps | 24.0 fps | 14.28 s |
+
+The persistent-context route-only phase held 23.2--24.8 fps while backend p95
+remained 2--3 ms. Full-map median map p95 improved to 25.5 ms, but its stable
+range was only 15.9--24.8 fps and resource churn still produced long tails.
+This proves three separate facts:
+
+1. Rebinding and releasing EGL for every frame was material overhead and is no
+   longer part of the architecture.
+2. The software-raster basemap still cannot provide stable 30 fps even after
+   the provider path is substantially cheaper.
+3. A further provider/presentation cadence issue caps even trivial GPU scenes
+   below 30 fps. It must be qualified with the custom-mesh and pre-rendered
+   controls; fast backend time alone is not proof of visible 30 fps.
+
 ## Approaches considered
 
 | Approach | Runtime load | Porting risk | Map/data impact | 30 fps judgment |
@@ -308,8 +330,10 @@ or complicates frame ownership.
 
 ## Immediate decision
 
-Proceed with Gate 0 and Gate 1, then build the custom OsmAnd-primitives GLES2
-backend. Use pre-rendered raster tiles as the control case and emergency
-low-spec fallback. Do not spend the next iteration tuning Skia CPU rasterization
-as if it can become a GPU-vector renderer, and do not port all of MapLibre or
-Organic Maps before the small renderer proves the hardware budget.
+Gate 0 and Gate 1 are complete. Build the custom OsmAnd-primitives GLES2
+backend next, beginning with polygon and road meshes plus parent-tile fallback.
+Run it beside a pre-rendered-raster control through the same renderer seam.
+Keep the persistent context, non-blocking swap, bounded uploads, and explicit
+frame pacing in both controls. Do not spend the next iteration tuning Skia CPU
+rasterization as if it can become a GPU-vector renderer, and do not port all of
+MapLibre or Organic Maps before the small renderer proves the hardware budget.
