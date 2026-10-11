@@ -297,8 +297,12 @@ The retained-GPU symbol experiment is enabled with
 `OPEN_NAVICORE_OSMAND_BOUNDED_MAP_SYMBOLS=1` or
 `/datastore/navicore-backend/enable-bounded-map-symbols`. It publishes at most
 12 priority-sorted symbol groups per tile through OsmAnd's normal retained
-GLES2 resource path. Use it with the sustained-basemap marker to compare a
-usable bounded label set against the symbol-free control.
+GLES2 resource path. This is retained as diagnostic code, not a production
+candidate. On the live sustained route, the post-warmup sample delivered 17.99
+weighted FPS and every rolling five-second window was below 30 FPS
+(13.91--19.38 FPS), compared with 32.06 FPS for the symbol-free control. The
+provider filters groups only after OsmAnd has performed its upstream symbol
+rasterization, and the live output also exposed malformed oversized imagery.
 
 ## Stationary bench qualification checklist
 

@@ -255,7 +255,7 @@ now-measured bottleneck first.
 |---|---:|---:|---|---|
 | OsmAnd raster basemap without its independent symbol provider | 24.5% of one core during measured warm movement; low GPU | Low | Keeps OBF and style | **Selected first usable baseline.** Sustained live movement held every rolling five-second window above 30 fps. It still needs a replacement symbol layer and cold-start qualification, and its roughly 32 fps presentation rate is not treated as an optimization ceiling. |
 | Symbols baked into software raster tiles | High and recurrent symbol/tile generation | Low | Keeps OBF and style, but clips cross-tile labels | **Rejected on the radio.** After the first route window, eleven measured one-second windows delivered 18.67 weighted FPS (17.63–19.55 FPS), with map p95 reaching 63 ms. Preserving cache metadata and the live map state fixed malformed symbols but did not remove the sustained 40–100 ms map tails. |
-| Bounded retained OsmAnd symbols | Symbol rasterization remains on workers; GPU resources and placement remain retained | Low/medium | Keeps OBF, style, label placement and collision semantics | Current incremental candidate. Cap published groups per tile and compare equal-content sustained movement uncapped against the 32 FPS symbol-free baseline. |
+| Bounded retained OsmAnd symbols | Symbol rasterization remains on workers; GPU resources and placement remain retained | Low/medium | Keeps OBF and style, but the live cap exposed malformed oversized imagery | **Rejected on the radio.** After skipping the first ten movement windows, 49 one-second windows delivered 17.99 weighted FPS. All 45 rolling five-second windows were below 30 FPS (13.91--19.38 FPS), versus 32.06 FPS for the symbol-free control. Post-filtering groups does not avoid upstream symbol rasterization/resource work. |
 | Pre-rendered raster/MBTiles basemap | Lowest CPU; simple GLES2 textured quads | Medium | Requires a second, potentially large map package and loses dynamic vector styling | Strong fallback and excellent benchmark control; viable for bounded regions, unattractive as the primary worldwide format. |
 | Current MapLibre Native | GPU vector render with a good worker model | Very high on QNX 6.6/GCC 8/GLES2 | Requires MVT/PMTiles plus OsmAnd OBF for routing/search, or a new data pipeline | Rejected for the radio baseline. Current builds expose EGL/OpenGL backends, but the project is moving toward GLES3-era capabilities and a much newer toolchain/platform layer. |
 | Tangram ES | GPU vector renderer designed for GLES2 and embedded Linux/Raspberry Pi | Medium/high | Requires MVT and a separate style/data package | Best external prototype/reference. Its small GLES2 core is attractive, but adopting it creates two map databases and depends on a comparatively quiet project. |
@@ -431,7 +431,9 @@ dirty-rectangle LVGL path.
 Re-run the same sustained route with road/place labels enabled. If every
 rolling five-second window remains at or above 30 fps and cold movement stays
 within the CPU/memory budget, it qualifies as the first usable renderer—not as
-the end of performance work. In parallel with subsequent product features,
+the end of performance work. There is no 30 fps cap: benchmark candidates at
+their natural uncapped rate and prefer higher stable FPS and lower load when
+visual content is equivalent. In parallel with subsequent product features,
 activate stage two through the existing renderer seam and compare raster tiles
 against OsmAnd-primitives polygon/road meshes uncapped. Prefer the faster,
 lower-load result once it preserves the same visual content; do not import all
