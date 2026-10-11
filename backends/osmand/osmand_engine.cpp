@@ -71,6 +71,7 @@ private:
     std::shared_ptr<OsmAnd::IMapRenderer> renderer_;
     std::shared_ptr<OsmAnd::VectorLinesCollection> route_lines_;
     std::unique_ptr<RetainedSymbolLayer> retained_symbols_;
+    bool retained_symbols_creation_attempted_ = false;
     std::unique_ptr<ui::NavigationModel> navigation_;
     std::unique_ptr<ui::NavigationView> view_;
     std::unique_ptr<NavigationWorker> navigation_worker_;
@@ -324,11 +325,6 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=routing_xml");
     trace("init=routing_resource");
     navigation_wakeup_ = std::move(wakeup);
-    // OsmAnd's rendering initialization creates and primes its own worker
-    // graph. Do not introduce our symbol worker until that graph is complete.
-    if (retained_map_symbols_)
-        retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
-            symbols_, navigation_wakeup_);
     navigation_map_ = config.map;
     navigation_routing_xml_.assign(
         routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
@@ -684,6 +680,16 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
                                               *navigation_->destination(), origin);
         }
     }
+    // OsmAnd's worker graph is still settling after initializeRendering().
+    // Start our independent symbol worker only after an entire map/UI frame
+    // has rendered successfully. The atlas will first appear on a later frame.
+    if (retained_map_symbols_ && !retained_symbols_ &&
+        !retained_symbols_creation_attempted_) {
+        retained_symbols_creation_attempted_ = true;
+        retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
+            symbols_, navigation_wakeup_);
+        trace("init=retained_symbols_after_first_frame");
+    }
     return finish({FrameOutcome::Presented, PendingStage::None,
                    guidance_changed || !renderer_->isIdle()},
                   MeasuredFrameOutcome::Presented);
@@ -730,6 +736,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
             retained_symbols_->release(mode == ReleaseMode::ContextLost);
             retained_symbols_.reset();
         }
+        retained_symbols_creation_attempted_ = false;
         navigation_wakeup_.reset();
         navigation_map_.clear();
         navigation_routing_xml_.clear();
