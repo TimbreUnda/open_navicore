@@ -11,3 +11,6 @@ swap0_30hz_persistent_context,route_only_gpu_floor,24.0,23.2,24.8,3.0,2.0,15,20
 swap0_25ms_persistent_context,full_map,22.2,16.2,24.0,20.5,16.5,15,20
 swap0_25ms_persistent_context,raster_without_symbols,23.6,22.1,25.0,14.0,9.0,15,20
 swap0_25ms_persistent_context,route_only_gpu_floor,24.1,23.4,24.9,3.0,2.0,15,20
+swap0_30hz_persistent_context_triple_buffer,full_map,23.2,22.3,24.2,22.0,18.0,15,20
+swap0_30hz_persistent_context_triple_buffer,raster_without_symbols,23.4,20.5,24.8,13.5,10.5,15,20
+swap0_30hz_persistent_context_triple_buffer,route_only_gpu_floor,24.2,23.2,24.9,3.0,2.0,15,20

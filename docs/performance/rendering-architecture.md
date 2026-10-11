@@ -149,6 +149,7 @@ the identical route, phase durations, and aggregation method:
 | Swap interval zero, explicit 30 Hz pacing | 17.6 fps | 19.7 fps | 22.5 fps | 14.01 s |
 | Above plus persistent renderer-thread EGL context | 22.2 fps | 23.3 fps | 24.0 fps | 14.28 s |
 | Persistent context, shortened 25 ms pacing control | 22.2 fps | 23.6 fps | 24.1 fps | 14.49 s |
+| Persistent context, 30 Hz pacing, three Screen buffers | 23.2 fps | 23.4 fps | 24.2 fps | not sampled |
 
 The persistent-context route-only phase held 23.2--24.8 fps while backend p95
 remained 2--3 ms. Full-map median map p95 improved to 25.5 ms, but its stable
@@ -170,6 +171,17 @@ aggressive interval is therefore rejected; the provider keeps the lower-load
 pacer. The provider now reports the Screen window's swap interval, buffer
 counts, and pipeline assignment so the next run can distinguish window policy
 from EGL configuration without a separate Screen client.
+
+The live Screen properties for the persistent-context build were
+`screen_swap=0`, `buffer_count=2`, `render_buffers=2`, and `pipeline=1`.
+Requesting three buffers produced `buffer_count=3` and `render_buffers=3`, but
+the route-only floor remained 24.2 fps (23.2--24.9 stable range) with 2 ms
+median map p95. Triple buffering is therefore not the missing 30 fps control;
+the ceiling is downstream of buffer availability as well as backend work,
+EGL context ownership, the requested swap interval, and the provider pacer.
+The next presentation investigation should target the `NAV_main` Screen
+class/pipeline/compositor policy or a proven direct-post path before map-mesh
+work is used as evidence of visible frame rate.
 
 ## Approaches considered
 
