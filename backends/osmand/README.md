@@ -284,14 +284,21 @@ For a sustained moving-basemap qualification, set
 the phase cycling and leaves the real raster basemap, route, marker, camera and
 guidance UI active without OsmAnd's independent symbol provider.
 
-To benchmark labels without restoring the expensive independent-symbol draw
-path, also set `OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS=1` or create
+The rejected baked-symbol experiment can be reproduced by setting
+`OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS=1` or creating
 `/datastore/navicore-backend/enable-baked-map-symbols`. A bounded set of
 priority-sorted OsmAnd glyph/icon images is then composited into each basemap
 tile once. The renderer retains the resulting tile as one texture, so moving
 frames do not perform dynamic symbol placement or upload one resource per
-label. This is an experimental north-up benchmark candidate: labels crossing a
-tile boundary are omitted, and path text is not yet rotated along roads.
+label. Live movement reached only 18.67 weighted FPS after its first route
+window, so this is diagnostic code rather than a candidate production path.
+
+The retained-GPU symbol experiment is enabled with
+`OPEN_NAVICORE_OSMAND_BOUNDED_MAP_SYMBOLS=1` or
+`/datastore/navicore-backend/enable-bounded-map-symbols`. It publishes at most
+12 priority-sorted symbol groups per tile through OsmAnd's normal retained
+GLES2 resource path. Use it with the sustained-basemap marker to compare a
+usable bounded label set against the symbol-free control.
 
 ## Stationary bench qualification checklist
 

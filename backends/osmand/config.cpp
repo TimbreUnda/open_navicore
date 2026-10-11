@@ -49,6 +49,9 @@ Config Config::from_environment()
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS",
             "/datastore/navicore-backend/enable-baked-map-symbols"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_BOUNDED_MAP_SYMBOLS",
+            "/datastore/navicore-backend/enable-bounded-map-symbols"),
         20.0
     };
 }
