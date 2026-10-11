@@ -12,8 +12,9 @@
 #include <string.h>
 #include <time.h>
 
-#define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(33333333)
+#define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(0)
 #define MOCK_WINDOW_BUFFER_COUNT 3
+#define MOCK_PRESENT_TRACE_PATH "/tmp/open-navicore-present.log"
 
 typedef struct {
     screen_context_t screen_context;
@@ -24,6 +25,12 @@ typedef struct {
     EGLContext context;
     MockScreenInputState input;
     uint64_t next_present_nanoseconds;
+    uint64_t trace_window_start_nanoseconds;
+    uint64_t trace_pace_nanoseconds;
+    uint64_t trace_swap_nanoseconds;
+    uint64_t trace_swap_max_nanoseconds;
+    uint32_t trace_presented;
+    FILE *trace_file;
     int asynchronous_swap;
     uint32_t ignored_events;
     uint32_t event_errors;
@@ -43,6 +50,7 @@ static uint64_t monotonic_nanoseconds(void)
 static void pace_presentation(void)
 {
     uint64_t now = monotonic_nanoseconds();
+    if (MOCK_PRESENT_PACING_NANOSECONDS == 0u) return;
     if (now == 0u) return;
     if (g_qnx.next_present_nanoseconds == 0u ||
         now > g_qnx.next_present_nanoseconds +
@@ -150,6 +158,7 @@ void mock_renderer_platform_destroy(void)
     if (g_qnx.window != NULL) (void)screen_destroy_window(g_qnx.window);
     if (g_qnx.screen_context != NULL)
         (void)screen_destroy_context(g_qnx.screen_context);
+    if (g_qnx.trace_file != NULL) (void)fclose(g_qnx.trace_file);
     /* EGLDisplay is process-global on this stack; do not eglTerminate it. */
     memset(&g_qnx, 0, sizeof(g_qnx));
     g_qnx.display = EGL_NO_DISPLAY;
@@ -283,13 +292,14 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     target->native_egl_display = (uintptr_t)g_qnx.display;
     target->native_egl_surface = (uintptr_t)g_qnx.surface;
     target->native_egl_context = (uintptr_t)g_qnx.context;
+    g_qnx.trace_file = fopen(MOCK_PRESENT_TRACE_PATH, "a");
     set_diagnostic(diagnostic, capacity,
                    "backend renderer live: class=NAV_main config=0x%x "
                    "requested_buffers=%d geometry=%ux%u input_identity=%d "
                    "sensitivity=%d "
                    "swap_range=%d..%d swap0=%d screen_swap=%d "
                    "buffer_count=%d render_buffers=%d pipeline=%d "
-                   "pace_interval_us=33333 display_goal_fps=30 "
+                   "pace_interval_us=0 display_goal_fps=30 "
                    "persistent_context=1",
                    (unsigned int)config_id, MOCK_WINDOW_BUFFER_COUNT,
                    target->width, target->height,
@@ -320,9 +330,58 @@ int mock_renderer_platform_end_frame(int present, char *diagnostic,
 {
     int result = 0;
     if (present != 0) {
+        const uint64_t begin_nanoseconds = monotonic_nanoseconds();
+        uint64_t swap_begin_nanoseconds;
+        uint64_t end_nanoseconds;
         pace_presentation();
+        swap_begin_nanoseconds = monotonic_nanoseconds();
         if (eglSwapBuffers(g_qnx.display, g_qnx.surface) != EGL_TRUE)
             result = egl_error(diagnostic, capacity, "eglSwapBuffers");
+        end_nanoseconds = monotonic_nanoseconds();
+        if (begin_nanoseconds != 0u && swap_begin_nanoseconds != 0u &&
+            end_nanoseconds != 0u) {
+            const uint64_t pace_nanoseconds =
+                swap_begin_nanoseconds - begin_nanoseconds;
+            const uint64_t swap_nanoseconds =
+                end_nanoseconds - swap_begin_nanoseconds;
+            if (g_qnx.trace_window_start_nanoseconds == 0u)
+                g_qnx.trace_window_start_nanoseconds = begin_nanoseconds;
+            g_qnx.trace_pace_nanoseconds += pace_nanoseconds;
+            g_qnx.trace_swap_nanoseconds += swap_nanoseconds;
+            if (swap_nanoseconds > g_qnx.trace_swap_max_nanoseconds)
+                g_qnx.trace_swap_max_nanoseconds = swap_nanoseconds;
+            ++g_qnx.trace_presented;
+            if (end_nanoseconds - g_qnx.trace_window_start_nanoseconds >=
+                    UINT64_C(1000000000) &&
+                g_qnx.trace_file != NULL) {
+                const uint64_t elapsed_nanoseconds =
+                    end_nanoseconds - g_qnx.trace_window_start_nanoseconds;
+                (void)fprintf(
+                    g_qnx.trace_file,
+                    "present window_ms=%llu presented=%u fps_x10=%llu "
+                    "pace_avg_us=%llu swap_avg_us=%llu swap_max_us=%llu\n",
+                    (unsigned long long)(elapsed_nanoseconds /
+                                         UINT64_C(1000000)),
+                    g_qnx.trace_presented,
+                    (unsigned long long)(g_qnx.trace_presented *
+                                         UINT64_C(10000000000) /
+                                         elapsed_nanoseconds),
+                    (unsigned long long)(g_qnx.trace_pace_nanoseconds /
+                                         g_qnx.trace_presented /
+                                         UINT64_C(1000)),
+                    (unsigned long long)(g_qnx.trace_swap_nanoseconds /
+                                         g_qnx.trace_presented /
+                                         UINT64_C(1000)),
+                    (unsigned long long)(g_qnx.trace_swap_max_nanoseconds /
+                                         UINT64_C(1000)));
+                (void)fflush(g_qnx.trace_file);
+                g_qnx.trace_window_start_nanoseconds = end_nanoseconds;
+                g_qnx.trace_pace_nanoseconds = 0u;
+                g_qnx.trace_swap_nanoseconds = 0u;
+                g_qnx.trace_swap_max_nanoseconds = 0u;
+                g_qnx.trace_presented = 0u;
+            }
+        }
     }
     return result;
 }
