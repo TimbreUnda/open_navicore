@@ -148,6 +148,7 @@ the identical route, phase durations, and aggregation method:
 | Default swap/context churn | 15.1 fps | 18.4 fps | 20.4 fps | 21.05 s |
 | Swap interval zero, explicit 30 Hz pacing | 17.6 fps | 19.7 fps | 22.5 fps | 14.01 s |
 | Above plus persistent renderer-thread EGL context | 22.2 fps | 23.3 fps | 24.0 fps | 14.28 s |
+| Persistent context, shortened 25 ms pacing control | 22.2 fps | 23.6 fps | 24.1 fps | 14.49 s |
 
 The persistent-context route-only phase held 23.2--24.8 fps while backend p95
 remained 2--3 ms. Full-map median map p95 improved to 25.5 ms, but its stable
@@ -161,6 +162,14 @@ This proves three separate facts:
 3. A further provider/presentation cadence issue caps even trivial GPU scenes
    below 30 fps. It must be qualified with the custom-mesh and pre-rendered
    controls; fast backend time alone is not proof of visible 30 fps.
+
+Shortening only the pacing interval from 33.3 ms to 25 ms changed the GPU floor
+from 24.0 to 24.1 fps and did not materially change CPU consumption. The
+aggressive interval is therefore rejected; the provider keeps the lower-load
+33.3 ms interval. The cap is downstream of backend work and not imposed by the
+pacer. The provider now reports the Screen window's swap interval, buffer
+counts, and pipeline assignment so the next run can distinguish window policy
+from EGL configuration without a separate Screen client.
 
 ## Approaches considered
 

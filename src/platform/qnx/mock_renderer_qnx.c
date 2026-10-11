@@ -12,9 +12,7 @@
 #include <string.h>
 #include <time.h>
 
-/* The live Screen/EGL path adds about 8 ms after the backend measurement.
- * Leave that budget outside this deadline to target 33.3 ms end to end. */
-#define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(25000000)
+#define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(33333333)
 
 typedef struct {
     screen_context_t screen_context;
@@ -179,6 +177,10 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     int source_size[2] = { 0, 0 };
     int rotation = 0;
     int sensitivity = SCREEN_SENSITIVITY_TEST;
+    int screen_swap_interval = -1;
+    int buffer_count = -1;
+    int render_buffer_count = -1;
+    int pipeline = -1;
     int identity_coordinates;
 
     memset(&g_qnx, 0, sizeof(g_qnx));
@@ -254,6 +256,18 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     (void)screen_get_window_property_iv(g_qnx.window,
                                         SCREEN_PROPERTY_SENSITIVITY,
                                         &sensitivity);
+    (void)screen_get_window_property_iv(g_qnx.window,
+                                        SCREEN_PROPERTY_SWAP_INTERVAL,
+                                        &screen_swap_interval);
+    (void)screen_get_window_property_iv(g_qnx.window,
+                                        SCREEN_PROPERTY_BUFFER_COUNT,
+                                        &buffer_count);
+    (void)screen_get_window_property_iv(g_qnx.window,
+                                        SCREEN_PROPERTY_RENDER_BUFFER_COUNT,
+                                        &render_buffer_count);
+    (void)screen_get_window_property_iv(g_qnx.window,
+                                        SCREEN_PROPERTY_PIPELINE,
+                                        &pipeline);
     memset(target, 0, sizeof(*target));
     target->abi_version = MOCK_NAV_BACKEND_ABI_V1;
     target->struct_size = sizeof(*target);
@@ -270,12 +284,15 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     set_diagnostic(diagnostic, capacity,
                    "backend renderer live: class=NAV_main config=0x%x "
                    "buffers=2 geometry=%ux%u input_identity=%d sensitivity=%d "
-                   "swap_range=%d..%d swap0=%d pace_interval_us=25000 "
-                   "display_goal_fps=30 "
+                   "swap_range=%d..%d swap0=%d screen_swap=%d "
+                   "buffer_count=%d render_buffers=%d pipeline=%d "
+                   "pace_interval_us=33333 display_goal_fps=30 "
                    "persistent_context=1",
                    (unsigned int)config_id, target->width, target->height,
                    identity_coordinates, sensitivity, min_swap_interval,
-                   max_swap_interval, g_qnx.asynchronous_swap);
+                   max_swap_interval, g_qnx.asynchronous_swap,
+                   screen_swap_interval, buffer_count, render_buffer_count,
+                   pipeline);
     return 0;
 fail:
     mock_renderer_platform_destroy();
