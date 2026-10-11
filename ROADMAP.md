@@ -58,6 +58,16 @@ larger milestone containing it is complete.
   `MapObjectsSymbolsProvider`: the process restarts before atlas publication.
 - [ ] Render a visually complete moving map with labels and icons while keeping
   every rolling five-second window at or above 30 FPS.
+- [ ] Raise the presentation ceiling. The route-only GPU floor (32.3 FPS, 2 ms
+  backend) equals the symbol-free map rate, so Screen composition, not map
+  work, currently bounds FPS. Stock `graphics.conf` places `NAV_main` below the
+  full-screen RGBA `HMI_main` on composited pipeline 4, so every map frame is
+  recomposited. Qualify, one change at a time, against the route-only floor:
+  - opaque `NAV_main` (`SCREEN_TRANSPARENCY_NONE`), now the default;
+    `disable-opaque-nav-window` restores source-over for A/B runs;
+  - a non-composited layer via `SCREEN_USAGE_OVERLAY`
+    (`enable-nav-overlay`, optionally containing a pipeline id), including
+    HMI popups over the map and RVC ordering.
 - [ ] Improve beyond the current floor; no artificial 30 Hz pacing is planned.
 - [ ] Record comparable CPU, memory, cold-tile, frame-age, and input-latency data
   for every surviving renderer candidate.
@@ -81,10 +91,21 @@ larger milestone containing it is complete.
   collision state materially changes.
 - [ ] Preserve road-label orientation, icon anchors, ordering, collision rules,
   language, and density closely enough for normal navigation.
-- [ ] Eliminate avoidable full-surface LVGL invalidation and texture allocation.
+- [x] Upload only dirty LVGL rectangles into a retained overlay texture.
+- [ ] Blend the overlay only over occupied canvas bands and skip it entirely
+  when the UI is transparent (implemented; needs live frame-time evidence).
+- [ ] Replace per-frame `glGet*` save/restore at the OsmAnd/overlay boundary
+  with an explicit state contract once OsmAnd's VAO emulation is accounted for.
+- [ ] Decouple tile-texture arrival from frame submission. OsmAnd uploads at
+  most one resource per render-thread frame; `enable-gpu-upload-worker` runs
+  its GPU worker on a shared pbuffer context. Qualify cold tile-boundary tails,
+  CPU load, and release/context-loss lifecycle before making it the default.
 - [ ] Measure whether a GPU-native vector path beats retained raster tiles on the
   PowerVR driver with equal content; select from evidence rather than design
-  preference.
+  preference. Run this after the presentation ceiling is raised: below it, both
+  paths are capped at the same composition-bound rate.
+- [ ] Keep a pre-rendered raster control in that comparison to separate CPU
+  rasterization cost from presentation cost.
 - [ ] Qualify warm and cold tile-boundary movement at the uncapped maximum rate.
 
 ## Milestone 3 — guidance product

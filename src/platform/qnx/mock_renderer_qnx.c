@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(0)
 #define MOCK_WINDOW_BUFFER_COUNT 3
@@ -19,6 +20,15 @@
 #define MOCK_CONTENT_Y 72
 #define MOCK_CONTENT_WIDTH 1024
 #define MOCK_CONTENT_HEIGHT 574
+/* NAV_main sits below the full-screen HMI_main window on the composited
+ * framebuffer pipeline, so every map frame is recomposited by Screen. An
+ * opaque window lets Screen copy instead of blending it over the background;
+ * the marker restores the class default (source-over) for A/B runs. */
+#define MOCK_DISABLE_OPAQUE_MARKER \
+    "/datastore/navicore-backend/disable-opaque-nav-window"
+/* Bench experiment: request a non-composited (overlay) layer. An optional
+ * positive integer in the marker selects an explicit pipeline id. */
+#define MOCK_OVERLAY_MARKER "/datastore/navicore-backend/enable-nav-overlay"
 
 typedef struct {
     screen_context_t screen_context;
@@ -71,6 +81,21 @@ static void pace_presentation(void)
         if (now == 0u) return;
     }
     g_qnx.next_present_nanoseconds += MOCK_PRESENT_PACING_NANOSECONDS;
+}
+
+static int marker_present(const char *path)
+{
+    return access(path, F_OK) == 0;
+}
+
+static int marker_integer(const char *path)
+{
+    FILE *marker = fopen(path, "r");
+    int value = 0;
+    if (marker == NULL) return 0;
+    if (fscanf(marker, "%d", &value) != 1 || value < 0) value = 0;
+    (void)fclose(marker);
+    return value;
 }
 
 static void set_diagnostic(char *output, size_t capacity,
@@ -196,6 +221,16 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     int buffer_count = -1;
     int render_buffer_count = -1;
     int pipeline = -1;
+    int class_usage = -1;
+    int class_pipeline = -1;
+    int overlay_requested = marker_present(MOCK_OVERLAY_MARKER);
+    int overlay_pipeline = overlay_requested ?
+        marker_integer(MOCK_OVERLAY_MARKER) : 0;
+    int overlay_applied = 0;
+    int opaque_requested = !marker_present(MOCK_DISABLE_OPAQUE_MARKER);
+    int opaque_applied = 0;
+    int transparency = -1;
+    int usage = -1;
     int identity_coordinates;
 
     memset(&g_qnx, 0, sizeof(g_qnx));
@@ -228,12 +263,64 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                                       source_position) != 0 ||
         screen_set_window_property_iv(g_qnx.window,
                                       SCREEN_PROPERTY_SOURCE_SIZE,
-                                      source_size) != 0 ||
-        screen_create_window_buffers(g_qnx.window,
-                                     MOCK_WINDOW_BUFFER_COUNT) != 0 ||
-        screen_create_event(&g_qnx.event) != 0) {
+                                      source_size) != 0) {
         (void)screen_error(diagnostic, capacity, "NAV_main window creation");
         goto fail;
+    }
+    /* Usage and pipeline must be chosen before buffers exist. */
+    (void)screen_get_window_property_iv(g_qnx.window, SCREEN_PROPERTY_USAGE,
+                                        &class_usage);
+    (void)screen_get_window_property_iv(g_qnx.window, SCREEN_PROPERTY_PIPELINE,
+                                        &class_pipeline);
+    if (overlay_requested) {
+        int overlay_usage = SCREEN_USAGE_OPENGL_ES2 | SCREEN_USAGE_OVERLAY;
+        overlay_applied =
+            screen_set_window_property_iv(g_qnx.window, SCREEN_PROPERTY_USAGE,
+                                          &overlay_usage) == 0 &&
+            (overlay_pipeline <= 0 ||
+             screen_set_window_property_iv(g_qnx.window,
+                                           SCREEN_PROPERTY_PIPELINE,
+                                           &overlay_pipeline) == 0);
+        if (!overlay_applied) {
+            /* Never leave a half-applied overlay request behind. */
+            int fallback_usage = class_usage > 0 ? class_usage :
+                                                   SCREEN_USAGE_OPENGL_ES2;
+            (void)screen_set_window_property_iv(g_qnx.window,
+                                                SCREEN_PROPERTY_USAGE,
+                                                &fallback_usage);
+            if (class_pipeline >= 0)
+                (void)screen_set_window_property_iv(g_qnx.window,
+                                                    SCREEN_PROPERTY_PIPELINE,
+                                                    &class_pipeline);
+        }
+    }
+    if (screen_create_window_buffers(g_qnx.window,
+                                     MOCK_WINDOW_BUFFER_COUNT) != 0) {
+        /* A rejected overlay request falls back to the class composition. */
+        int fallback_usage = class_usage > 0 ? class_usage :
+                                               SCREEN_USAGE_OPENGL_ES2;
+        if (!overlay_requested ||
+            screen_set_window_property_iv(g_qnx.window, SCREEN_PROPERTY_USAGE,
+                                          &fallback_usage) != 0 ||
+            (class_pipeline >= 0 &&
+             screen_set_window_property_iv(g_qnx.window,
+                                           SCREEN_PROPERTY_PIPELINE,
+                                           &class_pipeline) != 0) ||
+            screen_create_window_buffers(g_qnx.window,
+                                         MOCK_WINDOW_BUFFER_COUNT) != 0) {
+            (void)screen_error(diagnostic, capacity, "NAV_main window buffers");
+            goto fail;
+        }
+        overlay_applied = 0;
+    }
+    if (screen_create_event(&g_qnx.event) != 0) {
+        (void)screen_error(diagnostic, capacity, "NAV_main window event");
+        goto fail;
+    }
+    if (opaque_requested) {
+        int opaque = SCREEN_TRANSPARENCY_NONE;
+        opaque_applied = screen_set_window_property_iv(
+            g_qnx.window, SCREEN_PROPERTY_TRANSPARENCY, &opaque) == 0;
     }
     if (choose_config(g_qnx.display, &config, &config_id,
                       diagnostic, capacity) != 0) goto fail;
@@ -297,6 +384,11 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     (void)screen_get_window_property_iv(g_qnx.window,
                                         SCREEN_PROPERTY_PIPELINE,
                                         &pipeline);
+    (void)screen_get_window_property_iv(g_qnx.window,
+                                        SCREEN_PROPERTY_TRANSPARENCY,
+                                        &transparency);
+    (void)screen_get_window_property_iv(g_qnx.window, SCREEN_PROPERTY_USAGE,
+                                        &usage);
     memset(target, 0, sizeof(*target));
     target->abi_version = MOCK_NAV_BACKEND_ABI_V1;
     target->struct_size = sizeof(*target);
@@ -311,6 +403,21 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     target->native_egl_surface = (uintptr_t)g_qnx.surface;
     target->native_egl_context = (uintptr_t)g_qnx.context;
     g_qnx.trace_file = fopen(MOCK_PRESENT_TRACE_PATH, "a");
+    if (g_qnx.trace_file != NULL) {
+        /* The provider diagnostic is capped at 256 bytes; keep composition
+         * policy on its own trace line. */
+        (void)fprintf(g_qnx.trace_file,
+                      "composition class_usage=0x%x class_pipeline=%d "
+                      "usage=0x%x pipeline=%d overlay_requested=%d "
+                      "overlay_pipeline=%d overlay_applied=%d "
+                      "opaque_requested=%d opaque_applied=%d "
+                      "transparency=%d\n",
+                      (unsigned int)class_usage, class_pipeline,
+                      (unsigned int)usage, pipeline, overlay_requested,
+                      overlay_pipeline, overlay_applied, opaque_requested,
+                      opaque_applied, transparency);
+        (void)fflush(g_qnx.trace_file);
+    }
     set_diagnostic(diagnostic, capacity,
                    "backend renderer live: class=NAV_main config=0x%x "
                    "requested_buffers=%d geometry=%ux%u input_identity=%d "

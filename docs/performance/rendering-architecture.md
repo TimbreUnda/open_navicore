@@ -215,6 +215,47 @@ deadline limiter only if the natural Screen backpressure remains materially
 above the desired 30 fps; do not reintroduce a fixed sleep ahead of a blocking
 swap.
 
+### Composition topology and presentation controls
+
+The QR39.5 flash image selects `lg/graphics.conf` for the embedded 1024x768
+display. It defines `HMI_main` (order 1500), `RVC` (order 1100) and `NAV_main`
+(order 1000) as RGBA8888 GLES2 classes on the same composited framebuffer
+pipeline 4; the display also accepts `rgbx8888`, and the WFD device configures
+further `gfx` and `video1` pipelines. The full-screen RGBA HMI layer is above
+the map, so each map post makes Screen recomposite the navigation region
+beneath it. That fits the measured behavior: backend time stayed at 2--3 ms
+while the route-only floor rose from 24.2 to 32.3 fps when the window shrank by
+25.3%, almost exactly in proportion to submitted pixels.
+
+The provider therefore adds two presentation controls, measured against the
+route-only floor before any map-renderer comparison:
+
+- `NAV_main` is created opaque (`SCREEN_TRANSPARENCY_NONE`) by default. The map
+  covers every pixel, and the overlay blend now preserves destination alpha.
+  The marker `/datastore/navicore-backend/disable-opaque-nav-window` restores
+  the class default for A/B runs.
+- `/datastore/navicore-backend/enable-nav-overlay` requests a non-composited
+  layer with `SCREEN_USAGE_OVERLAY` before buffer creation. A positive integer
+  in the marker also selects that pipeline id. If Screen rejects the buffers,
+  the provider restores the class usage/pipeline and continues composited.
+
+The provider writes the requested and applied values as one `composition`
+line to `/tmp/open-navicore-present.log`. None of these controls has live FPS
+evidence yet. The overlay experiment must also check HMI popups over the map,
+RVC ordering, and hide/show, since a hardware layer is ordered by pipeline
+rather than by composited z-order.
+
+Two backend changes address the remaining per-frame costs:
+
+- The LVGL overlay is blended only over canvas bands that contain visible
+  pixels, tracked from dirty rows, and skipped when the UI is transparent.
+- `/datastore/navicore-backend/enable-gpu-upload-worker` enables OsmAnd's GPU
+  worker on a pbuffer context that shares objects with the provider context.
+  The backend proves that context binds before enabling the worker and falls
+  back to render-thread uploads otherwise. It remains opt-in until cold
+  tile-boundary tails, CPU load, and release/context-loss behavior are
+  measured.
+
 ### Sustained moving-basemap qualification
 
 The short shootout left one ambiguity: its symbol-free phase was only 15

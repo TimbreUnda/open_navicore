@@ -3,6 +3,7 @@
 #include <GLES2/gl2.h>
 
 #include <cstring>
+#include <iterator>
 
 namespace navicore_osmand::ui {
 namespace {
@@ -153,13 +154,9 @@ bool GlOverlayCompositor::initialize()
         return false;
     }
     texture_uniform_ = glGetUniformLocation(program_, "image");
-    static const GLfloat vertices[] = {
-        -1.f, -1.f, 0.f, 1.f,  1.f, -1.f, 1.f, 1.f,
-        -1.f,  1.f, 0.f, 0.f,  1.f,  1.f, 1.f, 0.f
-    };
     glGenBuffers(1, &vertex_buffer_);
-    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    regions_revision_ = 0;
+    region_vertices_ = 0;
     glGenTextures(1, &texture_);
     glBindTexture(GL_TEXTURE_2D, texture_);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -169,13 +166,59 @@ bool GlOverlayCompositor::initialize()
     return glGetError() == GL_NO_ERROR;
 }
 
+void GlOverlayCompositor::upload_regions(const OverlayOccupancy& occupancy,
+                                         uint32_t width, uint32_t height)
+{
+    if (occupancy.revision() == regions_revision_ &&
+        width == regions_width_ && height == regions_height_)
+        return;
+    regions_revision_ = occupancy.revision();
+    regions_width_ = width;
+    regions_height_ = height;
+    const float w = static_cast<float>(width);
+    const float h = static_cast<float>(height);
+    region_geometry_.clear();
+    for (const auto& rect : occupancy.regions()) {
+        // Canvas row 0 is the top of the surface, and texture row 0 is the
+        // first uploaded canvas row.
+        const float x0 = 2.f * rect.x / w - 1.f;
+        const float x1 = 2.f * (rect.x + rect.width) / w - 1.f;
+        const float y0 = 1.f - 2.f * rect.y / h;
+        const float y1 = 1.f - 2.f * (rect.y + rect.height) / h;
+        const float u0 = rect.x / w;
+        const float u1 = (rect.x + rect.width) / w;
+        const float v0 = rect.y / h;
+        const float v1 = (rect.y + rect.height) / h;
+        const float quad[] = {
+            x0, y1, u0, v1,  x1, y1, u1, v1,  x0, y0, u0, v0,
+            x0, y0, u0, v0,  x1, y1, u1, v1,  x1, y0, u1, v0,
+        };
+        region_geometry_.insert(region_geometry_.end(), std::begin(quad),
+                                std::end(quad));
+    }
+    region_vertices_ = static_cast<int>(region_geometry_.size() / 4u);
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_);
+    if (!region_geometry_.empty())
+        glBufferData(GL_ARRAY_BUFFER,
+                     static_cast<GLsizeiptr>(region_geometry_.size() *
+                                             sizeof(float)),
+                     region_geometry_.data(), GL_DYNAMIC_DRAW);
+}
+
 bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
                                   uint32_t height, uint32_t dirty_x,
                                   uint32_t dirty_y, uint32_t dirty_width,
-                                  uint32_t dirty_height)
+                                  uint32_t dirty_height,
+                                  const OverlayOccupancy& occupancy)
 {
     if (!pixels || width == 0 || height == 0)
         return false;
+    const bool texture_stale = width != texture_width_ ||
+                               height != texture_height_ ||
+                               (dirty_width != 0u && dirty_height != 0u);
+    // A fully transparent, already-uploaded canvas contributes nothing.
+    if (program_ && !texture_stale && occupancy.regions().empty())
+        return true;
     const State state = save_state();
     // A map renderer error belongs to its frame, not to this overlay. Drain it
     // before attributing subsequent GLES failures to the compositor.
@@ -218,21 +261,28 @@ bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
                         static_cast<GLsizei>(dirty_height), GL_RGBA,
                         GL_UNSIGNED_BYTE, upload);
     }
-    glUseProgram(program_);
-    glUniform1i(texture_uniform_, 0);
-    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_);
-    glEnableVertexAttribArray(0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), nullptr);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
-                          reinterpret_cast<const void*>(2 * sizeof(GLfloat)));
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_SCISSOR_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glViewport(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    upload_regions(occupancy, width, height);
+    if (region_vertices_ > 0) {
+        glUseProgram(program_);
+        glUniform1i(texture_uniform_, 0);
+        glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+                              nullptr);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+                              reinterpret_cast<const void*>(2 * sizeof(GLfloat)));
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_SCISSOR_TEST);
+        glEnable(GL_BLEND);
+        // Keep destination alpha untouched so the window stays opaque.
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                            GL_ZERO, GL_ONE);
+        glViewport(0, 0, static_cast<GLsizei>(width),
+                   static_cast<GLsizei>(height));
+        glDrawArrays(GL_TRIANGLES, 0, region_vertices_);
+    }
     const bool ok = glGetError() == GL_NO_ERROR;
     restore_state(state);
     return ok;
@@ -251,6 +301,10 @@ void GlOverlayCompositor::release(bool context_lost) noexcept
     texture_uniform_ = -1;
     texture_width_ = 0;
     texture_height_ = 0;
+    regions_revision_ = 0;
+    regions_width_ = 0;
+    regions_height_ = 0;
+    region_vertices_ = 0;
 }
 
 } // namespace navicore_osmand::ui

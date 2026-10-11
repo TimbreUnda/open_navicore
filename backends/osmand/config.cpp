@@ -55,6 +55,9 @@ Config Config::from_environment()
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_RETAINED_MAP_SYMBOLS",
             "/datastore/navicore-backend/enable-retained-map-symbols"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_GPU_UPLOAD_WORKER",
+            "/datastore/navicore-backend/enable-gpu-upload-worker"),
         20.0
     };
 }

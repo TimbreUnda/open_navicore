@@ -2,17 +2,92 @@
 #include "ui/compact_text.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
+#include "ui/overlay_occupancy.h"
 #include <open_navicore/backend.h>
 
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <vector>
 
 using namespace navicore_osmand::ui;
 using navicore_osmand::GuidanceTracker;
 
+namespace {
+bool covered(const OverlayOccupancy& occupancy, std::uint32_t x, std::uint32_t y)
+{
+    for (const auto& rect : occupancy.regions())
+        if (x >= rect.x && x < rect.x + rect.width &&
+            y >= rect.y && y < rect.y + rect.height)
+            return true;
+    return false;
+}
+
+// Every non-transparent pixel must lie inside a blended region.
+bool covers_all_visible(const OverlayOccupancy& occupancy,
+                        const std::uint32_t* pixels, std::uint32_t width,
+                        std::uint32_t height)
+{
+    for (std::uint32_t y = 0; y < height; ++y)
+        for (std::uint32_t x = 0; x < width; ++x)
+            if ((pixels[y * width + x] >> 24) != 0u && !covered(occupancy, x, y))
+                return false;
+    return true;
+}
+
+std::uint64_t covered_area(const OverlayOccupancy& occupancy)
+{
+    std::uint64_t area = 0;
+    for (const auto& rect : occupancy.regions())
+        area += static_cast<std::uint64_t>(rect.width) * rect.height;
+    return area;
+}
+
+void test_overlay_occupancy()
+{
+    constexpr std::uint32_t width = 64;
+    constexpr std::uint32_t height = 40;
+    std::vector<std::uint32_t> pixels(width * height, 0u);
+    OverlayOccupancy occupancy(8u);
+    occupancy.update(pixels.data(), width, height, 0u, height);
+    assert(occupancy.regions().empty());
+    assert(occupancy.revision() == 1u);
+
+    // A single semi-transparent pixel occupies exactly its 8-row band.
+    pixels[10 * width + 5] = 0x01000000u;
+    occupancy.update(pixels.data(), width, height, 10u, 1u);
+    assert(occupancy.regions().size() == 1u);
+    assert(occupancy.regions()[0].x == 5u && occupancy.regions()[0].width == 1u);
+    assert(occupancy.regions()[0].y == 8u && occupancy.regions()[0].height == 8u);
+
+    // An unchanged rescan does not bump the revision.
+    const auto revision = occupancy.revision();
+    occupancy.update(pixels.data(), width, height, 0u, height);
+    assert(occupancy.revision() == revision);
+
+    // Equal spans in adjacent bands merge; a different span starts a new quad.
+    for (std::uint32_t y = 0; y < 24u; ++y)
+        pixels[y * width + 5] = 0xff000000u;
+    pixels[30 * width + 60] = 0xff000000u;
+    occupancy.update(pixels.data(), width, height, 0u, height);
+    assert(occupancy.regions().size() == 2u);
+    assert(occupancy.regions()[0].y == 0u && occupancy.regions()[0].height == 24u);
+    assert(occupancy.regions()[1].x == 60u && occupancy.regions()[1].y == 24u);
+    assert(covers_all_visible(occupancy, pixels.data(), width, height));
+
+    // Clearing pixels shrinks the regions again; out-of-range dirt is ignored.
+    std::fill(pixels.begin(), pixels.end(), 0u);
+    occupancy.update(pixels.data(), width, height, 0u, height);
+    assert(occupancy.regions().empty());
+    occupancy.update(pixels.data(), width, height, height + 5u, 3u);
+    assert(occupancy.regions().empty());
+}
+} // namespace
+
 int main()
 {
+    test_overlay_occupancy();
+
     assert(compact_font_text(u8"Січневого Повстання") ==
            "Sichnevoho Povstannya");
     assert(compact_font_text("E95") == "E95");
@@ -25,6 +100,17 @@ int main()
     assert(std::any_of(view.pixels(),
                        view.pixels() + view.width() * view.height(),
                        [](std::uint32_t pixel) { return pixel != 0u; }));
+    {
+        OverlayOccupancy occupancy;
+        occupancy.update(view.pixels(), view.width(), view.height(), 0u,
+                         view.height());
+        assert(!occupancy.regions().empty());
+        assert(covers_all_visible(occupancy, view.pixels(), view.width(),
+                                  view.height()));
+        // The free-drive UI leaves most of the map uncovered.
+        assert(covered_area(occupancy) * 2u <
+               static_cast<std::uint64_t>(view.width()) * view.height());
+    }
     // Startup Screen events are quarantined until the first stable frames.
     view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 80, 40);
     view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 80, 40);

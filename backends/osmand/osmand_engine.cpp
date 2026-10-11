@@ -4,6 +4,7 @@
 #include "session.h"
 #include "diagnostics.h"
 #include "frame_metrics.h"
+#include "gpu_upload_context.h"
 #include "guidance_tracker.h"
 #include "navigation_worker.h"
 #include "retained_symbol_layer.h"
@@ -34,6 +35,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 
 namespace navicore_osmand {
 namespace {
@@ -70,6 +72,8 @@ private:
     std::shared_ptr<OsmAnd::MapRasterLayerProvider_Software> raster_;
     std::shared_ptr<OsmAnd::IMapRenderer> renderer_;
     std::shared_ptr<OsmAnd::VectorLinesCollection> route_lines_;
+    // Outlives OsmAnd's GPU worker thread; destroyed after releaseRendering().
+    std::shared_ptr<GpuUploadContext> upload_context_;
     std::unique_ptr<RetainedSymbolLayer> retained_symbols_;
     bool retained_symbols_creation_attempted_ = false;
     std::unique_ptr<ui::NavigationModel> navigation_;
@@ -108,6 +112,7 @@ private:
     unsigned int render_shootout_phase_ = 0u;
     std::chrono::steady_clock::time_point render_shootout_started_at_{};
     ui::GlOverlayCompositor compositor_;
+    ui::OverlayOccupancy overlay_occupancy_;
     bool overlay_enabled_ = true;
     FrameMetrics frame_metrics_{false};
 };
@@ -279,6 +284,34 @@ bool OsmAndEngine::initialize(const Config& config,
 
     OsmAnd::MapRendererSetupOptions setup;
     setup.gpuWorkerThreadEnabled = false;
+    // Without a worker OsmAnd uploads at most one resource per frame on the
+    // render thread, which delays cold tiles. The worker needs its own context
+    // sharing objects with the provider's; fall back if one cannot be bound.
+    if (config.gpu_upload_worker) {
+        auto upload = std::make_shared<GpuUploadContext>();
+        if (upload->create(
+                reinterpret_cast<EGLDisplay>(target.native_egl_display),
+                reinterpret_cast<EGLContext>(target.native_egl_context))) {
+            upload_context_ = upload;
+            setup.gpuWorkerThreadEnabled = true;
+            setup.gpuWorkerThreadPrologue =
+                [upload](const OsmAnd::IMapRenderer*) noexcept {
+                    if (!upload->make_current())
+                        trace("error=gpu_upload_context_bind");
+                };
+            setup.gpuWorkerThreadEpilogue =
+                [upload](const OsmAnd::IMapRenderer*) noexcept {
+                    upload->release_current();
+                };
+            trace("gpu_upload_worker=enabled");
+        } else {
+            char message[64] = {};
+            (void)std::snprintf(message, sizeof(message),
+                                "gpu_upload_worker=fallback egl_error=0x%04x",
+                                static_cast<unsigned int>(upload->error()));
+            trace(message);
+        }
+    }
     setup.frameUpdateRequestCallback = [wakeup](const OsmAnd::IMapRenderer*) noexcept {
         (void)wakeup->request();
     };
@@ -607,14 +640,18 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     measurement.ui_render_us = elapsed_us(stage_started);
     if (overlay_enabled_) {
         const auto dirty = view_->dirty_region();
-        if (ui_dirty)
+        stage_started = Clock::now();
+        if (ui_dirty) {
             measurement.ui_upload_bytes = dirty.width * dirty.height *
                                           sizeof(std::uint32_t);
-        stage_started = Clock::now();
+            overlay_occupancy_.update(view_->pixels(), view_->width(),
+                                      view_->height(), dirty.y, dirty.height);
+        }
         const bool presented = compositor_.present(
             view_->pixels(), view_->width(), view_->height(),
             ui_dirty ? dirty.x : 0u, ui_dirty ? dirty.y : 0u,
-            ui_dirty ? dirty.width : 0u, ui_dirty ? dirty.height : 0u);
+            ui_dirty ? dirty.width : 0u, ui_dirty ? dirty.height : 0u,
+            overlay_occupancy_);
         measurement.ui_composite_us = elapsed_us(stage_started);
         if (!presented) {
             trace("error=ui_composite");
@@ -764,6 +801,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         simulation_arrival_reported_ = false;
         guidance_tracker_.reset();
         compositor_.release(mode == ReleaseMode::ContextLost);
+        overlay_occupancy_ = ui::OverlayOccupancy();
         view_.reset();
         navigation_.reset();
         overlay_enabled_ = true;
@@ -773,6 +811,9 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         search_revision_observed_ = false;
         if (!renderer_->releaseRendering(mode == ReleaseMode::ContextLost))
             return ReleaseResult::Quarantined;
+        // releaseRendering() joined the GPU worker, so nothing binds it now.
+        if (upload_context_) upload_context_->destroy();
+        upload_context_.reset();
         phase_ = Phase::CoreReady;
     }
     renderer_.reset();
