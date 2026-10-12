@@ -14,33 +14,45 @@ void OverlayOccupancy::update(const uint32_t* pixels, uint32_t width,
     if (width != width_ || height != height_) {
         width_ = width;
         height_ = height;
-        rows_.assign(height, Span{width, 0u});
+        columns_ = (width + cell_width_ - 1u) / cell_width_;
+        bands_ = (height + band_height_ - 1u) / band_height_;
+        cells_.assign(static_cast<std::size_t>(columns_) * bands_, 0u);
         dirty_y = 0u;
         dirty_height = height;
         changed = true;
     }
-    if (dirty_y >= height_)
-        dirty_height = 0u;
+    if (dirty_y >= height_ || dirty_height == 0u) {
+        if (changed)
+            rebuild_regions();
+        return;
+    }
     const uint32_t end_row = dirty_y + std::min(dirty_height, height_ - dirty_y);
-    for (uint32_t y = dirty_y; y < end_row; ++y) {
-        const uint32_t* row = pixels + static_cast<std::size_t>(y) * width_;
-        Span span{width_, 0u};
-        for (uint32_t x = 0; x < width_; ++x) {
-            if ((row[x] >> 24) != 0u) {
-                span.begin = x;
-                break;
-            }
-        }
-        if (span.begin < width_) {
-            for (uint32_t x = width_; x > span.begin; --x) {
-                if ((row[x - 1u] >> 24) != 0u) {
-                    span.end = x;
-                    break;
+    const uint32_t first_band = dirty_y / band_height_;
+    const uint32_t last_band = (end_row - 1u) / band_height_;
+    std::vector<uint8_t>& band_cells = scratch_;
+    band_cells.resize(columns_);
+    for (uint32_t band = first_band; band <= last_band; ++band) {
+        std::fill(band_cells.begin(), band_cells.end(), 0u);
+        const uint32_t top = band * band_height_;
+        const uint32_t bottom = std::min(height_, top + band_height_);
+        for (uint32_t y = top; y < bottom; ++y) {
+            const uint32_t* row = pixels + static_cast<std::size_t>(y) * width_;
+            for (uint32_t column = 0; column < columns_; ++column) {
+                if (band_cells[column])
+                    continue;
+                const uint32_t left = column * cell_width_;
+                const uint32_t right = std::min(width_, left + cell_width_);
+                for (uint32_t x = left; x < right; ++x) {
+                    if ((row[x] >> 24) != 0u) {
+                        band_cells[column] = 1u;
+                        break;
+                    }
                 }
             }
         }
-        if (span.begin != rows_[y].begin || span.end != rows_[y].end) {
-            rows_[y] = span;
+        uint8_t* stored = cells_.data() + static_cast<std::size_t>(band) * columns_;
+        if (!std::equal(band_cells.begin(), band_cells.end(), stored)) {
+            std::copy(band_cells.begin(), band_cells.end(), stored);
             changed = true;
         }
     }
@@ -51,28 +63,40 @@ void OverlayOccupancy::update(const uint32_t* pixels, uint32_t width,
 void OverlayOccupancy::rebuild_regions()
 {
     regions_.clear();
-    for (uint32_t top = 0; top < height_; top += band_height_) {
+    // Indices of rects that end at the previous band, for vertical merging.
+    std::vector<std::size_t> previous;
+    for (uint32_t band = 0; band < bands_; ++band) {
+        const uint32_t top = band * band_height_;
         const uint32_t bottom = std::min(height_, top + band_height_);
-        uint32_t begin = width_;
-        uint32_t end = 0u;
-        for (uint32_t y = top; y < bottom; ++y) {
-            if (rows_[y].begin >= rows_[y].end)
-                continue;
-            begin = std::min(begin, rows_[y].begin);
-            end = std::max(end, rows_[y].end);
-        }
-        if (begin >= end)
-            continue;
-        // Merge vertically adjacent bands with an identical span into one quad.
-        if (!regions_.empty()) {
-            Rect& previous = regions_.back();
-            if (previous.y + previous.height == top && previous.x == begin &&
-                previous.width == end - begin) {
-                previous.height += bottom - top;
+        const uint8_t* cells = cells_.data() + static_cast<std::size_t>(band) * columns_;
+        open_.clear();
+        for (uint32_t column = 0; column < columns_;) {
+            if (!cells[column]) {
+                ++column;
                 continue;
             }
+            const uint32_t first = column;
+            while (column < columns_ && cells[column])
+                ++column;
+            const uint32_t x = first * cell_width_;
+            const uint32_t right = std::min(width_, column * cell_width_);
+            bool merged = false;
+            for (const std::size_t index : previous) {
+                Rect& rect = regions_[index];
+                if (rect.x == x && rect.width == right - x &&
+                    rect.y + rect.height == top) {
+                    rect.height += bottom - top;
+                    open_.push_back(index);
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) {
+                regions_.push_back({x, top, right - x, bottom - top});
+                open_.push_back(regions_.size() - 1u);
+            }
         }
-        regions_.push_back({begin, top, end - begin, bottom - top});
+        previous.swap(open_);
     }
     ++revision_;
 }

@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "baked_symbols_raster_provider.h"
+#include "camera_controller.h"
 #include "bounded_symbols_provider.h"
 #include "session.h"
 #include "diagnostics.h"
@@ -11,6 +12,7 @@
 #include "ui/gl_overlay_compositor.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
+#include "ui/recents_store.h"
 
 #include <OsmAndCore.h>
 #include <OsmAndCore/CoreResourcesEmbeddedBundle.h>
@@ -60,6 +62,10 @@ private:
     void update_render_shootout();
     bool ensure_navigation_worker();
     void advance_benchmark_autostart();
+    void apply_style_settings();
+    // Drains UI map commands, advances the car camera and applies the pose to
+    // the renderer. Returns true while the camera still needs frames.
+    bool apply_camera();
     Phase phase_ = Phase::Empty;
     uint32_t width_ = 0;
     uint32_t height_ = 0;
@@ -81,6 +87,8 @@ private:
     std::unique_ptr<ui::NavigationModel> navigation_;
     std::unique_ptr<ui::NavigationView> view_;
     std::unique_ptr<NavigationWorker> navigation_worker_;
+    std::unique_ptr<ui::RecentsStore> recents_store_;
+    std::uint64_t saved_recents_revision_ = 0;
     std::shared_ptr<Wakeup> navigation_wakeup_;
     std::string navigation_map_;
     std::string navigation_routing_xml_;
@@ -91,6 +99,18 @@ private:
     std::chrono::steady_clock::time_point search_revision_observed_at_{};
     bool search_revision_observed_ = false;
     GuidanceTracker guidance_tracker_;
+    CameraController camera_;
+    MotionEstimator motion_;
+    std::vector<ui::MapCommand> map_commands_;
+    std::chrono::steady_clock::time_point camera_updated_at_{};
+    std::chrono::steady_clock::time_point clock_origin_ =
+        std::chrono::steady_clock::now();
+    CameraController::Pose applied_pose_{};
+    bool pose_applied_ = false;
+    bool car_style_ = false;
+    bool night_ = false;
+    bool overview_pending_ = false;
+    double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
     MockNavBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
     bool gps_state_observed_ = false;
@@ -267,23 +287,10 @@ bool OsmAndEngine::initialize(const Config& config,
     presentation_ = std::make_shared<OsmAnd::MapPresentationEnvironment>(
         style, 1.0f, 1.0f, 1.0f);
     presentation_->setLocaleLanguageId(QStringLiteral("uk"));
-    if (config.car_style) {
-        // OsmAnd's own car profile plus switches for detail a driver does not
-        // use; fewer primitives means less rasterization and fewer symbols.
-        presentation_->setSettings(QHash<QString, QString>{
-            {QStringLiteral("appMode"), QStringLiteral("car")},
-            {QStringLiteral("baseAppMode"), QStringLiteral("car")},
-            {QStringLiteral("hideHouseNumbers"), QStringLiteral("true")},
-            {QStringLiteral("hideUnderground"), QStringLiteral("true")},
-            {QStringLiteral("hideMilitaryAreas"), QStringLiteral("true")},
-            {QStringLiteral("noAdminboundaries"), QStringLiteral("true")},
-            {QStringLiteral("transportStops"), QStringLiteral("false")},
-            {QStringLiteral("streetLighting"), QStringLiteral("false")},
-            {QStringLiteral("natureReserves"), QStringLiteral("false")},
-            {QStringLiteral("showProposed"), QStringLiteral("false")},
-        });
+    car_style_ = config.car_style;
+    apply_style_settings();
+    if (car_style_)
         trace("car_style=enabled");
-    }
     primitiviser_ = std::make_shared<OsmAnd::MapPrimitiviser>(presentation_);
     map_objects_ = std::make_shared<OsmAnd::ObfMapObjectsProvider>(obfs_);
     primitives_ = std::make_shared<OsmAnd::MapPrimitivesProvider>(
@@ -379,6 +386,9 @@ bool OsmAndEngine::initialize(const Config& config,
     phase_ = Phase::Ready;
     trace("init=rendering");
     navigation_ = std::unique_ptr<ui::NavigationModel>(new ui::NavigationModel());
+    recents_store_.reset(new ui::RecentsStore(config.recents));
+    navigation_->set_recents(recents_store_->load());
+    saved_recents_revision_ = navigation_->recents_revision();
     view_ = std::unique_ptr<ui::NavigationView>(
         new ui::NavigationView(*navigation_, target.width, target.height));
     trace("init=view");
@@ -437,10 +447,11 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route)
         .setFillColor(OsmAnd::FColorARGB(1.0f, 0.10f, 0.55f, 1.0f))
         .setPoints(points)
         .buildAndAddToCollection(route_lines_);
-    renderer_->setTarget(OsmAnd::Utilities::convertLatLonTo31(OsmAnd::LatLon(
-        (min_latitude + max_latitude) * 0.5,
-        (min_longitude + max_longitude) * 0.5)));
-    renderer_->setZoom(12.5f);
+    overview_box_[0] = min_latitude;
+    overview_box_[1] = min_longitude;
+    overview_box_[2] = max_latitude;
+    overview_box_[3] = max_longitude;
+    overview_pending_ = true;
     guidance_tracker_.reset();
     guidance_active_ = false;
     simulation_running_ = false;
@@ -540,16 +551,11 @@ bool OsmAndEngine::update_guidance()
         state = guidance_tracker_.update(route, {
             position.latitude, position.longitude});
         state.simulated = simulated;
-        const auto location = OsmAnd::Utilities::convertLatLonTo31(OsmAnd::LatLon(
-            state.position.latitude, state.position.longitude));
-        const int32_t rail = width_ >= 600u ? 336 : 0;
-        const int32_t top = height_ >= 700u ? 72 : 0;
-        const int32_t bottom = height_ >= 700u ? 122 : 0;
-        const int32_t map_x = rail + (static_cast<int32_t>(width_) - rail) / 2;
-        const int32_t map_y = top +
-            (static_cast<int32_t>(height_) - top - bottom) / 2;
-        (void)renderer_->setMapTarget(OsmAnd::PointI(map_x, map_y), location);
-        (void)renderer_->setZoom(16.0f);
+        // The route-snapped position drives the camera and vehicle marker.
+        motion_.observe(state.position.latitude, state.position.longitude,
+                        std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - clock_origin_)
+                            .count());
         if (simulated && state.arrived && !simulation_arrival_reported_) {
             simulation_arrival_reported_ = true;
             trace("simulation=arrived");
@@ -560,6 +566,157 @@ bool OsmAndEngine::update_guidance()
     gps_dirty_ = false;
     guidance_active_ = true;
     return view_->apply_guidance(std::move(state));
+}
+
+void OsmAndEngine::apply_style_settings()
+{
+    QHash<QString, QString> settings;
+    if (car_style_) {
+        // OsmAnd's own car profile plus switches for detail a driver does not
+        // use; fewer primitives means less rasterization and fewer symbols.
+        settings = {
+            {QStringLiteral("appMode"), QStringLiteral("car")},
+            {QStringLiteral("baseAppMode"), QStringLiteral("car")},
+            {QStringLiteral("hideHouseNumbers"), QStringLiteral("true")},
+            {QStringLiteral("hideUnderground"), QStringLiteral("true")},
+            {QStringLiteral("hideMilitaryAreas"), QStringLiteral("true")},
+            {QStringLiteral("noAdminboundaries"), QStringLiteral("true")},
+            {QStringLiteral("transportStops"), QStringLiteral("false")},
+            {QStringLiteral("streetLighting"), QStringLiteral("false")},
+            {QStringLiteral("natureReserves"), QStringLiteral("false")},
+            {QStringLiteral("showProposed"), QStringLiteral("false")},
+        };
+    }
+    settings.insert(QStringLiteral("nightMode"),
+                    night_ ? QStringLiteral("true") : QStringLiteral("false"));
+    presentation_->setSettings(settings);
+}
+
+bool OsmAndEngine::apply_camera()
+{
+    using Clock = std::chrono::steady_clock;
+    const auto now = Clock::now();
+    const double dt = camera_updated_at_ == Clock::time_point{} ? 0.0 :
+        std::chrono::duration<double>(now - camera_updated_at_).count();
+    camera_updated_at_ = now;
+    const double now_s =
+        std::chrono::duration<double>(now - clock_origin_).count();
+    const auto screen = navigation_->screen();
+    if (screen == ui::Screen::Search)
+        return false;
+
+    const auto area = view_->map_area();
+    camera_.set_viewport({area.x, area.y, area.width, area.height});
+
+    // Outside guidance, raw GPS fixes drive free-drive following.
+    if (screen != ui::Screen::Guidance && has_valid_position_ && gps_dirty_) {
+        motion_.observe(static_cast<double>(latest_gps_.latitude_e7) / 1e7,
+                        static_cast<double>(latest_gps_.longitude_e7) / 1e7,
+                        now_s);
+        gps_dirty_ = false;
+    }
+    if (overview_pending_) {
+        camera_.overview(overview_box_[0], overview_box_[1],
+                         overview_box_[2], overview_box_[3]);
+        overview_pending_ = false;
+    }
+
+    navigation_->take_map_commands(map_commands_);
+    for (const auto command : map_commands_) {
+        switch (command) {
+        case ui::MapCommand::ZoomIn: camera_.zoom_by(1.0f); break;
+        case ui::MapCommand::ZoomOut: camera_.zoom_by(-1.0f); break;
+        case ui::MapCommand::Recenter: camera_.recenter(); break;
+        case ui::MapCommand::ToggleOrientation:
+            camera_.toggle_orientation();
+            break;
+        case ui::MapCommand::ToggleTilt:
+            camera_.set_tilt(!camera_.tilted());
+            break;
+        case ui::MapCommand::ToggleNight:
+            night_ = !night_;
+            apply_style_settings();
+            // Every cached tile was rasterized for the old palette.
+            renderer_->reloadEverything();
+            trace(night_ ? "style=night" : "style=day");
+            break;
+        case ui::MapCommand::Overview: {
+            const auto& routes = navigation_->routes();
+            const auto index = navigation_->selected_route();
+            if (index < routes.size() && !routes[index].geometry.empty()) {
+                double box[4] = {90.0, 180.0, -90.0, -180.0};
+                for (const auto& point : routes[index].geometry) {
+                    box[0] = std::min(box[0], point.latitude);
+                    box[1] = std::min(box[1], point.longitude);
+                    box[2] = std::max(box[2], point.latitude);
+                    box[3] = std::max(box[3], point.longitude);
+                }
+                camera_.overview(box[0], box[1], box[2], box[3]);
+            }
+            break;
+        }
+        }
+    }
+    int dx = 0;
+    int dy = 0;
+    if (navigation_->take_pan(dx, dy))
+        camera_.pan(dx, dy);
+
+    const auto vehicle = motion_.predict(now_s);
+    const auto pose = camera_.update(vehicle, dt);
+    const bool changed = !pose_applied_ ||
+        std::fabs(pose.latitude - applied_pose_.latitude) > 1e-8 ||
+        std::fabs(pose.longitude - applied_pose_.longitude) > 1e-8 ||
+        pose.anchor_x != applied_pose_.anchor_x ||
+        pose.anchor_y != applied_pose_.anchor_y ||
+        std::fabs(pose.zoom - applied_pose_.zoom) > 1e-3f ||
+        std::fabs(pose.azimuth_degrees - applied_pose_.azimuth_degrees) > 0.05f ||
+        pose.elevation_degrees != applied_pose_.elevation_degrees;
+    if (changed) {
+        const auto location = OsmAnd::Utilities::convertLatLonTo31(
+            OsmAnd::LatLon(pose.latitude, pose.longitude));
+        (void)renderer_->setMapTarget(
+            OsmAnd::PointI(pose.anchor_x, pose.anchor_y), location);
+        (void)renderer_->setZoom(pose.zoom);
+        (void)renderer_->setAzimuth(pose.azimuth_degrees);
+        (void)renderer_->setElevationAngle(pose.elevation_degrees);
+        applied_pose_ = pose;
+        pose_applied_ = true;
+    }
+
+    // Vehicle marker: at the anchor while following, projected otherwise.
+    if (vehicle.valid) {
+        OsmAnd::PointI marker(pose.anchor_x, pose.anchor_y);
+        bool visible = pose.following;
+        if (!visible) {
+            visible = renderer_->obtainScreenPointFromPosition(
+                OsmAnd::Utilities::convertLatLonTo31(
+                    OsmAnd::LatLon(vehicle.latitude, vehicle.longitude)),
+                marker, true);
+        }
+        view_->set_vehicle_marker(
+            visible, marker.x, marker.y,
+            static_cast<float>(vehicle.heading_degrees) -
+                pose.azimuth_degrees);
+    } else {
+        view_->set_vehicle_marker(false, 0, 0, 0.0f);
+    }
+
+    ui::MapViewState state;
+    state.following = pose.following || !vehicle.valid;
+    state.heading_up =
+        camera_.follow_mode() == CameraController::Mode::HeadingUp;
+    state.tilted = camera_.tilted();
+    state.night = night_;
+    if (navigation_->set_map_view(state))
+        view_->apply_map_view();
+    // Hysteresis so the typing lock does not flicker at walking speed.
+    const bool moving = navigation_->moving()
+        ? vehicle.valid && vehicle.speed_mps > 1.0
+        : vehicle.valid && vehicle.speed_mps > 2.5;
+    (void)view_->set_moving(moving);
+
+    return changed || (vehicle.valid && vehicle.speed_mps > 0.3);
 }
 
 bool OsmAndEngine::ensure_navigation_worker()
@@ -629,11 +786,14 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         guidance_active_ = false;
         guidance_tracker_.reset();
         simulation_running_ = false;
-        (void)renderer_->resetMapTarget();
+        // Simulated motion ends with guidance; real GPS keeps following.
+        if (!has_valid_position_) motion_.reset();
+        pose_applied_ = false;
     }
     if (target.width != width_ || target.height != height_)
         resize(target);
     update_render_shootout();
+    const bool camera_animating = apply_camera();
     auto stage_started = Clock::now();
     const bool update_ok = renderer_->update();
     measurement.update_us = elapsed_us(stage_started);
@@ -698,7 +858,9 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         guidance_active_ = false;
         guidance_tracker_.reset();
         simulation_running_ = false;
-        (void)renderer_->resetMapTarget();
+        // Simulated motion ends with guidance; real GPS keeps following.
+        if (!has_valid_position_) motion_.reset();
+        pose_applied_ = false;
         guidance_changed = true;
     }
     if (navigation_->screen() == ui::Screen::Search) {
@@ -763,8 +925,16 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         }
     }
     advance_benchmark_autostart();
+    // Recents change only on guidance start; save outside the hot path.
+    if (recents_store_ &&
+        navigation_->recents_revision() != saved_recents_revision_) {
+        saved_recents_revision_ = navigation_->recents_revision();
+        if (!recents_store_->save(navigation_->recents()))
+            trace("error=recents_save");
+    }
     return finish({FrameOutcome::Presented, PendingStage::None,
-                   guidance_changed || !renderer_->isIdle() ||
+                   guidance_changed || camera_animating ||
+                       !renderer_->isIdle() ||
                        (autostart_ != Autostart::Off &&
                         autostart_ != Autostart::Done)},
                   MeasuredFrameOutcome::Presented);
@@ -873,6 +1043,13 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         overlay_occupancy_ = ui::OverlayOccupancy();
         view_.reset();
         navigation_.reset();
+        recents_store_.reset();
+        camera_ = CameraController();
+        motion_.reset();
+        pose_applied_ = false;
+        night_ = false;
+        overview_pending_ = false;
+        camera_updated_at_ = {};
         overlay_enabled_ = true;
         submitted_search_revision_ = 0;
         observed_search_revision_ = 0;

@@ -26,6 +26,14 @@ constexpr uint32_t maneuver = 0x1f4fd1;
 constexpr int stock_chrome_top = 72;
 constexpr int stock_chrome_bottom = 122;
 constexpr uint32_t input_quarantine_frames = 30;
+// Car touch targets: at least 64 px with 8 px spacing, 16 px from edges.
+constexpr int map_button = 64;
+constexpr int map_gap = 8;
+constexpr int map_margin = 16;
+constexpr int marker_size = 52;
+// Marker updates below these thresholds are not redrawn.
+constexpr int marker_move_threshold = 1;
+constexpr float marker_rotation_threshold = 2.0f;
 
 lv_color_t color(uint32_t value) { return lv_color_hex(value); }
 
@@ -238,13 +246,14 @@ void NavigationView::rebuild()
     if (model_.screen() != Screen::Search)
         lv_obj_set_style_bg_opa(screen_, LV_OPA_TRANSP, 0);
     lv_obj_set_size(screen_, LV_PCT(100), LV_PCT(100));
-    switch (model_.screen()) {
+    // Builders query map_area(), which depends on the screen being built.
+    built_screen_ = model_.screen();
+    switch (built_screen_) {
     case Screen::FreeDrive: build_free_drive(); break;
     case Screen::Search: build_search(); break;
     case Screen::RoutePreview: build_route_preview(); break;
     case Screen::Guidance: build_guidance(); break;
     }
-    built_screen_ = model_.screen();
     lv_screen_load(screen_);
     if (old_screen)
         lv_obj_delete_async(old_screen);
@@ -279,12 +288,189 @@ void NavigationView::build_free_drive()
         lv_obj_set_height(shortcut, 80);
     }
     label(rail, "RECENT", tertiary, 14);
-    label(rail, "No recent destinations", secondary, 20);
+    build_recents(rail);
     lv_obj_t* spacer = lv_obj_create(rail);
     panel(spacer, base);
     lv_obj_set_flex_grow(spacer, 1);
     lv_obj_set_width(spacer, 1);
     label(rail, "Offline maps", tertiary, 14);
+    build_map_controls(true);
+    build_vehicle_marker();
+}
+
+void NavigationView::build_recents(lv_obj_t* parent)
+{
+    const auto& recents = model_.recents();
+    if (recents.empty()) {
+        label(parent, "No recent destinations", secondary, 20);
+        return;
+    }
+    for (std::size_t index = 0; index < recents.size(); ++index) {
+        lv_obj_t* row = lv_button_create(parent);
+        panel(row, surface, 8);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, map_button);
+        lv_obj_set_style_pad_left(row, 16, 0);
+        lv_obj_t* title = label(row, recents[index].title.c_str(), primary, 18);
+        lv_obj_set_width(title, LV_PCT(100));
+        lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+        lv_obj_align(title, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_add_event_cb(row, recent_cb, LV_EVENT_CLICKED, this);
+        lv_obj_set_user_data(row, reinterpret_cast<void*>(index + 1));
+    }
+}
+
+int NavigationView::rail_width() const noexcept
+{
+    return width_ > 600u ? std::min<int>(336, static_cast<int>(width_)) : 0;
+}
+
+NavigationView::MapArea NavigationView::map_area() const noexcept
+{
+    MapArea area;
+    area.y = content_top(height_);
+    area.height = content_height(height_);
+    if (built_screen_ == Screen::Search) {
+        area.x = 0;
+        area.width = static_cast<int>(width_);
+        return area;
+    }
+    area.x = rail_width();
+    area.width = std::max(1, static_cast<int>(width_) - area.x);
+    return area;
+}
+
+void NavigationView::build_map_controls(bool full)
+{
+    control_recenter_ = control_orientation_ = nullptr;
+    control_tilt_ = control_night_ = nullptr;
+    const MapArea area = map_area();
+    if (area.width < map_button + 2 * map_margin)
+        return;
+    const int x = area.x + area.width - map_margin - map_button;
+    int y = area.y + map_margin;
+    const auto add = [&](const char* text, MapCommand command, int font) {
+        lv_obj_t* object = lv_button_create(screen_);
+        panel(object, surface, 12);
+        lv_obj_set_style_bg_opa(object, LV_OPA_90, 0);
+        lv_obj_set_size(object, map_button, map_button);
+        lv_obj_set_pos(object, x, y);
+        lv_obj_t* caption = label(object, text, primary, font);
+        lv_obj_center(caption);
+        lv_obj_add_event_cb(object, map_command_cb, LV_EVENT_CLICKED, this);
+        lv_obj_set_user_data(object, reinterpret_cast<void*>(
+            static_cast<std::uintptr_t>(command) + 1u));
+        y += map_button + map_gap;
+        return caption;
+    };
+    (void)add(LV_SYMBOL_PLUS, MapCommand::ZoomIn, 24);
+    (void)add(LV_SYMBOL_MINUS, MapCommand::ZoomOut, 24);
+    if (full) {
+        control_orientation_ = add("N", MapCommand::ToggleOrientation, 20);
+        control_tilt_ = add("2D", MapCommand::ToggleTilt, 20);
+        control_night_ = add("Day", MapCommand::ToggleNight, 14);
+        // Recenter sits apart at the bottom so it is found without looking
+        // at the zoom column; it only shows while the camera is free.
+        lv_obj_t* recenter = lv_button_create(screen_);
+        panel(recenter, accent, 32);
+        lv_obj_set_size(recenter, map_button, map_button);
+        lv_obj_set_pos(recenter, x,
+                       area.y + area.height - map_margin - map_button);
+        lv_obj_t* caption = label(recenter, LV_SYMBOL_GPS, primary, 24);
+        lv_obj_center(caption);
+        lv_obj_add_event_cb(recenter, map_command_cb, LV_EVENT_CLICKED, this);
+        lv_obj_set_user_data(recenter, reinterpret_cast<void*>(
+            static_cast<std::uintptr_t>(MapCommand::Recenter) + 1u));
+        control_recenter_ = recenter;
+    }
+    apply_map_view();
+}
+
+void NavigationView::apply_map_view()
+{
+    const auto& view = model_.map_view();
+    set_hidden(control_recenter_, view.following);
+    // Shows the current mode: an arrow for heading-up, N for north-up.
+    set_label_text(control_orientation_, view.heading_up ? LV_SYMBOL_UP : "N");
+    set_label_text(control_tilt_, view.tilted ? "3D" : "2D");
+    set_label_text(control_night_, view.night ? "Night" : "Day");
+}
+
+void NavigationView::build_vehicle_marker()
+{
+    marker_visible_ = false;
+    lv_obj_t* halo = lv_obj_create(screen_);
+    panel(halo, accent, marker_size / 2);
+    lv_obj_set_style_bg_opa(halo, LV_OPA_30, 0);
+    lv_obj_set_size(halo, marker_size, marker_size);
+    lv_obj_set_style_transform_pivot_x(halo, marker_size / 2, 0);
+    lv_obj_set_style_transform_pivot_y(halo, marker_size / 2, 0);
+    lv_obj_set_clickable(halo, false);
+    lv_obj_t* dot = lv_obj_create(halo);
+    panel(dot, accent, 13);
+    lv_obj_set_size(dot, 26, 26);
+    lv_obj_set_style_border_width(dot, 4, 0);
+    lv_obj_set_style_border_color(dot, color(primary), 0);
+    lv_obj_set_clickable(dot, false);
+    lv_obj_center(dot);
+    // Heading pointer at the top edge; the whole halo rotates.
+    lv_obj_t* pointer = label(halo, LV_SYMBOL_UP, primary, 14);
+    lv_obj_set_clickable(pointer, false);
+    lv_obj_align(pointer, LV_ALIGN_TOP_MID, 0, -2);
+    lv_obj_set_hidden(halo, true);
+    vehicle_marker_ = halo;
+}
+
+void NavigationView::set_vehicle_marker(bool visible, int x, int y,
+                                        float rotation_degrees)
+{
+    if (!vehicle_marker_)
+        return;
+    const MapArea area = map_area();
+    visible = visible && x >= area.x && x < area.x + area.width &&
+              y >= area.y && y < area.y + area.height;
+    if (!visible) {
+        if (marker_visible_)
+            set_hidden(vehicle_marker_, true);
+        marker_visible_ = false;
+        return;
+    }
+    rotation_degrees = std::fmod(rotation_degrees, 360.0f);
+    if (rotation_degrees < 0.0f) rotation_degrees += 360.0f;
+    float rotation_delta = std::fabs(rotation_degrees - marker_rotation_);
+    rotation_delta = std::min(rotation_delta, 360.0f - rotation_delta);
+    if (marker_visible_ &&
+        std::abs(x - marker_x_) < marker_move_threshold &&
+        std::abs(y - marker_y_) < marker_move_threshold &&
+        rotation_delta < marker_rotation_threshold)
+        return;
+    lv_obj_set_pos(vehicle_marker_, x - marker_size / 2, y - marker_size / 2);
+    if (rotation_delta >= marker_rotation_threshold || !marker_visible_) {
+        lv_obj_set_style_transform_rotation(
+            vehicle_marker_, static_cast<int32_t>(rotation_degrees * 10.0f), 0);
+        marker_rotation_ = rotation_degrees;
+    }
+    set_hidden(vehicle_marker_, false);
+    marker_visible_ = true;
+    marker_x_ = x;
+    marker_y_ = y;
+}
+
+bool NavigationView::set_moving(bool moving)
+{
+    if (!model_.set_moving(moving))
+        return false;
+    if (built_screen_ == Screen::Search)
+        rebuild();
+    return true;
+}
+
+std::uint64_t NavigationView::select_recent(std::size_t index)
+{
+    const std::uint64_t revision = model_.select_recent(index);
+    if (revision)
+        rebuild();
+    return revision;
 }
 
 void NavigationView::build_search()
@@ -325,7 +511,21 @@ void NavigationView::build_search()
     lv_obj_set_size(results_panel_, std::min<int>(420, width_), LV_PCT(100));
     lv_obj_set_flex_flow(results_panel_, LV_FLEX_FLOW_COLUMN);
 
-    if (width_ > 600) {
+    if (model_.moving()) {
+        // Typing while driving is limited: keep the field read-only and offer
+        // one-tap recent destinations in place of the keyboard.
+        lv_obj_set_disabled(query_field_, true);
+        lv_obj_t* locked = lv_obj_create(body);
+        panel(locked, base);
+        lv_obj_set_flex_grow(locked, 1);
+        lv_obj_set_height(locked, LV_PCT(100));
+        lv_obj_set_flex_flow(locked, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_all(locked, 20, 0);
+        lv_obj_set_style_pad_row(locked, 10, 0);
+        label(locked, "Typing is paused while driving", 0xf6c86a, 20);
+        label(locked, "RECENT", tertiary, 14);
+        build_recents(locked);
+    } else if (width_ > 600) {
         lv_obj_t* keyboard = lv_keyboard_create(body);
         lv_obj_set_flex_grow(keyboard, 1);
         lv_obj_set_height(keyboard, LV_PCT(100));
@@ -409,6 +609,7 @@ void NavigationView::build_route_preview()
     lv_obj_set_width(start, LV_PCT(100));
     lv_obj_set_style_bg_color(start, color(maneuver), 0);
     lv_obj_add_event_cb(start, start_cb, LV_EVENT_CLICKED, this);
+    build_map_controls(false);
 }
 
 void NavigationView::build_guidance()
@@ -536,10 +737,12 @@ void NavigationView::build_guidance()
     lv_obj_set_style_pad_all(controls, 8, 0);
     lv_obj_set_style_pad_column(controls, 8, 0);
     lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
-    lv_obj_t* info = button(controls,
-        guidance.position_available ? "Steps" : "GPS info");
+    lv_obj_t* info = button(controls, "Overview");
     lv_obj_set_flex_grow(info, 1);
     lv_obj_set_height(info, 60);
+    lv_obj_add_event_cb(info, map_command_cb, LV_EVENT_CLICKED, this);
+    lv_obj_set_user_data(info, reinterpret_cast<void*>(
+        static_cast<std::uintptr_t>(MapCommand::Overview) + 1u));
     lv_obj_t* end = button(controls, "End");
     lv_obj_set_flex_grow(end, 1);
     lv_obj_set_height(end, 60);
@@ -547,22 +750,8 @@ void NavigationView::build_guidance()
     lv_obj_set_style_text_color(end, color(0xff8a80), 0);
     lv_obj_add_event_cb(end, end_cb, LV_EVENT_CLICKED, this);
 
-    if (guidance.position_available && width_ > static_cast<uint32_t>(rail_width)) {
-        const int map_x = rail_width +
-            (static_cast<int>(width_) - rail_width) / 2;
-        const int map_y = content_top(height_) + content_height(height_) / 2;
-        lv_obj_t* halo = lv_obj_create(screen_);
-        panel(halo, accent, 26);
-        lv_obj_set_style_bg_opa(halo, LV_OPA_30, 0);
-        lv_obj_set_size(halo, 52, 52);
-        lv_obj_set_pos(halo, map_x - 26, map_y - 26);
-        lv_obj_t* marker = lv_obj_create(halo);
-        panel(marker, accent, 13);
-        lv_obj_set_size(marker, 26, 26);
-        lv_obj_set_style_border_width(marker, 4, 0);
-        lv_obj_set_style_border_color(marker, color(primary), 0);
-        lv_obj_center(marker);
-    }
+    build_map_controls(true);
+    build_vehicle_marker();
 }
 
 void NavigationView::refresh_guidance()
@@ -625,6 +814,13 @@ void NavigationView::clear_object_references() noexcept
     guidance_lanes_ = nullptr;
     guidance_summary_ = nullptr;
     guidance_instruction_ = nullptr;
+    control_recenter_ = nullptr;
+    control_orientation_ = nullptr;
+    control_tilt_ = nullptr;
+    control_night_ = nullptr;
+    vehicle_marker_ = nullptr;
+    marker_visible_ = false;
+    map_drag_ = false;
 }
 
 void NavigationView::pointer(int action, int32_t x, int32_t y)
@@ -754,6 +950,7 @@ void NavigationView::pointer_cb(lv_indev_t* indev, lv_indev_data_t* data)
     if (!self->pointer_queue_.empty()) {
         self->last_pointer_ = self->pointer_queue_.front();
         self->pointer_queue_.pop_front();
+        self->handle_map_gesture(self->last_pointer_);
     }
     if (self->last_pointer_.action == MOCK_NAV_BACKEND_POINTER_PRESS)
         self->pointer_down_ = true;
@@ -764,6 +961,52 @@ void NavigationView::pointer_cb(lv_indev_t* indev, lv_indev_data_t* data)
     data->state = self->pointer_down_ ? LV_INDEV_STATE_PRESSED
                                       : LV_INDEV_STATE_RELEASED;
     data->continue_reading = !self->pointer_queue_.empty();
+}
+
+void NavigationView::handle_map_gesture(const PointerSample& sample)
+{
+    if (sample.action == MOCK_NAV_BACKEND_POINTER_PRESS) {
+        map_drag_ = false;
+        if (built_screen_ == Screen::Search || !screen_)
+            return;
+        lv_point_t point{sample.x, sample.y};
+        lv_obj_t* hit = lv_indev_search_obj(screen_, &point);
+        // Only presses on bare map (the transparent screen or the
+        // non-clickable vehicle marker) pan the map.
+        if (hit == screen_ || hit == nullptr || hit == vehicle_marker_) {
+            map_drag_ = true;
+            drag_last_x_ = sample.x;
+            drag_last_y_ = sample.y;
+        }
+        return;
+    }
+    if (!map_drag_)
+        return;
+    model_.add_pan(sample.x - drag_last_x_, sample.y - drag_last_y_);
+    drag_last_x_ = sample.x;
+    drag_last_y_ = sample.y;
+    if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE)
+        map_drag_ = false;
+}
+
+void NavigationView::map_command_cb(lv_event_t* event)
+{
+    auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
+    const auto value = reinterpret_cast<std::uintptr_t>(
+        lv_obj_get_user_data(static_cast<lv_obj_t*>(
+            lv_event_get_current_target(event))));
+    if (value)
+        self->model_.push_map_command(static_cast<MapCommand>(value - 1u));
+}
+
+void NavigationView::recent_cb(lv_event_t* event)
+{
+    auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
+    const auto value = reinterpret_cast<std::size_t>(
+        lv_obj_get_user_data(static_cast<lv_obj_t*>(
+            lv_event_get_current_target(event))));
+    if (value)
+        (void)self->select_recent(value - 1);
 }
 
 void NavigationView::open_search_cb(lv_event_t* event)

@@ -49,6 +49,18 @@ public:
                       std::vector<RouteAlternative> routes);
     bool apply_guidance(GuidanceState guidance);
     bool start_guidance(std::size_t route);
+    std::uint64_t select_recent(std::size_t index);
+
+    // Part of the window where the map is visible (right of the opaque rail).
+    struct MapArea { int x = 0; int y = 0; int width = 0; int height = 0; };
+    MapArea map_area() const noexcept;
+    // Re-reads model.map_view() into the map control buttons.
+    void apply_map_view();
+    // Driver-distraction state; rebuilds the search screen when it changes.
+    bool set_moving(bool moving);
+    // Vehicle marker at a window position; rotation is clockwise degrees
+    // relative to screen-up. Small changes are ignored to limit redraw.
+    void set_vehicle_marker(bool visible, int x, int y, float rotation_degrees);
 
 private:
     struct PointerSample { int action; int32_t x; int32_t y; };
@@ -60,7 +72,12 @@ private:
     void build_search();
     void build_route_preview();
     void build_guidance();
+    void build_map_controls(bool full);
+    void build_vehicle_marker();
+    void build_recents(_lv_obj_t* parent);
     void refresh_guidance();
+    int rail_width() const noexcept;
+    void handle_map_gesture(const PointerSample& sample);
     void clear_object_references() noexcept;
     void refresh_results();
     _lv_obj_t* label(_lv_obj_t* parent, const char* text, uint32_t color,
@@ -77,6 +94,8 @@ private:
     static void route_cb(lv_event_t* event);
     static void start_cb(lv_event_t* event);
     static void end_cb(lv_event_t* event);
+    static void map_command_cb(lv_event_t* event);
+    static void recent_cb(lv_event_t* event);
 
     NavigationModel& model_;
     Screen built_screen_ = Screen::FreeDrive;
@@ -97,6 +116,18 @@ private:
     lv_obj_t* guidance_lanes_ = nullptr;
     lv_obj_t* guidance_summary_ = nullptr;
     lv_obj_t* guidance_instruction_ = nullptr;
+    lv_obj_t* control_recenter_ = nullptr;
+    lv_obj_t* control_orientation_ = nullptr;
+    lv_obj_t* control_tilt_ = nullptr;
+    lv_obj_t* control_night_ = nullptr;
+    lv_obj_t* vehicle_marker_ = nullptr;
+    bool marker_visible_ = false;
+    int marker_x_ = 0;
+    int marker_y_ = 0;
+    float marker_rotation_ = 0.0f;
+    bool map_drag_ = false;
+    int32_t drag_last_x_ = 0;
+    int32_t drag_last_y_ = 0;
     std::deque<PointerSample> pointer_queue_;
     PointerSample last_pointer_{2, 0, 0};
     uint32_t rendered_frames_ = 0;

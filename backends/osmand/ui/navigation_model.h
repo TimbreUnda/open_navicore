@@ -72,11 +72,44 @@ struct GuidanceState {
     bool has_following_maneuver = false;
 };
 
+// Map interactions the UI requests; the engine applies them to the camera.
+enum class MapCommand {
+    ZoomIn,
+    ZoomOut,
+    Recenter,
+    ToggleOrientation,
+    ToggleTilt,
+    ToggleNight,
+    Overview
+};
+
+// What the camera is doing, published by the engine so the UI can show the
+// right control state (recenter only while not following, etc.).
+struct MapViewState {
+    bool following = true;
+    bool heading_up = true;
+    bool tilted = false;
+    bool night = false;
+
+    bool operator==(const MapViewState& other) const noexcept
+    {
+        return following == other.following &&
+               heading_up == other.heading_up && tilted == other.tilted &&
+               night == other.night;
+    }
+    bool operator!=(const MapViewState& other) const noexcept
+    {
+        return !(*this == other);
+    }
+};
+
 // Renderer-thread UI state only. Slow search and routing work is deliberately
 // not called from this model: a coordinator copies requests to a worker and
 // applies owned results only when their revision still matches.
 class NavigationModel {
 public:
+    static constexpr std::size_t maximum_recents = 5;
+
     Screen screen() const noexcept { return screen_; }
     const std::string& query() const noexcept { return query_; }
     const std::vector<Destination>& results() const noexcept { return results_; }
@@ -101,7 +134,29 @@ public:
     bool update_guidance(GuidanceState guidance) noexcept;
     bool end_guidance() noexcept;
 
+    // Map interaction queue (UI -> engine). take_* swap into caller-owned
+    // storage so a steady frame loop does not allocate.
+    void push_map_command(MapCommand command);
+    void take_map_commands(std::vector<MapCommand>& output);
+    void add_pan(int dx, int dy) noexcept;
+    bool take_pan(int& dx, int& dy) noexcept;
+    const MapViewState& map_view() const noexcept { return map_view_; }
+    bool set_map_view(const MapViewState& state) noexcept;
+
+    // Driver-distraction state: text entry is limited while moving.
+    bool moving() const noexcept { return moving_; }
+    bool set_moving(bool moving) noexcept;
+
+    // Recent destinations, newest first. Starting guidance records one.
+    const std::vector<Destination>& recents() const noexcept { return recents_; }
+    std::uint64_t recents_revision() const noexcept { return recents_revision_; }
+    void set_recents(std::vector<Destination> recents);
+    // Routes to a recent destination through the normal search/route flow.
+    std::uint64_t select_recent(std::size_t index);
+
 private:
+    void remember_recent(const Destination& destination);
+
     Screen screen_ = Screen::FreeDrive;
     std::string query_;
     std::vector<Destination> results_;
@@ -113,6 +168,13 @@ private:
     GuidanceState guidance_;
     std::uint64_t search_revision_ = 0;
     std::uint64_t route_revision_ = 0;
+    std::vector<MapCommand> map_commands_;
+    int pan_dx_ = 0;
+    int pan_dy_ = 0;
+    MapViewState map_view_;
+    bool moving_ = false;
+    std::vector<Destination> recents_;
+    std::uint64_t recents_revision_ = 0;
 };
 
 } // namespace navicore_osmand::ui

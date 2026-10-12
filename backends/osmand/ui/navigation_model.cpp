@@ -1,5 +1,6 @@
 #include "navigation_model.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace navicore_osmand::ui {
@@ -95,6 +96,8 @@ bool NavigationModel::start_guidance() noexcept
         return false;
     screen_ = Screen::Guidance;
     guidance_ = {};
+    if (has_destination_)
+        remember_recent(destination_);
     return true;
 }
 
@@ -121,6 +124,85 @@ bool NavigationModel::end_guidance() noexcept
     ++search_revision_;
     ++route_revision_;
     return true;
+}
+
+void NavigationModel::push_map_command(MapCommand command)
+{
+    // Bounded: a stuck engine must not let taps grow memory.
+    if (map_commands_.size() < 32u)
+        map_commands_.push_back(command);
+}
+
+void NavigationModel::take_map_commands(std::vector<MapCommand>& output)
+{
+    output.clear();
+    output.swap(map_commands_);
+}
+
+void NavigationModel::add_pan(int dx, int dy) noexcept
+{
+    pan_dx_ += dx;
+    pan_dy_ += dy;
+}
+
+bool NavigationModel::take_pan(int& dx, int& dy) noexcept
+{
+    dx = pan_dx_;
+    dy = pan_dy_;
+    pan_dx_ = pan_dy_ = 0;
+    return dx != 0 || dy != 0;
+}
+
+bool NavigationModel::set_map_view(const MapViewState& state) noexcept
+{
+    if (state == map_view_)
+        return false;
+    map_view_ = state;
+    return true;
+}
+
+bool NavigationModel::set_moving(bool moving) noexcept
+{
+    if (moving == moving_)
+        return false;
+    moving_ = moving;
+    return true;
+}
+
+void NavigationModel::set_recents(std::vector<Destination> recents)
+{
+    if (recents.size() > maximum_recents)
+        recents.resize(maximum_recents);
+    recents_ = std::move(recents);
+    ++recents_revision_;
+}
+
+void NavigationModel::remember_recent(const Destination& destination)
+{
+    const auto same = [&](const Destination& item) {
+        return (!destination.id.empty() && item.id == destination.id) ||
+               (item.title == destination.title &&
+                item.latitude == destination.latitude &&
+                item.longitude == destination.longitude);
+    };
+    recents_.erase(std::remove_if(recents_.begin(), recents_.end(), same),
+                   recents_.end());
+    recents_.insert(recents_.begin(), destination);
+    if (recents_.size() > maximum_recents)
+        recents_.resize(maximum_recents);
+    ++recents_revision_;
+}
+
+std::uint64_t NavigationModel::select_recent(std::size_t index)
+{
+    if (index >= recents_.size() || screen_ == Screen::Guidance)
+        return 0;
+    const Destination recent = recents_[index];
+    open_search();
+    query_ = recent.title;
+    ++search_revision_;
+    results_ = {recent};
+    return select_destination(0);
 }
 
 } // namespace navicore_osmand::ui

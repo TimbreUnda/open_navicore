@@ -26,7 +26,7 @@ bool marker_or_environment(const char* variable, const char* marker_path)
 
 Config Config::from_environment()
 {
-    return {
+    Config config{
         path("OPEN_NAVICORE_OSMAND_RESOURCES",
              "/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so"),
         path("OPEN_NAVICORE_OSMAND_MAP", "/datastore/navicore-backend/maps/kyiv.obf"),
@@ -69,5 +69,8 @@ Config Config::from_environment()
             "/datastore/navicore-backend/enable-rgb565-tiles"),
         20.0
     };
+    config.recents = path("OPEN_NAVICORE_OSMAND_RECENTS",
+                          "/datastore/navicore-backend/recents.tsv");
+    return config;
 }
 } // namespace navicore_osmand

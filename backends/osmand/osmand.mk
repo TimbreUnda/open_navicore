@@ -53,7 +53,7 @@ OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 OSMAND_PLUGIN_TARGET := $(OSMAND_BUILD_DIR)/libMockNavBackendOsmAnd.so
 OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
 	session.o diagnostics.o osmand_engine.o baked_symbols_raster_provider.o bounded_symbols_provider.o navigation_worker.o compact_text.o navigation_model.o \
-	retained_symbol_layer.o gpu_upload_context.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o overlay_occupancy.o frame_metrics.o)
+	retained_symbol_layer.o gpu_upload_context.o camera_controller.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o overlay_occupancy.o recents_store.o frame_metrics.o)
 LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
 OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
 OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)
@@ -64,7 +64,7 @@ OSMAND_ENV = QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOS
 OSMAND_COMPILE = $(OSMAND_ENV) $(OSMAND_CXX) --sysroot=$(QNX_TARGET) \
 	-B$(OSMAND_BINUTILS_DIR)/ $(OSMAND_CXXFLAGS) $(OSMAND_INCLUDES) $(OSMAND_LVGL_FLAGS)
 
-.PHONY: osmand-check osmand-manifest osmand-session-test osmand-route-smoke
+.PHONY: osmand-check osmand-manifest camera-controller-test osmand-session-test osmand-route-smoke
 
 osmand-backend: $(OSMAND_PLUGIN_TARGET) | $(DIST_DIR)
 	cp $< $(DIST_DIR)/libMockNavBackendOsmAnd.so
@@ -158,6 +158,13 @@ osmand-manifest: osmand-backend
 		--plugin "$(OSMAND_PLUGIN_TARGET)" \
 		--output "$(OSMAND_BUILD_DIR)/bundle-manifest.json"
 
+camera-controller-test:
+	mkdir -p $(BUILD_DIR)
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror \
+		-Ibackends/osmand backends/osmand/camera_controller.cpp \
+		tests/camera_controller_test.cpp -o $(BUILD_DIR)/camera-controller-test
+	$(BUILD_DIR)/camera-controller-test
+
 osmand-session-test:
 	mkdir -p $(BUILD_DIR)
 	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror -pthread \
@@ -187,6 +194,7 @@ navigation-ui-test: $(LVGL_HOST_BUILD_DIR)/liblvgl.a
 		backends/osmand/ui/compact_text.cpp \
 		backends/osmand/ui/navigation_model.cpp \
 		backends/osmand/ui/navigation_view.cpp \
-		backends/osmand/ui/overlay_occupancy.cpp tests/navigation_ui_test.cpp \
+		backends/osmand/ui/overlay_occupancy.cpp \
+		backends/osmand/ui/recents_store.cpp tests/navigation_ui_test.cpp \
 		$(LVGL_HOST_BUILD_DIR)/liblvgl.a -lm -o $(LVGL_HOST_BUILD_DIR)/navigation-ui-test
 	$(LVGL_HOST_BUILD_DIR)/navigation-ui-test

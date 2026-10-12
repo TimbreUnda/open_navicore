@@ -22,6 +22,7 @@ struct Config {
     bool car_style = false;
     bool rgb565_tiles = false;
     double simulation_speed_metres_per_second = 20.0;
+    std::string recents = "/datastore/navicore-backend/recents.tsv";
 
     static Config from_environment();
 };
