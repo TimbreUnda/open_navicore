@@ -279,6 +279,31 @@ Two backend changes address the remaining per-frame costs:
   live on 2026-10-12; cold tile-boundary tails, CPU load, and
   release/context-loss behavior are unmeasured.
 
+### Frame-interval stutter and tile-arrival controls
+
+`perf` lines now bin presented-to-presented intervals (including swap), so a
+run reports a real 1% low rather than per-second averages. One boot, same
+route, each change added on top of the previous one (2026-10-12, `f34b7cc`):
+
+| Configuration | Fps | Rolling 5 s min | Frames >50 ms | >100 ms | Worst | 1% low bin |
+|---|---:|---:|---:|---:|---:|---|
+| Baseline (opaque, no new markers) | 32.77 | 31.57 | 78 / 6596 | 10 | 120 ms | 50--67 ms |
+| + GPU upload worker + RGB565 tiles | 32.83 | 32.03 | 62 / 6535 | 5 | 136 ms | 33--50 ms |
+| + car style | 32.83 | 32.14 | 59 / 6494 | 4 | 133 ms | 33--50 ms |
+
+About 18% of frames take 33--50 ms because the composition-bound swap
+averages 27 ms; these are cadence, not hitches. Real hitches fell about 24%
+and >100 ms frames from 10 to 4, but each configuration has one run, so the
+size of the gain is indicative. The upload worker ran 400 s across two
+relaunches without faults; its release and context-loss paths are still
+untested, so it stays opt-in. Car style and RGB565 still need a visual check
+(banding, missing detail). Process data fell from 206 to 202 MiB.
+
+OsmAnd keeps each raster tile's CPU bitmap after `uploadToGPU()` until the
+resource is detached, so resident tiles exist in RAM and in the driver.
+Releasing it after upload needs an OsmAnd Core patch and must keep
+context-loss recovery working.
+
 ### Sustained moving-basemap qualification
 
 The short shootout left one ambiguity: its symbol-free phase was only 15

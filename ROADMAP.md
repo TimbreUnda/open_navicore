@@ -100,8 +100,12 @@ larger milestone containing it is complete.
   with an explicit state contract once OsmAnd's VAO emulation is accounted for.
 - [ ] Decouple tile-texture arrival from frame submission. OsmAnd uploads at
   most one resource per render-thread frame; `enable-gpu-upload-worker` runs
-  its GPU worker on a shared pbuffer context. Qualify cold tile-boundary tails,
-  CPU load, and release/context-loss lifecycle before making it the default.
+  its GPU worker on a shared pbuffer context. With RGB565 tiles it cut frames
+  over 50 ms from 78 to 62 per ~200 s run without faults; qualify release and
+  context-loss lifecycle before making it the default.
+- [ ] Visually qualify `enable-rgb565-tiles` and `enable-car-style` and make
+  them defaults if acceptable.
+- [ ] Release OsmAnd raster-tile CPU bitmaps after GPU upload (Core patch).
 - [ ] Measure whether a GPU-native vector path beats retained raster tiles on the
   PowerVR driver with equal content; select from evidence rather than design
   preference. Run this after the presentation ceiling is raised: below it, both

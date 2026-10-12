@@ -24,3 +24,6 @@ swap0_unpaced_persistent_context_triple_buffer_visible_band,sustained_raster_wit
 opaque_nav_window_visible_band,sustained_raster_without_symbols,32.61,30.81,34.08,3.0,2.0,203,20
 opaque_overlay_usage_visible_band,sustained_raster_without_symbols,32.69,31.63,33.99,3.0,2.0,194,20
 opaque_after_rejected_pipeline2_visible_band,sustained_raster_without_symbols,29.66,28.30,30.67,3.0,2.0,191,20
+f34b7cc_baseline_visible_band,sustained_raster_without_symbols,32.77,31.57,34.06,3.0,2.0,201,20
+f34b7cc_upload_worker_rgb565,sustained_raster_without_symbols,32.83,32.03,34.02,3.0,2.0,199,20
+f34b7cc_upload_worker_rgb565_car_style,sustained_raster_without_symbols,32.83,32.14,34.05,3.0,2.0,198,20
