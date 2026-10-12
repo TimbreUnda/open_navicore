@@ -7,6 +7,14 @@
 
 namespace navicore_osmand::ui {
 
+// One dirty canvas rectangle to upload.
+struct UploadRect {
+    uint32_t x = 0;
+    uint32_t y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
 // GLES2 compositor for a little-endian LVGL ARGB8888 software canvas. Calls
 // are valid only with the provider's expected context current.
 class GlOverlayCompositor {
@@ -18,14 +26,16 @@ public:
 
     // Blends only `occupancy.regions()`; transparent canvas areas cost no
     // fragments, and an empty canvas issues no GL calls at all.
+    // Uploads each dirty rectangle separately, then blends the occupied
+    // regions. An empty dirty list re-blends without uploading.
     bool present(const uint32_t* pixels, uint32_t width, uint32_t height,
-                 uint32_t dirty_x, uint32_t dirty_y,
-                 uint32_t dirty_width, uint32_t dirty_height,
+                 const std::vector<UploadRect>& dirty,
                  const OverlayOccupancy& occupancy);
     void release(bool context_lost) noexcept;
 
 private:
     bool initialize();
+    void upload_rect(const uint32_t* pixels, uint32_t width, UploadRect rect);
     void upload_regions(const OverlayOccupancy& occupancy, uint32_t width,
                         uint32_t height);
     unsigned int program_ = 0;

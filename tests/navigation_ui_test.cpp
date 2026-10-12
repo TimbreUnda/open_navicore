@@ -181,6 +181,12 @@ void test_car_controls()
         view.set_vehicle_marker(true, 680, 400, 45.0f);
         settle(view, 1);
         assert(opaque_near(view, 680, 400));
+        // Moving the marker dirties only map-side areas, not the rail.
+        view.set_vehicle_marker(true, 700, 420, 45.0f);
+        settle(view, 1);
+        assert(!view.dirty_regions().empty());
+        for (const auto& region : view.dirty_regions())
+            assert(region.x >= 336u && region.width < 200u);
         view.set_vehicle_marker(true, 100, 300, 0.0f);
         settle(view, 1);
         assert(!opaque_near(view, 680, 400));

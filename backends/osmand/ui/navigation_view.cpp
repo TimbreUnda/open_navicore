@@ -847,11 +847,13 @@ bool NavigationView::render(uint32_t elapsed_ms)
 {
     dirty_ = false;
     dirty_region_ = {};
+    dirty_regions_.clear();
     lv_tick_inc(elapsed_ms);
     const bool forced_present = full_clear_pending_;
     if (full_clear_pending_) {
         std::fill(pixels_.begin(), pixels_.end(), 0u);
         dirty_region_ = {0u, 0u, width_, height_};
+        dirty_regions_.assign(1, dirty_region_);
         dirty_ = true;
         lv_obj_invalidate(screen_);
         full_clear_pending_ = false;
@@ -927,6 +929,7 @@ void NavigationView::flush_cb(lv_display_t* display, const lv_area_t* area,
         const uint32_t y = static_cast<uint32_t>(area->y1);
         const uint32_t width = static_cast<uint32_t>(area->x2 - area->x1 + 1);
         const uint32_t height = static_cast<uint32_t>(area->y2 - area->y1 + 1);
+        self->add_dirty(x, y, width, height);
         if (!self->dirty_) {
             self->dirty_region_ = {x, y, width, height};
         } else {
@@ -942,6 +945,51 @@ void NavigationView::flush_cb(lv_display_t* display, const lv_area_t* area,
         self->dirty_ = true;
     }
     lv_display_flush_ready(display);
+}
+
+void NavigationView::add_dirty(uint32_t x, uint32_t y, uint32_t width,
+                               uint32_t height)
+{
+    constexpr uint32_t touch = 16u;   // merge areas closer than this
+    constexpr std::size_t maximum = 8u;
+    DirtyRegion area{x, y, width, height};
+    bool merged = true;
+    while (merged) {
+        merged = false;
+        for (std::size_t i = 0; i < dirty_regions_.size(); ++i) {
+            const DirtyRegion& other = dirty_regions_[i];
+            if (area.x > other.x + other.width + touch ||
+                other.x > area.x + area.width + touch ||
+                area.y > other.y + other.height + touch ||
+                other.y > area.y + area.height + touch)
+                continue;
+            const uint32_t x2 = std::max(area.x + area.width,
+                                         other.x + other.width);
+            const uint32_t y2 = std::max(area.y + area.height,
+                                         other.y + other.height);
+            area.x = std::min(area.x, other.x);
+            area.y = std::min(area.y, other.y);
+            area.width = x2 - area.x;
+            area.height = y2 - area.y;
+            dirty_regions_.erase(dirty_regions_.begin() +
+                                 static_cast<std::ptrdiff_t>(i));
+            merged = true;
+            break;
+        }
+    }
+    dirty_regions_.push_back(area);
+    if (dirty_regions_.size() > maximum) {
+        DirtyRegion box = dirty_regions_.front();
+        for (const auto& item : dirty_regions_) {
+            const uint32_t x2 = std::max(box.x + box.width, item.x + item.width);
+            const uint32_t y2 = std::max(box.y + box.height, item.y + item.height);
+            box.x = std::min(box.x, item.x);
+            box.y = std::min(box.y, item.y);
+            box.width = x2 - box.x;
+            box.height = y2 - box.y;
+        }
+        dirty_regions_.assign(1, box);
+    }
 }
 
 void NavigationView::pointer_cb(lv_indev_t* indev, lv_indev_data_t* data)

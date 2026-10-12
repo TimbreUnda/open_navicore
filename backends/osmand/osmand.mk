@@ -53,7 +53,7 @@ OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 OSMAND_PLUGIN_TARGET := $(OSMAND_BUILD_DIR)/libMockNavBackendOsmAnd.so
 OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
 	session.o diagnostics.o osmand_engine.o baked_symbols_raster_provider.o bounded_symbols_provider.o navigation_worker.o compact_text.o navigation_model.o \
-	retained_symbol_layer.o gpu_upload_context.o camera_controller.o tile_cache.o caching_raster_provider.o precache_worker.o thread_priority.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o overlay_occupancy.o recents_store.o frame_metrics.o)
+	retained_symbol_layer.o gpu_upload_context.o camera_controller.o tile_cache.o caching_raster_provider.o precache_worker.o thread_priority.o crash_reporter.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o overlay_occupancy.o recents_store.o frame_metrics.o)
 LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
 OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
 OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)

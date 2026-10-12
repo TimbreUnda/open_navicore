@@ -76,9 +76,9 @@ Config Config::from_environment()
         "OPEN_NAVICORE_OSMAND_TILE_CACHE",
         "/datastore/navicore-backend/enable-tile-cache");
     config.tile_cache_runtime = path("OPEN_NAVICORE_OSMAND_TILE_CACHE_DIR",
-        "/datastore/navicore-backend/tilecache");
+        "/navi_map/open-navicore/tilecache");
     config.tile_cache_base = path("OPEN_NAVICORE_OSMAND_TILE_CACHE_BASE",
-        "/datastore/navicore-backend/tilecache-base");
+        "/navi_map/open-navicore/tilecache-base");
     if (const char* megabytes = std::getenv("OPEN_NAVICORE_OSMAND_TILE_CACHE_MB")) {
         char* end = nullptr;
         const unsigned long value = std::strtoul(megabytes, &end, 10);
@@ -92,11 +92,27 @@ Config Config::from_environment()
     if (marker_or_environment(
             "OPEN_NAVICORE_OSMAND_PRODUCTION_PROFILE",
             "/datastore/navicore-backend/enable-production-profile")) {
-        config.production_profile = true;
-        config.rgb565_tiles = true;
-        config.gpu_upload_worker = true;
-        config.tile_cache = true;
-        config.retained_map_symbols = true;
+        config.production_attempt =
+            path("OPEN_NAVICORE_OSMAND_PRODUCTION_ATTEMPT",
+                 "/datastore/navicore-backend/.production-profile-attempt");
+        // Crash guard: an attempt file left behind means the last run with
+        // these features died before it was stable. Run without them once
+        // so System Manager's relaunch budget is not spent on a crash loop.
+        if (std::FILE* previous =
+                std::fopen(config.production_attempt.c_str(), "r")) {
+            std::fclose(previous);
+            std::remove(config.production_attempt.c_str());
+            config.production_profile_suppressed = true;
+        } else {
+            if (std::FILE* attempt =
+                    std::fopen(config.production_attempt.c_str(), "w"))
+                std::fclose(attempt);
+            config.production_profile = true;
+            config.rgb565_tiles = true;
+            config.gpu_upload_worker = true;
+            config.tile_cache = true;
+            config.retained_map_symbols = true;
+        }
     }
     return config;
 }

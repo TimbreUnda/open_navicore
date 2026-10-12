@@ -128,6 +128,30 @@ int main()
         assert(again.stats().bytes <= options.budget_bytes);
     }
     {
+        // Free-space reserve: writes stop below it and resume above it,
+        // checked on the first write and every 64 writes.
+        std::int64_t available = 10ll << 20;
+        TilePackStore::Options options;
+        options.root = root + "/space";
+        options.writable = true;
+        options.tile_size = 64;
+        options.reserve_bytes = 64ull << 20;
+        options.available_bytes = [&available](const std::string&) {
+            return available;
+        };
+        TilePackStore store(options);
+        const auto pixels = tile(7, size);
+        assert(!store.put({12, 0, 0}, pixels.data(), pixels.size()));
+        assert(store.stats().refused_low_space == 1);
+        available = 1ll << 30;
+        assert(store.put({12, 0, 0}, pixels.data(), pixels.size()));
+        assert(store.stats().writes == 1);
+        // Unknown free space (-1) does not block writes.
+        available = -1;
+        TilePackStore unknown(options);
+        assert(unknown.put({12, 1, 0}, pixels.data(), pixels.size()));
+    }
+    {
         // Layered cache: runtime first, shipped base second, namespaced.
         const std::string ns = TileCache::namespace_hash("kyiv.obf|car|day|565");
         assert(ns.size() == 16);

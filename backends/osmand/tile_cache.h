@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <list>
 #include <map>
 #include <memory>
@@ -46,6 +47,13 @@ public:
         std::uint32_t tile_size = 256;
         int compression_level = 1;          // 1 fast runtime, 9 for packing
         std::size_t open_packs = 16;
+        // Writes stop while the filesystem has less than this available.
+        // Seen live: an unbounded cache filled a 1 GB /datastore and broke
+        // the next backend install.
+        std::uint64_t reserve_bytes = 256ull << 20;
+        // Returns available bytes on the store's filesystem, or -1 if
+        // unknown. Defaults to statvfs(root); injectable for tests.
+        std::function<std::int64_t(const std::string&)> available_bytes;
     };
 
     struct Stats {
@@ -55,6 +63,7 @@ public:
         std::uint64_t corrupt = 0;
         std::uint64_t evicted_packs = 0;
         std::uint64_t bytes = 0;            // tracked size of writable store
+        std::uint64_t refused_low_space = 0;
     };
 
     explicit TilePackStore(Options options);
@@ -88,6 +97,7 @@ private:
     void close_pack(const std::string& path);
     void scan_existing();
     void enforce_budget(const std::string& keep);
+    bool space_allows_write();
 
     Options options_;
     mutable std::mutex mutex_;
@@ -98,6 +108,8 @@ private:
     std::map<std::string, std::uint64_t> disk_used_;
     std::uint64_t use_clock_ = 0;
     bool scanned_ = false;
+    std::uint64_t writes_since_space_check_ = 0;
+    bool low_space_ = false;
     Stats stats_;
     std::vector<std::uint8_t> compressed_;
 };

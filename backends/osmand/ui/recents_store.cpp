@@ -3,8 +3,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
-#include <sstream>
+#include <cstring>
+
+// Deliberately stdio only. The backend links libstdc++ statically, but
+// libOsmAndCore_shared.so exports its own libstdc++, and the linker binds our
+// iostream calls to that copy, whose stream/locale state this plugin never
+// initialises: the first std::ifstream crashed in std::ios_base::_M_init on
+// the radio. Do not use <fstream>/<sstream>/<iostream> in this plugin.
 
 namespace navicore_osmand::ui {
 namespace {
@@ -24,20 +29,43 @@ bool parse_double(const std::string& text, double& value)
     value = std::strtod(text.c_str(), &end);
     return end && *end == '\0' && std::isfinite(value);
 }
+
+std::vector<std::string> split_tabs(const std::string& line)
+{
+    std::vector<std::string> fields;
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t tab = line.find('\t', start);
+        fields.push_back(line.substr(start, tab == std::string::npos
+                                                ? std::string::npos
+                                                : tab - start));
+        if (tab == std::string::npos)
+            break;
+        start = tab + 1;
+    }
+    return fields;
+}
 } // namespace
 
 std::vector<Destination> RecentsStore::load() const
 {
     std::vector<Destination> recents;
-    std::ifstream input(path_);
+    std::FILE* input = std::fopen(path_.c_str(), "r");
+    if (!input)
+        return recents;
+    char buffer[1024];
     std::string line;
-    while (input && std::getline(input, line) &&
-           recents.size() < NavigationModel::maximum_recents) {
-        std::vector<std::string> fields;
-        std::stringstream stream(line);
-        std::string field;
-        while (std::getline(stream, field, '\t'))
-            fields.push_back(field);
+    while (recents.size() < NavigationModel::maximum_recents &&
+           std::fgets(buffer, sizeof(buffer), input)) {
+        line.append(buffer);
+        if (line.empty() || line.back() != '\n') {
+            if (!std::feof(input))
+                continue;   // long line: keep reading it
+        }
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+            line.pop_back();
+        const auto fields = split_tabs(line);
+        line.clear();
         Destination destination;
         if (fields.size() != 5 || fields[1].empty() ||
             !parse_double(fields[3], destination.latitude) ||
@@ -50,24 +78,28 @@ std::vector<Destination> RecentsStore::load() const
         destination.subtitle = fields[2];
         recents.push_back(std::move(destination));
     }
+    std::fclose(input);
     return recents;
 }
 
 bool RecentsStore::save(const std::vector<Destination>& recents) const
 {
     const std::string temporary = path_ + ".tmp";
-    {
-        std::ofstream output(temporary, std::ios::trunc);
-        if (!output)
-            return false;
-        output.precision(9);
-        for (const auto& item : recents)
-            output << clean(item.id) << '\t' << clean(item.title) << '\t'
-                   << clean(item.subtitle) << '\t' << item.latitude << '\t'
-                   << item.longitude << '\n';
-        output.flush();
-        if (!output)
-            return false;
+    std::FILE* output = std::fopen(temporary.c_str(), "w");
+    if (!output)
+        return false;
+    bool ok = true;
+    for (const auto& item : recents) {
+        ok = std::fprintf(output, "%s\t%s\t%s\t%.9g\t%.9g\n",
+                          clean(item.id).c_str(), clean(item.title).c_str(),
+                          clean(item.subtitle).c_str(), item.latitude,
+                          item.longitude) > 0 && ok;
+    }
+    ok = std::fflush(output) == 0 && ok;
+    ok = std::fclose(output) == 0 && ok;
+    if (!ok) {
+        std::remove(temporary.c_str());
+        return false;
     }
     return std::rename(temporary.c_str(), path_.c_str()) == 0;
 }

@@ -205,17 +205,45 @@ void GlOverlayCompositor::upload_regions(const OverlayOccupancy& occupancy,
                      region_geometry_.data(), GL_DYNAMIC_DRAW);
 }
 
+void GlOverlayCompositor::upload_rect(const uint32_t* pixels, uint32_t width,
+                                      UploadRect rect)
+{
+    // Wide dirty areas upload whole canvas rows straight from the canvas;
+    // only narrow ones are repacked, where the copy is cheaper than the
+    // extra bytes. GLES2 has no GL_UNPACK_ROW_LENGTH.
+    if (rect.width * 2u >= width) {
+        rect.x = 0u;
+        rect.width = width;
+    }
+    const uint32_t* upload = pixels +
+        static_cast<std::size_t>(rect.y) * width + rect.x;
+    if (rect.width != width) {
+        upload_pixels_.resize(static_cast<std::size_t>(rect.width) * rect.height);
+        for (uint32_t row = 0; row < rect.height; ++row) {
+            std::memcpy(upload_pixels_.data() +
+                            static_cast<std::size_t>(row) * rect.width,
+                        pixels + static_cast<std::size_t>(rect.y + row) *
+                                     width + rect.x,
+                        static_cast<std::size_t>(rect.width) * sizeof(uint32_t));
+        }
+        upload = upload_pixels_.data();
+    }
+    glTexSubImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(rect.x),
+                    static_cast<GLint>(rect.y),
+                    static_cast<GLsizei>(rect.width),
+                    static_cast<GLsizei>(rect.height), GL_RGBA,
+                    GL_UNSIGNED_BYTE, upload);
+}
+
 bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
-                                  uint32_t height, uint32_t dirty_x,
-                                  uint32_t dirty_y, uint32_t dirty_width,
-                                  uint32_t dirty_height,
+                                  uint32_t height,
+                                  const std::vector<UploadRect>& dirty,
                                   const OverlayOccupancy& occupancy)
 {
     if (!pixels || width == 0 || height == 0)
         return false;
     const bool texture_stale = width != texture_width_ ||
-                               height != texture_height_ ||
-                               (dirty_width != 0u && dirty_height != 0u);
+                               height != texture_height_ || !dirty.empty();
     // A fully transparent, already-uploaded canvas contributes nothing.
     if (program_ && !texture_stale && occupancy.regions().empty())
         return true;
@@ -235,38 +263,14 @@ bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
                      GL_UNSIGNED_BYTE, pixels);
         texture_width_ = width;
         texture_height_ = height;
-    } else if (dirty_width != 0u && dirty_height != 0u &&
-               dirty_width <= width && dirty_height <= height &&
-               dirty_x <= width - dirty_width &&
-               dirty_y <= height - dirty_height) {
-        // Wide dirty areas upload whole canvas rows straight from the canvas;
-        // only narrow ones are repacked, where the copy is cheaper than the
-        // extra bytes. GLES2 has no GL_UNPACK_ROW_LENGTH.
-        if (dirty_width * 2u >= width) {
-            dirty_x = 0u;
-            dirty_width = width;
+    } else {
+        for (const auto& rect : dirty) {
+            if (rect.width == 0u || rect.height == 0u ||
+                rect.width > width || rect.height > height ||
+                rect.x > width - rect.width || rect.y > height - rect.height)
+                continue;
+            upload_rect(pixels, width, rect);
         }
-        const uint32_t* upload = pixels +
-            static_cast<std::size_t>(dirty_y) * width + dirty_x;
-        if (dirty_width != width) {
-            upload_pixels_.resize(static_cast<std::size_t>(dirty_width) *
-                                  dirty_height);
-            for (uint32_t row = 0; row < dirty_height; ++row) {
-                std::memcpy(upload_pixels_.data() +
-                                static_cast<std::size_t>(row) * dirty_width,
-                            pixels + static_cast<std::size_t>(dirty_y + row) *
-                                         width + dirty_x,
-                            static_cast<std::size_t>(dirty_width) *
-                                sizeof(uint32_t));
-            }
-            upload = upload_pixels_.data();
-        }
-        glTexSubImage2D(GL_TEXTURE_2D, 0,
-                        static_cast<GLint>(dirty_x),
-                        static_cast<GLint>(dirty_y),
-                        static_cast<GLsizei>(dirty_width),
-                        static_cast<GLsizei>(dirty_height), GL_RGBA,
-                        GL_UNSIGNED_BYTE, upload);
     }
     upload_regions(occupancy, width, height);
     if (region_vertices_ > 0) {

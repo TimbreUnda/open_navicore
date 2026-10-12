@@ -11,6 +11,7 @@
 #include <OsmAndCore/Map/ObfMapObjectsProvider.h>
 #include <OsmAndCore/Map/ResolvedMapStyle.h>
 
+#include <OsmAndCore/FunctorQueryController.h>
 #include <OsmAndCore/IQueryController.h>
 #include <OsmAndCore/Map/BillboardRasterMapSymbol.h>
 #include <OsmAndCore/Map/IMapRenderer.h>
@@ -28,6 +29,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -48,7 +50,9 @@ constexpr int atlas_height = 512;
 constexpr int atlas_gutter = 1;
 constexpr std::size_t maximum_candidates = 1024u;
 constexpr std::size_t maximum_symbols = 64u;
-constexpr int maximum_tiles = 25;
+// 3x3 tiles around the target: each atlas must finish before the moving
+// camera leaves it, or no labels are ever shown while driving.
+constexpr int maximum_tiles = 9;
 
 struct RequestKey {
     int zoom = -1;
@@ -217,10 +221,10 @@ RequestKey request_key(const OsmAnd::MapState& state)
         maximum_tiles) {
         const auto center = OsmAnd::Utilities::getTileId(
             state.target31, state.zoomLevel);
-        key.left = std::max(0, center.x - 2);
-        key.top = std::max(0, center.y - 2);
-        key.right = std::min(maximum, center.x + 2);
-        key.bottom = std::min(maximum, center.y + 2);
+        key.left = std::max(0, center.x - 1);
+        key.top = std::max(0, center.y - 1);
+        key.right = std::min(maximum, center.x + 1);
+        key.bottom = std::min(maximum, center.y + 1);
     }
     return key;
 }
@@ -229,6 +233,13 @@ Atlas build_atlas(const WorkRequest& work,
                   OsmAnd::MapObjectsSymbolsProvider& provider,
                   const std::atomic<bool>& stopping)
 {
+    // OsmAnd dereferences request.queryController unconditionally
+    // (MapObjectsSymbolsProvider_P::obtainData); a null one is a SIGSEGV.
+    // This one also lets stop() abort extraction mid-tile.
+    const auto controller = std::make_shared<OsmAnd::FunctorQueryController>(
+        [&stopping](const OsmAnd::FunctorQueryController*) {
+            return stopping.load();
+        });
     Atlas atlas;
     atlas.generation = work.generation;
     std::vector<Candidate> candidates;
@@ -242,6 +253,7 @@ Atlas build_atlas(const WorkRequest& work,
             request.areaTime = 0;
             request.cacheOnly = false;
             request.mapState = work.state;
+            request.queryController = controller;
             std::shared_ptr<OsmAnd::IMapTiledSymbolsProvider::Data> data;
             if (!provider.obtainTiledSymbols(request, data) || !data)
                 continue;
@@ -564,14 +576,26 @@ private:
                 work = pending_;
                 has_pending_ = false;
             }
+            const auto build_started = std::chrono::steady_clock::now();
             Atlas result = build_atlas(work, *provider, stopping_);
+            trace_result("retained_symbols=built_ms",
+                         static_cast<std::uint64_t>(
+                             std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - build_started)
+                                 .count()),
+                         result.symbols.size());
             if (stopping_.load())
                 break;
             bool publish = false;
             const std::size_t published_count = result.symbols.size();
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                if (work.generation == generation_) {
+                // Publish the newest finished atlas even if the camera has
+                // moved on: symbols are world-anchored and still correct,
+                // and waiting for an exact match never publishes while
+                // driving (seen live: one empty atlas in a 267 s drive).
+                if (work.generation > published_generation_) {
+                    published_generation_ = work.generation;
                     published_ = std::move(result);
                     has_published_ = true;
                     publish = true;
@@ -592,6 +616,7 @@ private:
     std::atomic<bool> stopping_{false};
     std::thread worker_;
     std::uint64_t generation_ = 0;
+    std::uint64_t published_generation_ = 0;
     RequestKey last_key_;
     bool has_last_key_ = false;
     WorkRequest pending_;

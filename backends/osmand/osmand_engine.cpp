@@ -1,6 +1,7 @@
 #include "engine.h"
 #include "baked_symbols_raster_provider.h"
 #include "camera_controller.h"
+#include "crash_reporter.h"
 #include "caching_raster_provider.h"
 #include "precache_worker.h"
 #include "tile_cache.h"
@@ -42,6 +43,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <dlfcn.h>
 #include <sys/stat.h>
 
 namespace navicore_osmand {
@@ -117,6 +119,8 @@ private:
     bool car_style_ = false;
     bool night_ = false;
     bool overview_pending_ = false;
+    std::string production_attempt_;
+    std::chrono::steady_clock::time_point production_started_at_{};
     std::shared_ptr<CachingRasterProvider> caching_raster_;
     std::shared_ptr<const OsmAnd::ResolvedMapStyle> style_;
     std::unique_ptr<PrecacheWorker> precache_;
@@ -153,6 +157,7 @@ private:
     std::chrono::steady_clock::time_point render_shootout_started_at_{};
     ui::GlOverlayCompositor compositor_;
     ui::OverlayOccupancy overlay_occupancy_;
+    std::vector<ui::UploadRect> upload_rects_;
     bool overlay_enabled_ = true;
     FrameMetrics frame_metrics_{false};
 };
@@ -257,6 +262,11 @@ bool OsmAndEngine::initialize(const Config& config,
         trace("simulation=enabled");
     if (config.production_profile)
         trace("production_profile=enabled");
+    if (config.production_profile_suppressed)
+        trace("production_profile=suppressed_after_unstable_run");
+    production_attempt_ = config.production_profile
+        ? config.production_attempt : std::string();
+    production_started_at_ = std::chrono::steady_clock::now();
     if (render_shootout_enabled_)
         trace("render_shootout=enabled");
     if (sustained_basemap_benchmark_)
@@ -281,6 +291,25 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=initialize_core_partial");
     phase_ = Phase::CoreReady;
     trace("init=core");
+    install_crash_reporter("/tmp/open-navicore-crash.log");
+    // Load bases let a slog fault 'ip' be mapped to a library and symbol.
+    {
+        const auto report = [](const char* name, const void* address) {
+            Dl_info info{};
+            if (dladdr(const_cast<void*>(address), &info) == 0 ||
+                !info.dli_fbase)
+                return;
+            char message[256] = {};
+            (void)std::snprintf(message, sizeof(message),
+                                "load_base %s=%p %s", name, info.dli_fbase,
+                                info.dli_fname ? info.dli_fname : "?");
+            trace(message);
+        };
+        report("backend", reinterpret_cast<const void*>(&make_engine));
+        report("osmand_core",
+               reinterpret_cast<const void*>(&OsmAnd::InitializeCore));
+        report("qt_core", reinterpret_cast<const void*>(&qVersion));
+    }
 
     bool resource_ok = false;
     const QByteArray default_style = resources_->getResource(
@@ -779,8 +808,9 @@ bool OsmAndEngine::apply_camera()
         std::fabs(pose.longitude - applied_pose_.longitude) > 1e-8 ||
         pose.anchor_x != applied_pose_.anchor_x ||
         pose.anchor_y != applied_pose_.anchor_y ||
-        std::fabs(pose.zoom - applied_pose_.zoom) > 1e-3f ||
-        std::fabs(pose.azimuth_degrees - applied_pose_.azimuth_degrees) > 0.05f ||
+        std::fabs(pose.zoom - applied_pose_.zoom) > 0.01f ||
+        std::fabs(static_cast<float>(CameraController::shortest_angle_delta(
+            applied_pose_.azimuth_degrees, pose.azimuth_degrees))) > 0.25f ||
         pose.elevation_degrees != applied_pose_.elevation_degrees;
     if (changed) {
         const auto location = OsmAnd::Utilities::convertLatLonTo31(
@@ -804,10 +834,15 @@ bool OsmAndEngine::apply_camera()
                     OsmAnd::LatLon(vehicle.latitude, vehicle.longitude)),
                 marker, true);
         }
-        view_->set_vehicle_marker(
-            visible, marker.x, marker.y,
-            static_cast<float>(vehicle.heading_degrees) -
-                pose.azimuth_degrees);
+        float rotation = static_cast<float>(CameraController::shortest_angle_delta(
+            pose.azimuth_degrees, vehicle.heading_degrees));
+        // Heading-up: the arrow points up; small residuals from azimuth
+        // smoothing would otherwise redraw the rotated marker every frame.
+        if (pose.following &&
+            camera_.follow_mode() == CameraController::Mode::HeadingUp &&
+            std::fabs(rotation) < 15.0f)
+            rotation = 0.0f;
+        view_->set_vehicle_marker(visible, marker.x, marker.y, rotation);
     } else {
         view_->set_vehicle_marker(false, 0, 0, 0.0f);
     }
@@ -941,18 +976,21 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     const bool ui_dirty = overlay_enabled_ && view_->render(16u);
     measurement.ui_render_us = elapsed_us(stage_started);
     if (overlay_enabled_) {
-        const auto dirty = view_->dirty_region();
         stage_started = Clock::now();
+        upload_rects_.clear();
         if (ui_dirty) {
-            measurement.ui_upload_bytes = dirty.width * dirty.height *
-                                          sizeof(std::uint32_t);
-            overlay_occupancy_.update(view_->pixels(), view_->width(),
-                                      view_->height(), dirty.y, dirty.height);
+            for (const auto& dirty : view_->dirty_regions()) {
+                measurement.ui_upload_bytes += dirty.width * dirty.height *
+                                               sizeof(std::uint32_t);
+                overlay_occupancy_.update(view_->pixels(), view_->width(),
+                                          view_->height(), dirty.y,
+                                          dirty.height);
+                upload_rects_.push_back(
+                    {dirty.x, dirty.y, dirty.width, dirty.height});
+            }
         }
         const bool presented = compositor_.present(
-            view_->pixels(), view_->width(), view_->height(),
-            ui_dirty ? dirty.x : 0u, ui_dirty ? dirty.y : 0u,
-            ui_dirty ? dirty.width : 0u, ui_dirty ? dirty.height : 0u,
+            view_->pixels(), view_->width(), view_->height(), upload_rects_,
             overlay_occupancy_);
         measurement.ui_composite_us = elapsed_us(stage_started);
         if (!presented) {
@@ -1042,6 +1080,14 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         }
     }
     advance_benchmark_autostart();
+    // Crash guard: two minutes of presented frames clears the attempt.
+    if (!production_attempt_.empty() &&
+        std::chrono::steady_clock::now() - production_started_at_ >=
+            std::chrono::minutes(2)) {
+        std::remove(production_attempt_.c_str());
+        production_attempt_.clear();
+        trace("production_profile=stable");
+    }
     // Recents change only on guidance start; save outside the hot path.
     if (recents_store_ &&
         navigation_->recents_revision() != saved_recents_revision_) {

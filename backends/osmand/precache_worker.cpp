@@ -4,6 +4,7 @@
 #include "diagnostics.h"
 #include "thread_priority.h"
 
+#include <OsmAndCore/FunctorQueryController.h>
 #include <OsmAndCore/ObfsCollection.h>
 #include <OsmAndCore/Map/IMapTiledDataProvider.h>
 #include <OsmAndCore/Map/IRasterMapLayerProvider.h>
@@ -70,6 +71,12 @@ void PrecacheWorker::run() noexcept
         std::uint64_t done = 0;
         std::uint64_t failed = 0;
         std::vector<std::uint8_t> pixels;
+        // OsmAnd providers dereference request.queryController; it also
+        // lets stop() abort a tile that is being rasterized.
+        const auto controller = std::make_shared<OsmAnd::FunctorQueryController>(
+            [this](const OsmAnd::FunctorQueryController*) {
+                return stopping_.load();
+            });
         trace("precache=start");
         write_progress(0, total, 0);
         for (const auto& range : job_.ranges) {
@@ -92,6 +99,7 @@ void PrecacheWorker::run() noexcept
                             static_cast<int32_t>(x), static_cast<int32_t>(y));
                         request.zoom = static_cast<OsmAnd::ZoomLevel>(range.zoom);
                         request.detailedZoom = request.zoom;
+                        request.queryController = controller;
                         std::shared_ptr<OsmAnd::IMapDataProvider::Data> data;
                         const auto raster_data = raster.obtainData(request, data)
                             ? std::dynamic_pointer_cast<

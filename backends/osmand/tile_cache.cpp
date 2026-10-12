@@ -3,6 +3,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -94,6 +95,41 @@ TilePackStore::TilePackStore(Options options) : options_(std::move(options))
 {
     if (options_.open_packs == 0)
         options_.open_packs = 1;
+    if (!options_.available_bytes) {
+        options_.available_bytes = [](const std::string& root) -> std::int64_t {
+            // The root may not exist yet; walk up to an existing directory.
+            std::string path = root;
+            struct statvfs info {};
+            while (!path.empty()) {
+                if (::statvfs(path.c_str(), &info) == 0)
+                    return static_cast<std::int64_t>(info.f_bavail) *
+                           static_cast<std::int64_t>(info.f_frsize);
+                const auto slash = path.rfind('/');
+                if (slash == std::string::npos || slash == 0)
+                    break;
+                path.resize(slash);
+            }
+            return -1;
+        };
+    }
+}
+
+bool TilePackStore::space_allows_write()
+{
+    // Re-check every 64 writes: cheap, and a 128 KiB tile cannot overrun a
+    // 256 MiB reserve in that interval.
+    if (writes_since_space_check_ == 0) {
+        const std::int64_t available = options_.available_bytes(options_.root);
+        low_space_ = available >= 0 &&
+                     static_cast<std::uint64_t>(available) < options_.reserve_bytes;
+    }
+    writes_since_space_check_ = (writes_since_space_check_ + 1) % 64u;
+    if (low_space_) {
+        ++stats_.refused_low_space;
+        writes_since_space_check_ = 0; // re-check next time
+        return false;
+    }
+    return true;
 }
 
 TilePackStore::~TilePackStore()
@@ -313,6 +349,8 @@ bool TilePackStore::put(const TileKey& key, const std::uint8_t* pixels,
     std::lock_guard<std::mutex> lock(mutex_);
     if (!scanned_)
         scan_existing();
+    if (!space_allows_write())
+        return false;
     Pack* pack = open_pack(key, true);
     if (!pack || !pack->writable)
         return false;

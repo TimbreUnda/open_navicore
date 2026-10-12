@@ -80,7 +80,10 @@ bool CachingRasterProvider::obtainData(
     const TileKey key{static_cast<std::uint32_t>(tiled->zoom),
                       static_cast<std::uint32_t>(tiled->tileId.x),
                       static_cast<std::uint32_t>(tiled->tileId.y)};
-    thread_local std::vector<std::uint8_t> pixels;
+    // Not thread_local: dynamic TLS in this dlopen()ed plugin (static
+    // libstdc++, QNX 6.6) is not trusted; one allocation per tile is cheap
+    // next to rasterizing it.
+    std::vector<std::uint8_t> pixels;
     if (store->get(key, pixels)) {
         if (auto image = decode_tile(pixels, store->format(),
                                      store->tile_size())) {

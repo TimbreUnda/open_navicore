@@ -37,6 +37,13 @@ public:
     uint32_t height() const noexcept { return height_; }
     bool dirty() const noexcept { return dirty_; }
     DirtyRegion dirty_region() const noexcept { return dirty_region_; }
+    // Separate dirty areas of the last render (at most 8, merged when they
+    // touch). Far-apart updates, e.g. the map marker and the guidance rail,
+    // stay separate so their bounding box is not re-uploaded every frame.
+    const std::vector<DirtyRegion>& dirty_regions() const noexcept
+    {
+        return dirty_regions_;
+    }
 
     // Deterministic entry points used by host tests; production input reaches
     // the same model transitions through LVGL callbacks.
@@ -136,6 +143,8 @@ private:
     bool dirty_ = false;
     bool full_clear_pending_ = true;
     DirtyRegion dirty_region_{};
+    std::vector<DirtyRegion> dirty_regions_;
+    void add_dirty(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 };
 
 } // namespace navicore_osmand::ui
