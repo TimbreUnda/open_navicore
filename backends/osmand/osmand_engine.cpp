@@ -738,6 +738,12 @@ bool OsmAndEngine::apply_camera()
             apply_style_settings();
             if (caching_raster_)
                 caching_raster_->set_cache(make_tile_cache());
+            if (retained_symbols_) {
+                retained_symbols_->stop();
+                retained_symbols_->release(false);
+                retained_symbols_.reset();
+                retained_symbols_creation_attempted_ = false;
+            }
             // Every cached tile was rasterized for the old palette.
             renderer_->reloadEverything();
             trace(night_ ? "style=night" : "style=day");
@@ -1020,8 +1026,13 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         !retained_symbols_creation_attempted_) {
         retained_symbols_creation_attempted_ = true;
         try {
+            SymbolSource source;
+            source.obfs = obfs_;
+            source.style = style_;
+            source.style_settings = style_settings();
+            source.locale = QStringLiteral("uk");
             retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
-                symbols_, navigation_wakeup_);
+                std::move(source), navigation_wakeup_);
             trace("init=retained_symbols_after_first_frame");
         } catch (...) {
             retained_map_symbols_ = false;

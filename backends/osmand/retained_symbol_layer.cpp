@@ -2,6 +2,14 @@
 
 #include "diagnostics.h"
 #include "session.h"
+#include "thread_priority.h"
+
+#include <OsmAndCore/ObfsCollection.h>
+#include <OsmAndCore/Map/MapPresentationEnvironment.h>
+#include <OsmAndCore/Map/MapPrimitivesProvider.h>
+#include <OsmAndCore/Map/MapPrimitiviser.h>
+#include <OsmAndCore/Map/ObfMapObjectsProvider.h>
+#include <OsmAndCore/Map/ResolvedMapStyle.h>
 
 #include <OsmAndCore/IQueryController.h>
 #include <OsmAndCore/Map/BillboardRasterMapSymbol.h>
@@ -35,11 +43,11 @@
 namespace navicore_osmand {
 namespace {
 
-constexpr int atlas_width = 512;
+constexpr int atlas_width = 1024;
 constexpr int atlas_height = 512;
 constexpr int atlas_gutter = 1;
 constexpr std::size_t maximum_candidates = 1024u;
-constexpr std::size_t maximum_symbols = 32u;
+constexpr std::size_t maximum_symbols = 64u;
 constexpr int maximum_tiles = 25;
 
 struct RequestKey {
@@ -323,9 +331,8 @@ GLuint compile(GLenum kind, const char* source)
 
 class RetainedSymbolLayer::Impl {
 public:
-    Impl(std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> provider,
-         std::shared_ptr<Wakeup> wakeup)
-        : provider_(std::move(provider)), wakeup_(std::move(wakeup))
+    Impl(SymbolSource source, std::shared_ptr<Wakeup> wakeup)
+        : source_(std::move(source)), wakeup_(std::move(wakeup))
     {
         // Start only after every request/result field below has completed
         // construction. Starting in the member initializer races worker_loop()
@@ -360,6 +367,7 @@ public:
                 active_ = std::move(published_);
                 has_published_ = false;
                 atlas_dirty_ = true;
+                visible_.clear();
             }
         }
         if (width == 0u || height == 0u || active_.symbols.empty())
@@ -380,7 +388,16 @@ public:
         vertices_.reserve(active_.symbols.size() * 6u);
         accepted_.clear();
         accepted_.reserve(active_.symbols.size());
-        for (const auto& symbol : active_.symbols) {
+        // Stable placement: last frame's survivors claim space first so a
+        // small camera move does not swap which of two labels is shown.
+        order_.clear();
+        for (std::size_t i = 0; i < active_.symbols.size(); ++i)
+            if (i < visible_.size() && visible_[i]) order_.push_back(i);
+        for (std::size_t i = 0; i < active_.symbols.size(); ++i)
+            if (i >= visible_.size() || !visible_[i]) order_.push_back(i);
+        visible_.assign(active_.symbols.size(), 0u);
+        for (const std::size_t index : order_) {
+            const auto& symbol = active_.symbols[index];
             OsmAnd::PointI screen;
             if (!renderer.obtainScreenPointFromPosition(
                     symbol.position31, screen, true))
@@ -406,6 +423,7 @@ public:
             if (collision)
                 continue;
             accepted_.push_back(rectangle);
+            visible_[index] = 1u;
             const float left = static_cast<float>(center_x - symbol.width / 2);
             const float top = static_cast<float>(center_y - symbol.height / 2);
             const float right = left + symbol.width;
@@ -513,6 +531,27 @@ private:
 
     void worker_loop()
     {
+        (void)lower_current_thread_priority(2);
+        std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> provider;
+        try {
+            auto presentation =
+                std::make_shared<OsmAnd::MapPresentationEnvironment>(
+                    source_.style, 1.0f, 1.0f, 1.0f);
+            presentation->setLocaleLanguageId(source_.locale);
+            presentation->setSettings(source_.style_settings);
+            auto primitiviser =
+                std::make_shared<OsmAnd::MapPrimitiviser>(presentation);
+            auto objects =
+                std::make_shared<OsmAnd::ObfMapObjectsProvider>(source_.obfs);
+            auto primitives = std::make_shared<OsmAnd::MapPrimitivesProvider>(
+                objects, primitiviser, 256u);
+            provider = std::make_shared<OsmAnd::MapObjectsSymbolsProvider>(
+                primitives, 256u);
+            trace("retained_symbols=private_provider_ready");
+        } catch (...) {
+            trace("error=retained_symbols_provider");
+            return;
+        }
         while (!stopping_.load()) {
             WorkRequest work;
             {
@@ -525,7 +564,7 @@ private:
                 work = pending_;
                 has_pending_ = false;
             }
-            Atlas result = build_atlas(work, *provider_, stopping_);
+            Atlas result = build_atlas(work, *provider, stopping_);
             if (stopping_.load())
                 break;
             bool publish = false;
@@ -546,7 +585,7 @@ private:
         }
     }
 
-    const std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> provider_;
+    const SymbolSource source_;
     const std::shared_ptr<Wakeup> wakeup_;
     std::mutex mutex_;
     std::condition_variable condition_;
@@ -563,16 +602,17 @@ private:
     bool atlas_dirty_ = false;
     std::vector<GlVertex> vertices_;
     std::vector<Rectangle> accepted_;
+    std::vector<std::size_t> order_;
+    std::vector<std::uint8_t> visible_;
     GLuint program_ = 0;
     GLuint texture_ = 0;
     GLuint vertex_buffer_ = 0;
     GLint texture_uniform_ = -1;
 };
 
-RetainedSymbolLayer::RetainedSymbolLayer(
-    std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> provider,
-    std::shared_ptr<Wakeup> wakeup)
-    : impl_(std::make_unique<Impl>(std::move(provider), std::move(wakeup)))
+RetainedSymbolLayer::RetainedSymbolLayer(SymbolSource source,
+                                         std::shared_ptr<Wakeup> wakeup)
+    : impl_(std::make_unique<Impl>(std::move(source), std::move(wakeup)))
 {
 }
 
