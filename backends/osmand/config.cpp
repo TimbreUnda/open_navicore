@@ -61,6 +61,12 @@ Config Config::from_environment()
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_BENCHMARK_AUTOSTART",
             "/datastore/navicore-backend/enable-benchmark-autostart"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_CAR_STYLE",
+            "/datastore/navicore-backend/enable-car-style"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_RGB565_TILES",
+            "/datastore/navicore-backend/enable-rgb565-tiles"),
         20.0
     };
 }

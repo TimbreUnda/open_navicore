@@ -51,8 +51,26 @@ void FrameMetrics::record(const FrameMeasurement& measurement) noexcept
 {
     if (!enabled_)
         return;
+    const auto now = std::chrono::steady_clock::now();
     switch (measurement.outcome) {
-    case MeasuredFrameOutcome::Presented: ++presented_; break;
+    case MeasuredFrameOutcome::Presented:
+        ++presented_;
+        if (last_presented_ != std::chrono::steady_clock::time_point{}) {
+            const auto interval = std::chrono::duration_cast<
+                std::chrono::microseconds>(now - last_presented_).count();
+            if (interval < 1000000) {
+                // Upper bounds: 33, 50, 67, 100, 200 ms, then slower.
+                static constexpr std::int64_t bounds[] = {
+                    33334, 50000, 66667, 100000, 200000};
+                std::size_t bin = 0;
+                while (bin < 5u && interval > bounds[bin]) ++bin;
+                ++interval_bins_[bin];
+                interval_max_us_ = std::max(interval_max_us_,
+                                            static_cast<std::uint32_t>(interval));
+            }
+        }
+        last_presented_ = now;
+        break;
     case MeasuredFrameOutcome::PreparePending: ++prepare_pending_; break;
     case MeasuredFrameOutcome::RenderPending: ++render_pending_; break;
     case MeasuredFrameOutcome::Fault: ++faults_; break;
@@ -65,7 +83,6 @@ void FrameMetrics::record(const FrameMeasurement& measurement) noexcept
     ui_composite_.add(measurement.ui_composite_us);
     ui_upload_bytes_ += measurement.ui_upload_bytes;
 
-    const auto now = std::chrono::steady_clock::now();
     if (now - window_started_ >= std::chrono::seconds(1))
         report(now);
 }
@@ -75,14 +92,16 @@ void FrameMetrics::report(std::chrono::steady_clock::time_point now) noexcept
     const auto elapsed_ms = std::max<std::int64_t>(1,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             now - window_started_).count());
-    char line[512] = {};
+    char line[640] = {};
     (void)std::snprintf(
         line, sizeof(line),
         "perf window_ms=%lld presented=%u fps_x10=%llu pending_prepare=%u "
         "pending_render=%u faults=%u total_p50_ms=%u total_p95_ms=%u "
         "total_p99_ms=%u total_max_us=%u update_p95_ms=%u prepare_p95_ms=%u "
         "map_p95_ms=%u ui_render_p95_ms=%u ui_composite_p95_ms=%u "
-        "ui_upload_bytes=%llu",
+        "ui_upload_bytes=%llu interval_le33=%u interval_le50=%u "
+        "interval_le67=%u interval_le100=%u interval_le200=%u "
+        "interval_gt200=%u interval_max_us=%u",
         static_cast<long long>(elapsed_ms), presented_,
         static_cast<unsigned long long>(presented_) * 10000u /
             static_cast<unsigned long long>(elapsed_ms),
@@ -93,8 +112,13 @@ void FrameMetrics::report(std::chrono::steady_clock::time_point now) noexcept
         map_render_.percentile(95u, 100u),
         ui_render_.percentile(95u, 100u),
         ui_composite_.percentile(95u, 100u),
-        static_cast<unsigned long long>(ui_upload_bytes_));
+        static_cast<unsigned long long>(ui_upload_bytes_),
+        interval_bins_[0], interval_bins_[1], interval_bins_[2],
+        interval_bins_[3], interval_bins_[4], interval_bins_[5],
+        interval_max_us_);
     trace(line);
+    interval_bins_.fill(0u);
+    interval_max_us_ = 0u;
 
     presented_ = 0u;
     prepare_pending_ = 0u;

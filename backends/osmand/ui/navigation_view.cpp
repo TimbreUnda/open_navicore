@@ -158,18 +158,17 @@ NavigationView::~NavigationView() { destroy_display(); }
 void NavigationView::create_display()
 {
     pixels_.assign(static_cast<std::size_t>(width_) * height_, 0u);
-    constexpr uint32_t draw_rows = 64u;
-    draw_buffer_.resize(static_cast<std::size_t>(width_) *
-                        std::min(height_, draw_rows));
     display_ = lv_display_create(static_cast<int32_t>(width_),
                                  static_cast<int32_t>(height_));
     if (!display_)
         throw std::runtime_error("lv_display_create failed");
     lv_display_set_user_data(display_, this);
     lv_display_set_color_format(display_, LV_COLOR_FORMAT_ARGB8888);
-    lv_display_set_buffers(display_, draw_buffer_.data(), nullptr,
-                           draw_buffer_.size() * sizeof(uint32_t),
-                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+    // LVGL draws invalidated areas straight into the retained canvas, which
+    // the compositor uploads; no intermediate draw buffer or flush copy.
+    lv_display_set_buffers(display_, pixels_.data(), nullptr,
+                           pixels_.size() * sizeof(uint32_t),
+                           LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(display_, flush_cb);
     lv_display_set_default(display_);
 
@@ -723,6 +722,7 @@ void NavigationView::flush_cb(lv_display_t* display, const lv_area_t* area,
                               unsigned char* source_bytes)
 {
     auto* self = static_cast<NavigationView*>(lv_display_get_user_data(display));
+    // Direct mode: pixels are already in the canvas; only track the area.
     if (area && source_bytes && area->x1 >= 0 && area->y1 >= 0 &&
         area->x2 >= area->x1 && area->y2 >= area->y1 &&
         static_cast<uint32_t>(area->x2) < self->width_ &&
@@ -731,15 +731,6 @@ void NavigationView::flush_cb(lv_display_t* display, const lv_area_t* area,
         const uint32_t y = static_cast<uint32_t>(area->y1);
         const uint32_t width = static_cast<uint32_t>(area->x2 - area->x1 + 1);
         const uint32_t height = static_cast<uint32_t>(area->y2 - area->y1 + 1);
-        const std::size_t source_stride = lv_draw_buf_width_to_stride(
-            width, LV_COLOR_FORMAT_ARGB8888);
-        for (uint32_t row = 0; row < height; ++row) {
-            std::memcpy(self->pixels_.data() +
-                            static_cast<std::size_t>(y + row) * self->width_ + x,
-                        source_bytes + static_cast<std::size_t>(row) *
-                                           source_stride,
-                        static_cast<std::size_t>(width) * sizeof(uint32_t));
-        }
         if (!self->dirty_) {
             self->dirty_region_ = {x, y, width, height};
         } else {

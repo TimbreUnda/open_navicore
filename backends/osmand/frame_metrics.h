@@ -43,6 +43,13 @@ private:
     void report(std::chrono::steady_clock::time_point now) noexcept;
     bool enabled_ = false;
     std::chrono::steady_clock::time_point window_started_{};
+    // Presented-to-presented intervals include swap and pending frames, so
+    // they measure what the driver sees. Coarse bins let a parser compute a
+    // run-wide 1% low; slower than one second counts as a pause, not a frame.
+    std::chrono::steady_clock::time_point last_presented_{};
+    static constexpr std::size_t interval_bin_count = 6;
+    std::array<std::uint32_t, interval_bin_count> interval_bins_{};
+    std::uint32_t interval_max_us_ = 0;
     std::uint32_t presented_ = 0;
     std::uint32_t prepare_pending_ = 0;
     std::uint32_t render_pending_ = 0;

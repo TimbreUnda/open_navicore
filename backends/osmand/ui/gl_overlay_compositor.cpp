@@ -239,9 +239,16 @@ bool GlOverlayCompositor::present(const uint32_t* pixels, uint32_t width,
                dirty_width <= width && dirty_height <= height &&
                dirty_x <= width - dirty_width &&
                dirty_y <= height - dirty_height) {
+        // Wide dirty areas upload whole canvas rows straight from the canvas;
+        // only narrow ones are repacked, where the copy is cheaper than the
+        // extra bytes. GLES2 has no GL_UNPACK_ROW_LENGTH.
+        if (dirty_width * 2u >= width) {
+            dirty_x = 0u;
+            dirty_width = width;
+        }
         const uint32_t* upload = pixels +
             static_cast<std::size_t>(dirty_y) * width + dirty_x;
-        if (dirty_x != 0u || dirty_width != width) {
+        if (dirty_width != width) {
             upload_pixels_.resize(static_cast<std::size_t>(dirty_width) *
                                   dirty_height);
             for (uint32_t row = 0; row < dirty_height; ++row) {

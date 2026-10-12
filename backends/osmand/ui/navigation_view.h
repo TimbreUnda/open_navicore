@@ -83,7 +83,6 @@ private:
     uint32_t width_;
     uint32_t height_;
     std::vector<uint32_t> pixels_;
-    std::vector<uint32_t> draw_buffer_;
     lv_display_t* display_ = nullptr;
     lv_indev_t* indev_ = nullptr;
     lv_obj_t* screen_ = nullptr;

@@ -30,6 +30,7 @@
 #include <OsmAndCore/Map/VectorLinesCollection.h>
 
 #include <QByteArray>
+#include <QHash>
 #include <QString>
 
 #include <algorithm>
@@ -266,6 +267,23 @@ bool OsmAndEngine::initialize(const Config& config,
     presentation_ = std::make_shared<OsmAnd::MapPresentationEnvironment>(
         style, 1.0f, 1.0f, 1.0f);
     presentation_->setLocaleLanguageId(QStringLiteral("uk"));
+    if (config.car_style) {
+        // OsmAnd's own car profile plus switches for detail a driver does not
+        // use; fewer primitives means less rasterization and fewer symbols.
+        presentation_->setSettings(QHash<QString, QString>{
+            {QStringLiteral("appMode"), QStringLiteral("car")},
+            {QStringLiteral("baseAppMode"), QStringLiteral("car")},
+            {QStringLiteral("hideHouseNumbers"), QStringLiteral("true")},
+            {QStringLiteral("hideUnderground"), QStringLiteral("true")},
+            {QStringLiteral("hideMilitaryAreas"), QStringLiteral("true")},
+            {QStringLiteral("noAdminboundaries"), QStringLiteral("true")},
+            {QStringLiteral("transportStops"), QStringLiteral("false")},
+            {QStringLiteral("streetLighting"), QStringLiteral("false")},
+            {QStringLiteral("natureReserves"), QStringLiteral("false")},
+            {QStringLiteral("showProposed"), QStringLiteral("false")},
+        });
+        trace("car_style=enabled");
+    }
     primitiviser_ = std::make_shared<OsmAnd::MapPrimitiviser>(presentation_);
     map_objects_ = std::make_shared<OsmAnd::ObfMapObjectsProvider>(obfs_);
     primitives_ = std::make_shared<OsmAnd::MapPrimitivesProvider>(
@@ -331,6 +349,10 @@ bool OsmAndEngine::initialize(const Config& config,
         std::static_pointer_cast<OsmAnd::AtlasMapRendererConfiguration>(
             renderer_->getConfiguration());
     configuration->referenceTileSizeOnScreenInPixels = 256u;
+    // RGB565 halves tile upload size and texture bandwidth on the shared bus.
+    configuration->limitTextureColorDepthBy16bits = config.rgb565_tiles;
+    if (config.rgb565_tiles)
+        trace("rgb565_tiles=enabled");
     // Keep the proven setup order: providers and camera precede GL init.
     renderer_->setConfiguration(configuration);
     resize(target);
