@@ -10,6 +10,7 @@
 
 namespace OsmAnd {
 class IMapRenderer;
+class MapObjectsSymbolsProvider;
 class ObfsCollection;
 class ResolvedMapStyle;
 struct MapState;
@@ -29,6 +30,11 @@ struct SymbolSource {
     std::shared_ptr<const OsmAnd::ResolvedMapStyle> style;
     QHash<QString, QString> style_settings;
     QString locale;
+    // Preferred: the renderer's already-warm provider (its primitives cache
+    // is shared with the raster tiles). The earlier crash blamed on sharing
+    // was a null request.queryController, now always set. When null, the
+    // worker builds a private graph from the fields above.
+    std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> shared_provider;
 };
 
 // Builds a small symbol atlas away from the renderer thread and retains it

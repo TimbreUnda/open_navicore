@@ -53,7 +53,7 @@ OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 OSMAND_PLUGIN_TARGET := $(OSMAND_BUILD_DIR)/libMockNavBackendOsmAnd.so
 OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
 	session.o diagnostics.o osmand_engine.o baked_symbols_raster_provider.o bounded_symbols_provider.o navigation_worker.o compact_text.o navigation_model.o \
-	retained_symbol_layer.o gpu_upload_context.o camera_controller.o tile_cache.o caching_raster_provider.o precache_worker.o thread_priority.o crash_reporter.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o overlay_occupancy.o recents_store.o frame_metrics.o)
+	retained_symbol_layer.o gpu_upload_context.o camera_controller.o tile_cache.o caching_raster_provider.o precache_worker.o thread_priority.o crash_reporter.o label_policy.o label_geometry.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o overlay_occupancy.o recents_store.o frame_metrics.o)
 LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
 OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
 OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)
@@ -64,7 +64,7 @@ OSMAND_ENV = QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOS
 OSMAND_COMPILE = $(OSMAND_ENV) $(OSMAND_CXX) --sysroot=$(QNX_TARGET) \
 	-B$(OSMAND_BINUTILS_DIR)/ $(OSMAND_CXXFLAGS) $(OSMAND_INCLUDES) $(OSMAND_LVGL_FLAGS)
 
-.PHONY: osmand-check osmand-manifest camera-controller-test tile-cache-test osmand-session-test osmand-route-smoke
+.PHONY: osmand-check osmand-manifest camera-controller-test tile-cache-test labels-test osmand-session-test osmand-route-smoke
 
 osmand-backend: $(OSMAND_PLUGIN_TARGET) | $(DIST_DIR)
 	cp $< $(DIST_DIR)/libMockNavBackendOsmAnd.so
@@ -157,6 +157,14 @@ osmand-manifest: osmand-backend
 		--config-key "$(OSMAND_CONFIG_KEY)" \
 		--plugin "$(OSMAND_PLUGIN_TARGET)" \
 		--output "$(OSMAND_BUILD_DIR)/bundle-manifest.json"
+
+labels-test:
+	mkdir -p $(BUILD_DIR)
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror \
+		-Ibackends/osmand backends/osmand/label_policy.cpp \
+		backends/osmand/label_geometry.cpp tests/labels_test.cpp \
+		-o $(BUILD_DIR)/labels-test
+	$(BUILD_DIR)/labels-test
 
 tile-cache-test:
 	mkdir -p $(BUILD_DIR)

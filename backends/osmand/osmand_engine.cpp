@@ -655,6 +655,9 @@ QHash<QString, QString> OsmAndEngine::style_settings() const
             {QStringLiteral("streetLighting"), QStringLiteral("false")},
             {QStringLiteral("natureReserves"), QStringLiteral("false")},
             {QStringLiteral("showProposed"), QStringLiteral("false")},
+            // POI captions (churches, libraries, shops) are noise while
+            // driving; icons stay so fuel/charging/parking remain visible.
+            {QStringLiteral("hidePOILabels"), QStringLiteral("true")},
         };
     }
     settings.insert(QStringLiteral("nightMode"),
@@ -1071,6 +1074,9 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
             source.style = style_;
             source.style_settings = style_settings();
             source.locale = QStringLiteral("uk");
+            // Warm provider: same primitives cache as the raster tiles.
+            // In retained mode the renderer itself never uses symbols_.
+            source.shared_provider = symbols_;
             retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
                 std::move(source), navigation_wakeup_);
             trace("init=retained_symbols_after_first_frame");

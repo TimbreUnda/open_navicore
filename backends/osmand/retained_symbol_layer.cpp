@@ -1,6 +1,8 @@
 #include "retained_symbol_layer.h"
 
 #include "diagnostics.h"
+#include "label_geometry.h"
+#include "label_policy.h"
 #include "session.h"
 #include "thread_priority.h"
 
@@ -80,6 +82,13 @@ struct Candidate {
     OsmAnd::PointI offset;
     int order = 0;
     std::uintptr_t instance = 0;
+    LabelDecision decision;
+    bool on_path = false;
+    // Street names: a window of the road path around the pin, so the render
+    // thread can align the text with the road every frame.
+    std::vector<OsmAnd::PointI> path31;
+    int pin_segment = 0;
+    float pin_t = 0.0f;
 };
 
 struct PackedSymbol {
@@ -92,19 +101,17 @@ struct PackedSymbol {
     float v0 = 0.0f;
     float u1 = 0.0f;
     float v1 = 0.0f;
+    LabelClass label_class = LabelClass::Drop;
+    bool on_path = false;
+    std::vector<OsmAnd::PointI> path31;
+    int pin_segment = 0;
+    float pin_t = 0.0f;
 };
 
 struct Atlas {
     std::uint64_t generation = 0;
     std::vector<std::uint8_t> pixels;
     std::vector<PackedSymbol> symbols;
-};
-
-struct Rectangle {
-    int left = 0;
-    int top = 0;
-    int right = 0;
-    int bottom = 0;
 };
 
 struct GlVertex {
@@ -114,23 +121,51 @@ struct GlVertex {
     GLfloat v;
 };
 
-bool overlaps(const Rectangle& a, const Rectangle& b)
+// Tags that decide whether a label matters to a driver.
+struct GroupTags {
+    std::string highway;
+    std::string place;
+    std::string amenity;
+};
+
+GroupTags group_tags(const std::shared_ptr<OsmAnd::MapSymbolsGroup>& group)
 {
-    return a.left < b.right && a.right > b.left &&
-           a.top < b.bottom && a.bottom > b.top;
+    GroupTags tags;
+    const auto object_group = std::dynamic_pointer_cast<
+        OsmAnd::MapObjectsSymbolsProvider::MapObjectSymbolsGroup>(group);
+    if (!object_group || !object_group->mapObject)
+        return tags;
+    static const QString highway = QStringLiteral("highway");
+    static const QString place = QStringLiteral("place");
+    static const QString amenity = QStringLiteral("amenity");
+    const auto& object = *object_group->mapObject;
+    tags.highway = object.getResolvedAttribute(QStringRef(&highway)).toStdString();
+    tags.place = object.getResolvedAttribute(QStringRef(&place)).toStdString();
+    tags.amenity = object.getResolvedAttribute(QStringRef(&amenity)).toStdString();
+    return tags;
 }
 
-void append_candidate(std::vector<Candidate>& output,
+void append_candidate(std::vector<Candidate>& output, const GroupTags& tags,
                       const std::shared_ptr<OsmAnd::MapSymbol>& symbol,
                       const OsmAnd::PointI& position,
-                      const OsmAnd::PointI& offset,
-                      std::uintptr_t instance)
+                      const OsmAnd::PointI& offset, std::uintptr_t instance,
+                      const OsmAnd::OnPathRasterMapSymbol* on_path,
+                      const OsmAnd::IOnPathMapSymbol::PinPoint* pin)
 {
     if (output.size() >= maximum_candidates || !symbol || symbol->isHidden)
         return;
     const auto raster = std::dynamic_pointer_cast<OsmAnd::RasterMapSymbol>(symbol);
     if (!raster || !raster->image)
         return;
+    LabelTags label;
+    label.highway = tags.highway;
+    label.place = tags.place;
+    label.amenity = tags.amenity;
+    label.on_path = on_path != nullptr;
+    label.icon = symbol->contentClass == OsmAnd::MapSymbol::ContentClass::Icon;
+    const LabelDecision decision = classify_label(label);
+    if (decision.label_class == LabelClass::Drop)
+        return;   // churches, libraries, shops, footways: never rasterized
     const int width = raster->image->width();
     const int height = raster->image->height();
     // Reject pathological resources before they consume atlas or draw budget.
@@ -138,7 +173,25 @@ void append_candidate(std::vector<Candidate>& output,
     if (width < 2 || height < 2 || width > 240 || height > 96 ||
         width * height > 24576)
         return;
-    output.push_back({raster->image, position, offset, symbol->order, instance});
+    Candidate candidate{raster->image, position, offset, symbol->order,
+                        instance, decision, on_path != nullptr, {}, 0, 0.0f};
+    if (on_path && pin) {
+        const auto shared = on_path->getPath31SharedRef();
+        if (!shared || shared->size() < 2)
+            return;
+        // Up to 8 points either side of the pin: enough for the label's
+        // length at street zooms, small enough to project every frame.
+        const int count = shared->size();
+        const int base = std::clamp(static_cast<int>(pin->basePathPointIndex),
+                                    0, count - 2);
+        const int first = std::max(0, base - 8);
+        const int last = std::min(count - 1, base + 9);
+        for (int i = first; i <= last; ++i)
+            candidate.path31.push_back(shared->at(i));
+        candidate.pin_segment = base - first;
+        candidate.pin_t = pin->normalizedOffsetFromBasePathPoint;
+    }
+    output.push_back(std::move(candidate));
 }
 
 void append_group(std::vector<Candidate>& output,
@@ -146,24 +199,25 @@ void append_group(std::vector<Candidate>& output,
 {
     if (!group)
         return;
-    const auto append_symbols = [&](const auto& symbols,
-                                    std::uintptr_t instance) {
-        for (const auto& symbol : symbols) {
+    const GroupTags tags = group_tags(group);
+    if (tags.highway.empty() && tags.place.empty() && tags.amenity.empty())
+        return;   // nothing a driver needs (buildings, landuse, ...)
+    if (!group->additionalInstancesDiscardOriginal) {
+        const auto instance = reinterpret_cast<std::uintptr_t>(group.get());
+        for (const auto& symbol : group->symbols) {
             if (const auto billboard = std::dynamic_pointer_cast<
                     OsmAnd::BillboardRasterMapSymbol>(symbol)) {
-                append_candidate(output, symbol, billboard->position31,
-                                 billboard->offset, instance);
+                append_candidate(output, tags, symbol, billboard->position31,
+                                 billboard->offset, instance, nullptr, nullptr);
             } else if (const auto on_path = std::dynamic_pointer_cast<
                            OsmAnd::OnPathRasterMapSymbol>(symbol)) {
-                append_candidate(output, symbol,
+                append_candidate(output, tags, symbol,
                                  on_path->pinPointOnPath.point31,
-                                 OsmAnd::PointI(0, 0), instance);
+                                 OsmAnd::PointI(0, 0), instance, on_path.get(),
+                                 &on_path->pinPointOnPath);
             }
         }
-    };
-    if (!group->additionalInstancesDiscardOriginal)
-        append_symbols(group->symbols,
-                       reinterpret_cast<std::uintptr_t>(group.get()));
+    }
     for (const auto& additional : group->additionalInstances) {
         if (!additional || output.size() >= maximum_candidates)
             break;
@@ -184,18 +238,20 @@ void append_group(std::vector<Candidate>& output,
                     if (overrides->overridesOffset)
                         offset = overrides->offset;
                 }
-                append_candidate(output, symbol, position, offset, instance);
+                append_candidate(output, tags, symbol, position, offset,
+                                 instance, nullptr, nullptr);
             } else if (const auto on_path = std::dynamic_pointer_cast<
                            OsmAnd::OnPathRasterMapSymbol>(symbol)) {
-                auto position = on_path->pinPointOnPath.point31;
+                auto pin = on_path->pinPointOnPath;
                 if (const auto overrides = std::dynamic_pointer_cast<const
                         OsmAnd::MapSymbolsGroup::AdditionalOnPathSymbolInstanceParameters>(
                             parameters)) {
                     if (overrides->overridesPinPointOnPath)
-                        position = overrides->pinPointOnPath.point31;
+                        pin = overrides->pinPointOnPath;
                 }
-                append_candidate(output, symbol, position,
-                                 OsmAnd::PointI(0, 0), instance);
+                append_candidate(output, tags, symbol, pin.point31,
+                                 OsmAnd::PointI(0, 0), instance, on_path.get(),
+                                 &pin);
             }
             if (output.size() >= maximum_candidates)
                 break;
@@ -266,10 +322,14 @@ Atlas build_atlas(const WorkRequest& work,
     }
     if (stopping.load())
         return atlas;
-    std::stable_sort(candidates.begin(), candidates.end(),
-        [](const Candidate& left, const Candidate& right) {
-            return left.order < right.order;
-        });
+
+    // Driver policy: per-class budgets, best road classes first. The same
+    // street name repeats along long roads; keep one per text image.
+    std::vector<LabelCandidate> policy;
+    policy.reserve(candidates.size());
+    for (const auto& candidate : candidates)
+        policy.push_back({candidate.decision, candidate.order});
+    const auto chosen = select_labels(policy, LabelBudget{});
 
     atlas.pixels.assign(static_cast<std::size_t>(atlas_width) *
                             atlas_height * 4u, 0u);
@@ -277,7 +337,8 @@ Atlas build_atlas(const WorkRequest& work,
     int cursor_x = atlas_gutter;
     int cursor_y = atlas_gutter;
     int row_height = 0;
-    for (const auto& candidate : candidates) {
+    for (const std::size_t index : chosen) {
+        const auto& candidate = candidates[index];
         if (atlas.symbols.size() >= maximum_symbols || stopping.load())
             break;
         const int width = candidate.image->width();
@@ -312,13 +373,22 @@ Atlas build_atlas(const WorkRequest& work,
                 pixels.data() + static_cast<std::size_t>(row) * width * 4u,
                 static_cast<std::size_t>(width) * 4u);
         }
-        atlas.symbols.push_back({
-            candidate.position31, candidate.offset, candidate.order,
-            width, height,
-            static_cast<float>(cursor_x) / atlas_width,
-            static_cast<float>(cursor_y) / atlas_height,
-            static_cast<float>(cursor_x + width) / atlas_width,
-            static_cast<float>(cursor_y + height) / atlas_height});
+        PackedSymbol packed;
+        packed.position31 = candidate.position31;
+        packed.offset = candidate.offset;
+        packed.order = candidate.order;
+        packed.width = width;
+        packed.height = height;
+        packed.u0 = static_cast<float>(cursor_x) / atlas_width;
+        packed.v0 = static_cast<float>(cursor_y) / atlas_height;
+        packed.u1 = static_cast<float>(cursor_x + width) / atlas_width;
+        packed.v1 = static_cast<float>(cursor_y + height) / atlas_height;
+        packed.label_class = candidate.decision.label_class;
+        packed.on_path = candidate.on_path;
+        packed.path31 = candidate.path31;
+        packed.pin_segment = candidate.pin_segment;
+        packed.pin_t = candidate.pin_t;
+        atlas.symbols.push_back(std::move(packed));
         cursor_x += width + atlas_gutter;
         row_height = std::max(row_height, height);
     }
@@ -410,47 +480,63 @@ public:
         visible_.assign(active_.symbols.size(), 0u);
         for (const std::size_t index : order_) {
             const auto& symbol = active_.symbols[index];
-            OsmAnd::PointI screen;
-            if (!renderer.obtainScreenPointFromPosition(
-                    symbol.position31, screen, true))
-                continue;
-            const int center_x = screen.x + symbol.offset.x;
-            const int center_y = screen.y + symbol.offset.y;
-            const Rectangle rectangle{
-                center_x - symbol.width / 2 - 2,
-                center_y - symbol.height / 2 - 2,
-                center_x + (symbol.width + 1) / 2 + 2,
-                center_y + (symbol.height + 1) / 2 + 2};
-            if (rectangle.right <= 0 || rectangle.bottom <= 0 ||
-                rectangle.left >= static_cast<int>(width) ||
-                rectangle.top >= static_cast<int>(height))
+            OrientedBox box;
+            if (symbol.on_path && symbol.path31.size() >= 2) {
+                // Street name: follow the road on screen, upright, and only
+                // where the visible road is long and straight enough.
+                screen_path_.clear();
+                for (const auto& point : symbol.path31) {
+                    OsmAnd::PointI projected;
+                    if (!renderer.obtainScreenPointFromPosition(
+                            point, projected, false))
+                        break;
+                    screen_path_.push_back({static_cast<float>(projected.x),
+                                            static_cast<float>(projected.y)});
+                }
+                if (screen_path_.size() != symbol.path31.size() ||
+                    !place_along_path(screen_path_, symbol.pin_segment,
+                                      symbol.pin_t,
+                                      static_cast<float>(symbol.width),
+                                      static_cast<float>(symbol.height), box))
+                    continue;
+            } else {
+                OsmAnd::PointI screen;
+                if (!renderer.obtainScreenPointFromPosition(
+                        symbol.position31, screen, true))
+                    continue;
+                box = {static_cast<float>(screen.x + symbol.offset.x),
+                       static_cast<float>(screen.y + symbol.offset.y),
+                       symbol.width * 0.5f, symbol.height * 0.5f, 0.0f};
+            }
+            const float reach = std::max(box.half_width, box.half_height);
+            if (box.cx + reach <= 0.0f || box.cy + reach <= 0.0f ||
+                box.cx - reach >= static_cast<float>(width) ||
+                box.cy - reach >= static_cast<float>(height))
                 continue;
             bool collision = false;
             for (const auto& placed : accepted_) {
-                if (overlaps(rectangle, placed)) {
+                if (boxes_overlap(box, placed)) {
                     collision = true;
                     break;
                 }
             }
             if (collision)
                 continue;
-            accepted_.push_back(rectangle);
+            accepted_.push_back(box);
             visible_[index] = 1u;
-            const float left = static_cast<float>(center_x - symbol.width / 2);
-            const float top = static_cast<float>(center_y - symbol.height / 2);
-            const float right = left + symbol.width;
-            const float bottom = top + symbol.height;
-            const float x0 = left * 2.0f / width - 1.0f;
-            const float x1 = right * 2.0f / width - 1.0f;
-            const float y0 = 1.0f - top * 2.0f / height;
-            const float y1 = 1.0f - bottom * 2.0f / height;
+            ScreenPoint corners[4];   // text top-left, top-right, bottom-right, bottom-left
+            box_corners(box, corners);
+            const auto clip = [&](const ScreenPoint& point, float u, float v) {
+                return GlVertex{point.x * 2.0f / width - 1.0f,
+                                1.0f - point.y * 2.0f / height, u, v};
+            };
             vertices_.insert(vertices_.end(), {
-                {x0, y1, symbol.u0, symbol.v1},
-                {x1, y1, symbol.u1, symbol.v1},
-                {x0, y0, symbol.u0, symbol.v0},
-                {x0, y0, symbol.u0, symbol.v0},
-                {x1, y1, symbol.u1, symbol.v1},
-                {x1, y0, symbol.u1, symbol.v0}});
+                clip(corners[3], symbol.u0, symbol.v1),
+                clip(corners[2], symbol.u1, symbol.v1),
+                clip(corners[0], symbol.u0, symbol.v0),
+                clip(corners[0], symbol.u0, symbol.v0),
+                clip(corners[2], symbol.u1, symbol.v1),
+                clip(corners[1], symbol.u1, symbol.v0)});
         }
         if (vertices_.empty())
             return true;
@@ -544,8 +630,11 @@ private:
     void worker_loop()
     {
         (void)lower_current_thread_priority(2);
-        std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> provider;
-        try {
+        std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> provider =
+            source_.shared_provider;
+        if (provider)
+            trace("retained_symbols=shared_provider");
+        else try {
             auto presentation =
                 std::make_shared<OsmAnd::MapPresentationEnvironment>(
                     source_.style, 1.0f, 1.0f, 1.0f);
@@ -626,7 +715,8 @@ private:
     Atlas active_;
     bool atlas_dirty_ = false;
     std::vector<GlVertex> vertices_;
-    std::vector<Rectangle> accepted_;
+    std::vector<OrientedBox> accepted_;
+    std::vector<ScreenPoint> screen_path_;
     std::vector<std::size_t> order_;
     std::vector<std::uint8_t> visible_;
     GLuint program_ = 0;
