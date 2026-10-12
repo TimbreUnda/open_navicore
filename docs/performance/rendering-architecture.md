@@ -240,10 +240,33 @@ route-only floor before any map-renderer comparison:
   the provider restores the class usage/pipeline and continues composited.
 
 The provider writes the requested and applied values as one `composition`
-line to `/tmp/open-navicore-present.log`. None of these controls has live FPS
-evidence yet. The overlay experiment must also check HMI popups over the map,
-RVC ordering, and hide/show, since a hardware layer is ordered by pipeline
-rather than by composited z-order.
+line to `/tmp/open-navicore-present.log`.
+
+Live results (2026-10-12, same sustained symbol-free 20 m/s Kyiv route, first
+ten movement windows discarded, guidance started by
+`enable-benchmark-autostart`):
+
+| Presentation policy | Weighted fps | Rolling 5 s range | Below 30 | Swap avg |
+|---|---:|---:|---:|---:|
+| Reference (source-over, before this change) | 32.06 | 30.77--33.65 | 0/174 | not logged |
+| Opaque `NAV_main` | 32.61 | 30.81--34.08 | 0/196 | 27.0 ms |
+| Opaque + `SCREEN_USAGE_OVERLAY` (Screen kept pipeline 1) | 32.69 | 31.63--33.99 | 0/187 | 27.2 ms |
+| Opaque after rejected pipeline 2 fallback | 29.66 | 28.30--30.67 | 137/184 | 29.9 ms |
+
+Backend total/map p95 stayed at 3/2 ms in every run, so all differences are in
+`eglSwapBuffers`. Opaque composition and the overlay usage flag did not
+measurably raise the ceiling: their +0.6 fps is smaller than the 3 fps spread
+between the two opaque runs. Screen accepted `SCREEN_USAGE_OVERLAY` but left
+the window on pipeline 1, so composition did not change, and it rejected an
+explicit pipeline 2. The third run re-set the class usage and pipeline
+explicitly after the rejection, so it is not a clean repeat; its slower swap
+was not attributed. Opaque remains the default because it is correct (the map
+covers the window) and costs nothing, not because it was proven faster.
+
+The ceiling is therefore still Screen composition of the shared framebuffer.
+Remaining candidates need a non-composited layer that Screen actually grants,
+for example a dedicated `graphics.conf` class/pipeline, which requires changing
+the IFS-backed Screen configuration rather than window properties.
 
 Two backend changes address the remaining per-frame costs:
 
@@ -252,9 +275,9 @@ Two backend changes address the remaining per-frame costs:
 - `/datastore/navicore-backend/enable-gpu-upload-worker` enables OsmAnd's GPU
   worker on a pbuffer context that shares objects with the provider context.
   The backend proves that context binds before enabling the worker and falls
-  back to render-thread uploads otherwise. It remains opt-in until cold
-  tile-boundary tails, CPU load, and release/context-loss behavior are
-  measured.
+  back to render-thread uploads otherwise. It remains opt-in and was not run
+  live on 2026-10-12; cold tile-boundary tails, CPU load, and
+  release/context-loss behavior are unmeasured.
 
 ### Sustained moving-basemap qualification
 

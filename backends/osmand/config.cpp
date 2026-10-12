@@ -58,6 +58,9 @@ Config Config::from_environment()
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_GPU_UPLOAD_WORKER",
             "/datastore/navicore-backend/enable-gpu-upload-worker"),
+        marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_BENCHMARK_AUTOSTART",
+            "/datastore/navicore-backend/enable-benchmark-autostart"),
         20.0
     };
 }

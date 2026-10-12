@@ -812,6 +812,13 @@ void NavigationView::route_cb(lv_event_t* event)
             lv_event_get_current_target(event))));
     if (value && self->model_.select_route(value - 1)) self->rebuild();
 }
+bool NavigationView::start_guidance(std::size_t route)
+{
+    if (!model_.select_route(route) || !model_.start_guidance())
+        return false;
+    rebuild();
+    return true;
+}
 void NavigationView::start_cb(lv_event_t* event)
 {
     auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));

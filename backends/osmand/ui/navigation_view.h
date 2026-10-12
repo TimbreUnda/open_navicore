@@ -48,6 +48,7 @@ public:
     bool apply_routes(std::uint64_t revision,
                       std::vector<RouteAlternative> routes);
     bool apply_guidance(GuidanceState guidance);
+    bool start_guidance(std::size_t route);
 
 private:
     struct PointerSample { int action; int32_t x; int32_t y; };

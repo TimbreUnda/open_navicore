@@ -284,6 +284,13 @@ For a sustained moving-basemap qualification, set
 the phase cycling and leaves the real raster basemap, route, marker, camera and
 guidance UI active without OsmAnd's independent symbol provider.
 
+To run that benchmark without touch input, also set
+`OPEN_NAVICORE_OSMAND_BENCHMARK_AUTOSTART=1` or create
+`/datastore/navicore-backend/enable-benchmark-autostart` (requires route
+simulation). After the first frame the engine searches the seeded `kyiv`
+destinations, selects the first result, waits for the route worker, and starts
+guidance, tracing each `benchmark_autostart=` step.
+
 The rejected baked-symbol experiment can be reproduced by setting
 `OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS=1` or creating
 `/datastore/navicore-backend/enable-baked-map-symbols`. A bounded set of

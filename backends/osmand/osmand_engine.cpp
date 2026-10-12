@@ -58,6 +58,7 @@ private:
     bool update_guidance();
     void update_render_shootout();
     bool ensure_navigation_worker();
+    void advance_benchmark_autostart();
     Phase phase_ = Phase::Empty;
     uint32_t width_ = 0;
     uint32_t height_ = 0;
@@ -108,6 +109,9 @@ private:
     bool bounded_map_symbols_ = false;
     bool retained_map_symbols_ = false;
     bool render_shootout_active_ = false;
+    // Bench-only: drive search -> route -> guidance without touch input.
+    enum class Autostart { Off, Search, Select, Start, Done };
+    Autostart autostart_ = Autostart::Off;
     bool render_shootout_complete_ = false;
     unsigned int render_shootout_phase_ = 0u;
     std::chrono::steady_clock::time_point render_shootout_started_at_{};
@@ -195,6 +199,10 @@ bool OsmAndEngine::initialize(const Config& config,
                              std::shared_ptr<Wakeup> wakeup)
 {
     simulation_enabled_ = config.simulate_route;
+    autostart_ = config.benchmark_autostart && config.simulate_route
+                     ? Autostart::Search : Autostart::Off;
+    if (autostart_ != Autostart::Off)
+        trace("benchmark_autostart=enabled");
     sustained_basemap_benchmark_ = config.sustained_basemap_benchmark;
     baked_map_symbols_ = config.baked_map_symbols;
     bounded_map_symbols_ = config.bounded_map_symbols;
@@ -732,9 +740,47 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
             trace("error=retained_symbols_thread_start");
         }
     }
+    advance_benchmark_autostart();
     return finish({FrameOutcome::Presented, PendingStage::None,
-                   guidance_changed || !renderer_->isIdle()},
+                   guidance_changed || !renderer_->isIdle() ||
+                       (autostart_ != Autostart::Off &&
+                        autostart_ != Autostart::Done)},
                   MeasuredFrameOutcome::Presented);
+}
+
+void OsmAndEngine::advance_benchmark_autostart()
+{
+    // Uses the same seeded search and route worker as touch input; each step
+    // waits for the previous asynchronous result to land in the model.
+    switch (autostart_) {
+    case Autostart::Search:
+        view_->open_search();
+        (void)view_->set_query("kyiv");
+        autostart_ = Autostart::Select;
+        trace("benchmark_autostart=search");
+        break;
+    case Autostart::Select:
+        if (navigation_->screen() == ui::Screen::Search &&
+            !navigation_->results().empty() && !navigation_->destination()) {
+            (void)view_->select_result(0u);
+            autostart_ = Autostart::Start;
+            trace("benchmark_autostart=select");
+        }
+        break;
+    case Autostart::Start:
+        if (navigation_->screen() == ui::Screen::RoutePreview &&
+            !navigation_->routes().empty()) {
+            if (view_->start_guidance(0u))
+                trace("benchmark_autostart=guidance");
+            else
+                trace("error=benchmark_autostart_guidance");
+            autostart_ = Autostart::Done;
+        }
+        break;
+    case Autostart::Off:
+    case Autostart::Done:
+        break;
+    }
 }
 
 int OsmAndEngine::gps(const MockNavBackendGpsV1& event)
@@ -798,6 +844,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         render_shootout_active_ = false;
         render_shootout_complete_ = false;
         render_shootout_phase_ = 0u;
+        autostart_ = Autostart::Off;
         simulation_arrival_reported_ = false;
         guidance_tracker_.reset();
         compositor_.release(mode == ReleaseMode::ContextLost);

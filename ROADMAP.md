@@ -63,11 +63,13 @@ larger milestone containing it is complete.
   work, currently bounds FPS. Stock `graphics.conf` places `NAV_main` below the
   full-screen RGBA `HMI_main` on composited pipeline 4, so every map frame is
   recomposited. Qualify, one change at a time, against the route-only floor:
-  - opaque `NAV_main` (`SCREEN_TRANSPARENCY_NONE`), now the default;
-    `disable-opaque-nav-window` restores source-over for A/B runs;
-  - a non-composited layer via `SCREEN_USAGE_OVERLAY`
-    (`enable-nav-overlay`, optionally containing a pipeline id), including
-    HMI popups over the map and RVC ordering.
+  - [x] opaque `NAV_main` (`SCREEN_TRANSPARENCY_NONE`), now the default:
+    32.61 fps versus the 32.06 reference, within run-to-run spread; no
+    measurable ceiling change;
+  - [x] `SCREEN_USAGE_OVERLAY` window usage: accepted but Screen kept pipeline
+    1 (32.69 fps); an explicit pipeline 2 was rejected;
+  - [ ] a non-composited layer Screen actually grants (a dedicated
+    `graphics.conf` class/pipeline), including HMI popups and RVC ordering.
 - [ ] Improve beyond the current floor; no artificial 30 Hz pacing is planned.
 - [ ] Record comparable CPU, memory, cold-tile, frame-age, and input-latency data
   for every surviving renderer candidate.
