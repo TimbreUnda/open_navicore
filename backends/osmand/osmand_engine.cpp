@@ -1,6 +1,9 @@
 #include "engine.h"
 #include "baked_symbols_raster_provider.h"
 #include "camera_controller.h"
+#include "caching_raster_provider.h"
+#include "precache_worker.h"
+#include "tile_cache.h"
 #include "bounded_symbols_provider.h"
 #include "session.h"
 #include "diagnostics.h"
@@ -39,6 +42,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <sys/stat.h>
 
 namespace navicore_osmand {
 namespace {
@@ -63,6 +67,9 @@ private:
     bool ensure_navigation_worker();
     void advance_benchmark_autostart();
     void apply_style_settings();
+    QHash<QString, QString> style_settings() const;
+    std::shared_ptr<TileCache> make_tile_cache() const;
+    void start_precache(const Config& config);
     // Drains UI map commands, advances the car camera and applies the pose to
     // the renderer. Returns true while the camera still needs frames.
     bool apply_camera();
@@ -110,6 +117,14 @@ private:
     bool car_style_ = false;
     bool night_ = false;
     bool overview_pending_ = false;
+    std::shared_ptr<CachingRasterProvider> caching_raster_;
+    std::shared_ptr<const OsmAnd::ResolvedMapStyle> style_;
+    std::unique_ptr<PrecacheWorker> precache_;
+    std::string cache_identity_;
+    std::string tile_cache_runtime_;
+    std::string tile_cache_base_;
+    std::uint64_t tile_cache_budget_ = 0;
+    bool rgb565_tiles_ = false;
     double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
     MockNavBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
@@ -277,6 +292,7 @@ bool OsmAndEngine::initialize(const Config& config,
     if (!style)
         return failure("error=resolve_style");
     trace("init=style");
+    style_ = style;
 
     obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
     obfs_->addFile(QString::fromLocal8Bit(config.map.c_str()));
@@ -310,6 +326,23 @@ bool OsmAndEngine::initialize(const Config& config,
             primitives_, symbols_, [this]() {
                 return renderer_->getMapState();
             });
+    } else if (config.tile_cache) {
+        rgb565_tiles_ = config.rgb565_tiles;
+        tile_cache_runtime_ = config.tile_cache_runtime;
+        tile_cache_base_ = config.tile_cache_base;
+        tile_cache_budget_ =
+            static_cast<std::uint64_t>(config.tile_cache_megabytes) << 20;
+        struct stat map_info {};
+        const bool map_known = ::stat(config.map.c_str(), &map_info) == 0;
+        // Anything that changes rasterized pixels must change this string.
+        cache_identity_ = config.map + "|" +
+            std::to_string(map_known ? map_info.st_size : 0) + "|" +
+            std::to_string(map_known ? map_info.st_mtime : 0) +
+            "|default|uk|256|1.0|cache-v1";
+        caching_raster_ = std::make_shared<CachingRasterProvider>(primitives_);
+        caching_raster_->set_cache(make_tile_cache());
+        raster_ = caching_raster_;
+        trace("tile_cache=enabled");
     } else {
         raster_ = std::make_shared<OsmAnd::MapRasterLayerProvider_Software>(
             primitives_);
@@ -398,6 +431,7 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=routing_xml");
     trace("init=routing_resource");
     navigation_wakeup_ = std::move(wakeup);
+    start_precache(config);
     navigation_map_ = config.map;
     navigation_routing_xml_.assign(
         routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
@@ -570,6 +604,11 @@ bool OsmAndEngine::update_guidance()
 
 void OsmAndEngine::apply_style_settings()
 {
+    presentation_->setSettings(style_settings());
+}
+
+QHash<QString, QString> OsmAndEngine::style_settings() const
+{
     QHash<QString, QString> settings;
     if (car_style_) {
         // OsmAnd's own car profile plus switches for detail a driver does not
@@ -589,7 +628,68 @@ void OsmAndEngine::apply_style_settings()
     }
     settings.insert(QStringLiteral("nightMode"),
                     night_ ? QStringLiteral("true") : QStringLiteral("false"));
-    presentation_->setSettings(settings);
+    return settings;
+}
+
+std::shared_ptr<TileCache> OsmAndEngine::make_tile_cache() const
+{
+    if (cache_identity_.empty())
+        return nullptr;
+    const auto format = rgb565_tiles_ ? TileFormat::Rgb565
+                                      : TileFormat::Rgba8888;
+    std::string description = cache_identity_;
+    description += car_style_ ? "|car" : "|default";
+    description += night_ ? "|night" : "|day";
+    description += rgb565_tiles_ ? "|565" : "|8888";
+    return std::make_shared<TileCache>(
+        tile_cache_base_, tile_cache_runtime_,
+        TileCache::namespace_hash(description), format, 256u,
+        tile_cache_budget_);
+}
+
+void OsmAndEngine::start_precache(const Config& config)
+{
+    if (cache_identity_.empty())
+        return;
+    std::FILE* file = std::fopen(config.precache_manifest.c_str(), "r");
+    if (!file)
+        return;
+    std::string text;
+    char buffer[4096];
+    std::size_t got = 0;
+    while ((got = std::fread(buffer, 1, sizeof(buffer), file)) > 0)
+        text.append(buffer, got);
+    std::fclose(file);
+    std::size_t errors = 0;
+    auto ranges = parse_precache_manifest(text, &errors);
+    if (errors)
+        trace_result("precache=manifest_errors", errors, ranges.size());
+    if (ranges.empty())
+        return;
+    // The shipped base is written for the default (day) style namespace.
+    std::string description = cache_identity_;
+    description += car_style_ ? "|car|day" : "|default|day";
+    description += rgb565_tiles_ ? "|565" : "|8888";
+    PrecacheWorker::Job job;
+    job.manifest_path = config.precache_manifest;
+    job.ranges = std::move(ranges);
+    job.obfs = obfs_;
+    job.style = style_;
+    job.locale = QStringLiteral("uk");
+    // Called from initialize(), before any night toggle: day settings.
+    job.style_settings = style_settings();
+    job.store.root = tile_cache_base_ + "/" +
+                     TileCache::namespace_hash(description);
+    job.store.writable = true;
+    job.store.format = rgb565_tiles_ ? TileFormat::Rgb565 : TileFormat::Rgba8888;
+    job.store.tile_size = 256u;
+    job.store.compression_level = 9;
+    try {
+        precache_.reset(new PrecacheWorker(std::move(job)));
+        trace("precache=worker_started");
+    } catch (...) {
+        trace("error=precache_thread_start");
+    }
 }
 
 bool OsmAndEngine::apply_camera()
@@ -636,6 +736,8 @@ bool OsmAndEngine::apply_camera()
         case ui::MapCommand::ToggleNight:
             night_ = !night_;
             apply_style_settings();
+            if (caching_raster_)
+                caching_raster_->set_cache(make_tile_cache());
             // Every cached tile was rasterized for the old palette.
             renderer_->reloadEverything();
             trace(night_ ? "style=night" : "style=day");
@@ -715,6 +817,8 @@ bool OsmAndEngine::apply_camera()
         ? vehicle.valid && vehicle.speed_mps > 1.0
         : vehicle.valid && vehicle.speed_mps > 2.5;
     (void)view_->set_moving(moving);
+    if (precache_)
+        precache_->set_throttled(moving);
 
     return changed || (vehicle.valid && vehicle.speed_mps > 0.3);
 }
@@ -1010,6 +1114,8 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         // or fail after tearing down only part of the resource graph.
         phase_ = Phase::Quarantined;
         if (navigation_worker_) navigation_worker_->stop();
+        if (precache_) precache_->stop();
+        precache_.reset();
         navigation_worker_.reset();
         if (retained_symbols_) {
             retained_symbols_->stop();
@@ -1064,6 +1170,8 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
     }
     renderer_.reset();
     raster_.reset();
+    caching_raster_.reset();
+    style_.reset();
     symbols_.reset();
     route_lines_.reset();
     primitives_.reset();

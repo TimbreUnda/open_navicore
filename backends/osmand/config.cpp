@@ -71,6 +71,21 @@ Config Config::from_environment()
     };
     config.recents = path("OPEN_NAVICORE_OSMAND_RECENTS",
                           "/datastore/navicore-backend/recents.tsv");
+    config.tile_cache = marker_or_environment(
+        "OPEN_NAVICORE_OSMAND_TILE_CACHE",
+        "/datastore/navicore-backend/enable-tile-cache");
+    config.tile_cache_runtime = path("OPEN_NAVICORE_OSMAND_TILE_CACHE_DIR",
+        "/datastore/navicore-backend/tilecache");
+    config.tile_cache_base = path("OPEN_NAVICORE_OSMAND_TILE_CACHE_BASE",
+        "/datastore/navicore-backend/tilecache-base");
+    if (const char* megabytes = std::getenv("OPEN_NAVICORE_OSMAND_TILE_CACHE_MB")) {
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(megabytes, &end, 10);
+        if (end && *end == '\0' && value > 0)
+            config.tile_cache_megabytes = value;
+    }
+    config.precache_manifest = path("OPEN_NAVICORE_OSMAND_PRECACHE_MANIFEST",
+        "/datastore/navicore-backend/precache.manifest");
     return config;
 }
 } // namespace navicore_osmand
