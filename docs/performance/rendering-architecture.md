@@ -304,6 +304,38 @@ resource is detached, so resident tiles exist in RAM and in the driver.
 Releasing it after upload needs an OsmAnd Core patch and must keep
 context-loss recovery working.
 
+### Where the swap time goes
+
+The Jacinto6 WFD driver numbers pipelines 1 = video1, 2 = video2,
+3 = video3, 4 = gfx, stacked gfx > video1 > video2 > video3. Stock
+`lg/graphics.conf` binds only gfx and video1 to the embedded display (display
+2), with every class including `NAV_main` and `HMI_main` on gfx pipeline 4,
+composited by Screen using `blit-config = pvr2d` on the same SGX540. Video2 is
+not bound to display 2, which is why an explicit pipeline 2 was rejected.
+
+Two diagnostics (2026-10-12, provider `d35d92f`, upload worker + RGB565 + car
+style markers held constant) ruled out the other explanations:
+
+| Run | Fps | glFinish before swap | Swap after it | Present interval |
+|---|---:|---:|---:|---:|
+| `enable-gpu-finish-probe` | 32.80 | 0.04--0.4 ms | 18--36 ms, peak 26--32 ms | 24--38 ms, continuous |
+| Overlay usage + pipeline 1 (video1) | 32.89 | not measured | 18--36 ms, peak 26--32 ms | 24--38 ms, continuous |
+
+- Our own GPU work finishes almost immediately, so the time is not SGX fill or
+  shader cost of the map frame.
+- Swap and present intervals are spread continuously, not clustered at 16.7 or
+  33.3 ms, so vsync waiting is not the limit.
+- The remaining ~27 ms is Screen's composition/post path. Requesting overlay
+  usage on video1 is reported as applied but does not change it; Screen's
+  property readback cannot prove the window left the composited path, and the
+  radio has no screenshot tool for a visual check.
+
+The next presentation step is therefore read-only: enumerate all windows on
+display 2 from a display-manager Screen context (pipeline, usage, format,
+transparency, visibility, size) to see what Screen actually composites per
+NAV post. Only then consider a `graphics.conf` change (NAV_main on video1 with
+overlay usage), which requires an IFS overlay mounted before Screen starts.
+
 ### Sustained moving-basemap qualification
 
 The short shootout left one ambiguity: its symbol-free phase was only 15

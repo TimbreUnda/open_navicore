@@ -27,3 +27,5 @@ opaque_after_rejected_pipeline2_visible_band,sustained_raster_without_symbols,29
 f34b7cc_baseline_visible_band,sustained_raster_without_symbols,32.77,31.57,34.06,3.0,2.0,201,20
 f34b7cc_upload_worker_rgb565,sustained_raster_without_symbols,32.83,32.03,34.02,3.0,2.0,199,20
 f34b7cc_upload_worker_rgb565_car_style,sustained_raster_without_symbols,32.83,32.14,34.05,3.0,2.0,198,20
+d35d92f_gpu_finish_probe,sustained_raster_without_symbols,32.80,31.79,33.92,3.0,2.0,200,20
+d35d92f_overlay_video1_pipeline1,sustained_raster_without_symbols,32.89,31.65,33.99,3.0,2.0,202,20

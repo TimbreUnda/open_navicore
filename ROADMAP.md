@@ -68,8 +68,13 @@ larger milestone containing it is complete.
     measurable ceiling change;
   - [x] `SCREEN_USAGE_OVERLAY` window usage: accepted but Screen kept pipeline
     1 (32.69 fps); an explicit pipeline 2 was rejected;
+  - [x] rule out vsync and our own GPU work: glFinish 0.04-0.4 ms, swap
+    18-36 ms continuous; the ~27 ms is Screen's composition/post path;
+  - [x] overlay usage on video1 (pipeline 1): reported applied, no change;
+  - [ ] enumerate display-2 windows from a display-manager context to see what
+    Screen composites per NAV post;
   - [ ] a non-composited layer Screen actually grants (a dedicated
-    `graphics.conf` class/pipeline), including HMI popups and RVC ordering.
+    `graphics.conf` class on video1), including HMI popups and RVC ordering.
 - [ ] Improve beyond the current floor; no artificial 30 Hz pacing is planned.
 - [ ] Record comparable CPU, memory, cold-tile, frame-age, and input-latency data
   for every surviving renderer candidate.
