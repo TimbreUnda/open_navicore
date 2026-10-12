@@ -4,6 +4,7 @@
 #include "mock_screen_input.h"
 
 #include <EGL/egl.h>
+#include <GLES2/gl2.h>
 #include <screen/screen.h>
 
 #include <errno.h>
@@ -29,6 +30,15 @@
 /* Bench experiment: request a non-composited (overlay) layer. An optional
  * positive integer in the marker selects an explicit pipeline id. */
 #define MOCK_OVERLAY_MARKER "/datastore/navicore-backend/enable-nav-overlay"
+/* Diagnostic: glFinish() before eglSwapBuffers() splits the swap into our own
+ * GPU work and the remaining Screen/vsync wait. It serializes CPU and GPU, so
+ * it is never part of a throughput run. */
+#define MOCK_GPU_FINISH_MARKER \
+    "/datastore/navicore-backend/enable-gpu-finish-probe"
+/* 2 ms bins, last bin collects >= 62 ms; emitted every 5 seconds. */
+#define MOCK_HIST_BINS 32u
+#define MOCK_HIST_BIN_NS UINT64_C(2000000)
+#define MOCK_HIST_WINDOW_NS UINT64_C(5000000000)
 
 typedef struct {
     screen_context_t screen_context;
@@ -45,6 +55,14 @@ typedef struct {
     uint64_t trace_swap_max_nanoseconds;
     uint32_t trace_presented;
     FILE *trace_file;
+    int gpu_finish_probe;
+    uint64_t hist_window_start_nanoseconds;
+    uint64_t last_present_nanoseconds;
+    uint64_t finish_total_nanoseconds;
+    uint32_t hist_frames;
+    uint32_t finish_hist[MOCK_HIST_BINS];
+    uint32_t swap_hist[MOCK_HIST_BINS];
+    uint32_t interval_hist[MOCK_HIST_BINS];
     int asynchronous_swap;
     uint32_t ignored_events;
     uint32_t event_errors;
@@ -81,6 +99,68 @@ static void pace_presentation(void)
         if (now == 0u) return;
     }
     g_qnx.next_present_nanoseconds += MOCK_PRESENT_PACING_NANOSECONDS;
+}
+
+static void hist_add(uint32_t *hist, uint64_t nanoseconds)
+{
+    uint64_t bin = nanoseconds / MOCK_HIST_BIN_NS;
+    if (bin >= MOCK_HIST_BINS) bin = MOCK_HIST_BINS - 1u;
+    ++hist[bin];
+}
+
+/* Writes "lower_ms:count,..." for non-empty bins. */
+static void hist_print(FILE *file, const char *name, const uint32_t *hist)
+{
+    uint32_t bin;
+    int first = 1;
+    (void)fprintf(file, " %s=", name);
+    for (bin = 0; bin < MOCK_HIST_BINS; ++bin) {
+        if (hist[bin] == 0u) continue;
+        (void)fprintf(file, "%s%u:%u", first ? "" : ",",
+                      bin * (unsigned int)(MOCK_HIST_BIN_NS / 1000000u),
+                      hist[bin]);
+        first = 0;
+    }
+    if (first) (void)fputc('-', file);
+}
+
+static void record_present_histograms(uint64_t finish_ns, uint64_t swap_ns,
+                                      uint64_t end_ns)
+{
+    if (g_qnx.hist_window_start_nanoseconds == 0u)
+        g_qnx.hist_window_start_nanoseconds = end_ns;
+    if (g_qnx.gpu_finish_probe) {
+        hist_add(g_qnx.finish_hist, finish_ns);
+        g_qnx.finish_total_nanoseconds += finish_ns;
+    }
+    hist_add(g_qnx.swap_hist, swap_ns);
+    if (g_qnx.last_present_nanoseconds != 0u &&
+        end_ns - g_qnx.last_present_nanoseconds < UINT64_C(1000000000))
+        hist_add(g_qnx.interval_hist, end_ns - g_qnx.last_present_nanoseconds);
+    g_qnx.last_present_nanoseconds = end_ns;
+    ++g_qnx.hist_frames;
+    if (end_ns - g_qnx.hist_window_start_nanoseconds < MOCK_HIST_WINDOW_NS ||
+        g_qnx.trace_file == NULL)
+        return;
+    (void)fprintf(g_qnx.trace_file, "presenthist window_ms=%llu frames=%u "
+                  "gpu_finish_probe=%d finish_avg_us=%llu",
+                  (unsigned long long)((end_ns -
+                      g_qnx.hist_window_start_nanoseconds) / 1000000u),
+                  g_qnx.hist_frames, g_qnx.gpu_finish_probe,
+                  (unsigned long long)(g_qnx.finish_total_nanoseconds /
+                                       g_qnx.hist_frames / 1000u));
+    if (g_qnx.gpu_finish_probe)
+        hist_print(g_qnx.trace_file, "finish", g_qnx.finish_hist);
+    hist_print(g_qnx.trace_file, "swap", g_qnx.swap_hist);
+    hist_print(g_qnx.trace_file, "interval", g_qnx.interval_hist);
+    (void)fputc('\n', g_qnx.trace_file);
+    (void)fflush(g_qnx.trace_file);
+    memset(g_qnx.finish_hist, 0, sizeof(g_qnx.finish_hist));
+    memset(g_qnx.swap_hist, 0, sizeof(g_qnx.swap_hist));
+    memset(g_qnx.interval_hist, 0, sizeof(g_qnx.interval_hist));
+    g_qnx.finish_total_nanoseconds = 0u;
+    g_qnx.hist_frames = 0u;
+    g_qnx.hist_window_start_nanoseconds = end_ns;
 }
 
 static int marker_present(const char *path)
@@ -403,6 +483,7 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     target->native_egl_surface = (uintptr_t)g_qnx.surface;
     target->native_egl_context = (uintptr_t)g_qnx.context;
     g_qnx.trace_file = fopen(MOCK_PRESENT_TRACE_PATH, "a");
+    g_qnx.gpu_finish_probe = marker_present(MOCK_GPU_FINISH_MARKER);
     if (g_qnx.trace_file != NULL) {
         /* The provider diagnostic is capped at 256 bytes; keep composition
          * policy on its own trace line. */
@@ -458,7 +539,13 @@ int mock_renderer_platform_end_frame(int present, char *diagnostic,
         const uint64_t begin_nanoseconds = monotonic_nanoseconds();
         uint64_t swap_begin_nanoseconds;
         uint64_t end_nanoseconds;
+        uint64_t finish_nanoseconds = 0u;
         pace_presentation();
+        if (g_qnx.gpu_finish_probe) {
+            const uint64_t finish_begin = monotonic_nanoseconds();
+            glFinish();
+            finish_nanoseconds = monotonic_nanoseconds() - finish_begin;
+        }
         swap_begin_nanoseconds = monotonic_nanoseconds();
         if (eglSwapBuffers(g_qnx.display, g_qnx.surface) != EGL_TRUE)
             result = egl_error(diagnostic, capacity, "eglSwapBuffers");
@@ -476,6 +563,8 @@ int mock_renderer_platform_end_frame(int present, char *diagnostic,
             if (swap_nanoseconds > g_qnx.trace_swap_max_nanoseconds)
                 g_qnx.trace_swap_max_nanoseconds = swap_nanoseconds;
             ++g_qnx.trace_presented;
+            record_present_histograms(finish_nanoseconds, swap_nanoseconds,
+                                      end_nanoseconds);
             if (end_nanoseconds - g_qnx.trace_window_start_nanoseconds >=
                     UINT64_C(1000000000) &&
                 g_qnx.trace_file != NULL) {
