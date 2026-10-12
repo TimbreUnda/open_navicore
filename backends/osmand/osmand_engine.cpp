@@ -255,6 +255,8 @@ bool OsmAndEngine::initialize(const Config& config,
         config.simulation_speed_metres_per_second;
     if (simulation_enabled_)
         trace("simulation=enabled");
+    if (config.production_profile)
+        trace("production_profile=enabled");
     if (render_shootout_enabled_)
         trace("render_shootout=enabled");
     if (sustained_basemap_benchmark_)

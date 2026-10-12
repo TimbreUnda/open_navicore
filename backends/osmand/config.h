@@ -19,7 +19,7 @@ struct Config {
     bool retained_map_symbols = false;
     bool gpu_upload_worker = false;
     bool benchmark_autostart = false;
-    bool car_style = false;
+    bool car_style = false;      // from_environment() defaults it on
     bool rgb565_tiles = false;
     double simulation_speed_metres_per_second = 20.0;
     std::string recents = "/datastore/navicore-backend/recents.tsv";
@@ -30,6 +30,8 @@ struct Config {
     // Presence starts the pre-cache worker into the base store.
     std::string precache_manifest =
         "/datastore/navicore-backend/precache.manifest";
+    // Set after the positional fields above; see from_environment().
+    bool production_profile = false;
 
     static Config from_environment();
 };

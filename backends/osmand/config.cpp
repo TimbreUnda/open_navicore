@@ -61,9 +61,10 @@ Config Config::from_environment()
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_BENCHMARK_AUTOSTART",
             "/datastore/navicore-backend/enable-benchmark-autostart"),
-        marker_or_environment(
-            "OPEN_NAVICORE_OSMAND_CAR_STYLE",
-            "/datastore/navicore-backend/enable-car-style"),
+        // Car product: the car style is the default; the marker opts out.
+        !marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_DISABLE_CAR_STYLE",
+            "/datastore/navicore-backend/disable-car-style"),
         marker_or_environment(
             "OPEN_NAVICORE_OSMAND_RGB565_TILES",
             "/datastore/navicore-backend/enable-rgb565-tiles"),
@@ -86,6 +87,17 @@ Config Config::from_environment()
     }
     config.precache_manifest = path("OPEN_NAVICORE_OSMAND_PRECACHE_MANIFEST",
         "/datastore/navicore-backend/precache.manifest");
+    // One switch for the live qualification of everything built offline:
+    // RGB565 tiles, GPU upload worker, tile cache and retained labels.
+    if (marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_PRODUCTION_PROFILE",
+            "/datastore/navicore-backend/enable-production-profile")) {
+        config.production_profile = true;
+        config.rgb565_tiles = true;
+        config.gpu_upload_worker = true;
+        config.tile_cache = true;
+        config.retained_map_symbols = true;
+    }
     return config;
 }
 } // namespace navicore_osmand

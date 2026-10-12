@@ -94,8 +94,15 @@ larger milestone containing it is complete.
 
 - [ ] Replace shared-provider concurrent extraction with serialized ownership,
   a dedicated provider graph, or a renderer-owned asynchronous path.
+  (Dedicated private provider graph implemented offline; needs a live run.)
 - [ ] Retain labels/icons across moving frames; recompute only when visibility or
-  collision state materially changes.
+  collision state materially changes. (64-symbol retained atlas with
+  placement hysteresis implemented offline; needs a live run.)
+- [ ] Persistent tile pack cache with a shipped pre-rendered base and
+  pre-cache manifests (implemented and host-tested; needs live hit-rate,
+  stutter and storage measurements).
+- [ ] Car camera: heading-up, speed zoom, GPS extrapolation, pan/recenter,
+  overview (host-tested; needs a live drive-feel check).
 - [ ] Preserve road-label orientation, icon anchors, ordering, collision rules,
   language, and density closely enough for normal navigation.
 - [x] Upload only dirty LVGL rectangles into a retained overlay texture.
@@ -132,6 +139,7 @@ larger milestone containing it is complete.
 ## Milestone 4 — feature expansion
 
 - [ ] Favorites, recent destinations, home/work, categories, and POI details.
+  (Recent destinations persist and route in one tap.)
 - [ ] Route alternatives, avoidances, waypoint editing, and trip overview.
 - [ ] Traffic ingestion and presentation where a lawful data source is available.
 - [ ] Localization, units, accessibility, and driver-distraction behavior.

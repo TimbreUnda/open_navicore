@@ -291,6 +291,42 @@ simulation). After the first frame the engine searches the seeded `kyiv`
 destinations, selects the first result, waits for the route worker, and starts
 guidance, tracing each `benchmark_autostart=` step.
 
+### Car product defaults and the production profile
+
+The car map style (OsmAnd `appMode=car` plus hidden house numbers, transit
+stops, admin boundaries, underground, military areas, street lighting and
+proposed objects) is on by default; `disable-car-style` opts out.
+
+`enable-production-profile` turns on, together, everything built for
+production that still needs one live qualification pass:
+
+| Feature | Individual marker / setting |
+|---|---|
+| RGB565 raster tiles | `enable-rgb565-tiles` |
+| OsmAnd GPU upload worker on a shared pbuffer context | `enable-gpu-upload-worker` |
+| Persistent tile pack cache | `enable-tile-cache`, `OPEN_NAVICORE_OSMAND_TILE_CACHE_MB` (default 8192), `OPEN_NAVICORE_OSMAND_TILE_CACHE_DIR`, `OPEN_NAVICORE_OSMAND_TILE_CACHE_BASE` |
+| Labels and icons (retained atlas, private provider graph) | `enable-retained-map-symbols` |
+
+All markers live in `/datastore/navicore-backend/`.
+
+The tile cache writes 16x16-tile pack files under
+`tilecache/<namespace>/z<zoom>/` and reads a shipped read-only base under
+`tilecache-base/<namespace>/`. The namespace hashes the map file (path, size,
+mtime), style, car/night and pixel format, so map or style updates start a
+fresh cache. To pre-render a region into the base, place a manifest at
+`/datastore/navicore-backend/precache.manifest`
+(`<min_zoom> <max_zoom> <min_lat> <min_lon> <max_lat> <max_lon>` per line);
+progress is written to `precache.manifest.progress`. Size a region and write
+its manifest with `tools/tile_cache_estimate.py`.
+
+Map UI: a 64 px control column on the map side (zoom in/out, heading-up vs
+north-up, 2D/3D tilt, day/night), a recenter button that appears after the
+map is dragged, Overview in guidance, one-tap recent destinations persisted
+to `recents.tsv`, and text entry paused while the vehicle moves. The camera
+keeps the vehicle in the lower third in heading-up mode, zooms out with
+speed, extrapolates between 1 Hz GPS fixes and returns to following ten
+seconds after the last touch.
+
 The rejected baked-symbol experiment can be reproduced by setting
 `OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS=1` or creating
 `/datastore/navicore-backend/enable-baked-map-symbols`. A bounded set of
