@@ -70,7 +70,7 @@ bool treat_as_area(const Tags& tags, bool is_area_flag, bool closed);
 
 // Google-Maps-like automotive palette. Returns nothing (both flags false)
 // for features the vector map does not draw at this zoom.
-FeatureStyle classify(const Tags& tags, bool is_area, int zoom);
+FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night = false);
 
 // Point of interest, Google style: a coloured disc with a white pictogram
 // and the name in the category colour. Lower rank = more important; car
@@ -93,6 +93,6 @@ int street_label_rank(const std::string& highway);
 int place_label_rank(const std::string& place, int zoom);
 
 // Background (land) colour.
-Rgba land_colour();
+Rgba land_colour(bool night = false);
 
 } // namespace navicore_vector

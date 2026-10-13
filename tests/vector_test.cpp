@@ -135,6 +135,17 @@ int main()
     check(place_label_rank("suburb", 13) >= 0 && place_label_rank("suburb", 17) < 0,
           "suburb names zoomed out only");
 
+    // Night palette: dark land, roads darker than by day, same layers.
+    const auto luma = [](Rgba c) { return 0.3 * c.r + 0.59 * c.g + 0.11 * c.b; };
+    check(luma(land_colour(true)) < 80.0 && luma(land_colour(false)) > 200.0, "night land dark");
+    const auto day_road = classify(tags({{"highway", "primary"}}), false, 15, false);
+    const auto night_road = classify(tags({{"highway", "primary"}}), false, 15, true);
+    check(night_road.has_line && night_road.line.layer == day_road.line.layer &&
+              night_road.line.width == day_road.line.width &&
+              luma(night_road.line.fill) < luma(day_road.line.fill),
+          "night road");
+    check(luma(night_road.line.fill) > luma(land_colour(true)), "night road above land");
+
     if (failures == 0)
         std::puts("vector-test: ok");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

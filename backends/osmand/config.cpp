@@ -114,9 +114,20 @@ Config Config::from_environment()
             config.retained_map_symbols = true;
         }
     }
-    if (marker_or_environment(
-            "OPEN_NAVICORE_OSMAND_VECTOR_MAP",
-            "/datastore/navicore-backend/enable-vector-map")) {
+    // The vector map is the default; the disable marker (or the variable
+    // set to 0) brings back OsmAnd's raster map.
+    const char* vector_variable = std::getenv("OPEN_NAVICORE_OSMAND_VECTOR_MAP");
+    const bool vector_disabled =
+        (vector_variable && vector_variable[0] == '0' && vector_variable[1] == '\0') ||
+        marker_or_environment("OPEN_NAVICORE_OSMAND_VECTOR_MAP_DISABLED",
+                              "/datastore/navicore-backend/disable-vector-map");
+    config.start_tilted = marker_or_environment("OPEN_NAVICORE_OSMAND_START_TILTED",
+                                                "/datastore/navicore-backend/start-tilted");
+    config.start_night = marker_or_environment("OPEN_NAVICORE_OSMAND_START_NIGHT",
+                                               "/datastore/navicore-backend/start-night");
+    config.vector_cache = path("OPEN_NAVICORE_OSMAND_VECTOR_CACHE",
+                               "/datastore/navicore-backend/vectorcache");
+    if (!vector_disabled) {
         config.vector_map_attempt =
             path("OPEN_NAVICORE_OSMAND_VECTOR_MAP_ATTEMPT",
                  "/datastore/navicore-backend/.vector-map-attempt");

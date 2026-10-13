@@ -12,25 +12,30 @@ constexpr Rgba rgb(std::uint32_t hex, std::uint8_t a = 255)
             a};
 }
 
-constexpr Rgba kLand = rgb(0xF5F4F1);
-constexpr Rgba kWater = rgb(0xAAD3F7);
-constexpr Rgba kPark = rgb(0xC5E8C4);
-constexpr Rgba kForest = rgb(0xAEDCAE);
-constexpr Rgba kSand = rgb(0xF6EDCB);
-constexpr Rgba kHospital = rgb(0xFBE5E3);
-constexpr Rgba kEducation = rgb(0xF2ECDF);
-constexpr Rgba kPlaza = rgb(0xFCFBF9);
-constexpr Rgba kBuilding = rgb(0xE5E3DF);
-constexpr Rgba kBuildingOutline = rgb(0xD3D0CB);
-constexpr Rgba kRoad = rgb(0xFFFFFF);
-constexpr Rgba kRoadCasing = rgb(0xD5D2CC);
-constexpr Rgba kMinorCasing = rgb(0xDEDBD6);
-constexpr Rgba kTrunk = rgb(0xFFE7A1);
-constexpr Rgba kTrunkCasing = rgb(0xF0C25C);
-constexpr Rgba kMotorway = rgb(0xFDD877);
-constexpr Rgba kMotorwayCasing = rgb(0xE9A93A);
-constexpr Rgba kPath = rgb(0xE1DED8);
-constexpr Rgba kRail = rgb(0xBDBCC2);
+struct Palette {
+    Rgba land, water, park, forest, sand, hospital, education, plaza, building,
+        building_outline, road, road_casing, minor_casing, trunk, trunk_casing,
+        motorway, motorway_casing, path, rail;
+};
+
+// Day: Google-Maps-like. Night: the dark navigation look (blue-grey land,
+// dim roads, amber highways) so the screen does not glare after dusk.
+constexpr Palette kDay = {
+    rgb(0xF5F4F1), rgb(0xAAD3F7), rgb(0xC5E8C4), rgb(0xAEDCAE), rgb(0xF6EDCB),
+    rgb(0xFBE5E3), rgb(0xF2ECDF), rgb(0xFCFBF9), rgb(0xE5E3DF), rgb(0xD3D0CB),
+    rgb(0xFFFFFF), rgb(0xD5D2CC), rgb(0xDEDBD6), rgb(0xFFE7A1), rgb(0xF0C25C),
+    rgb(0xFDD877), rgb(0xE9A93A), rgb(0xE1DED8), rgb(0xBDBCC2)};
+constexpr Palette kNight = {
+    rgb(0x1F2835), rgb(0x0E1A2B), rgb(0x22343A), rgb(0x1D3133), rgb(0x2B2C2A),
+    rgb(0x30282F), rgb(0x2A2D33), rgb(0x2A3240), rgb(0x2A323F), rgb(0x343D4B),
+    rgb(0x3F4A5A), rgb(0x18202B), rgb(0x1B232E), rgb(0x6A6150), rgb(0x2A2620),
+    rgb(0x8A7247), rgb(0x3A2F1C), rgb(0x343C48), rgb(0x46505E)};
+
+const Palette& palette(bool night)
+{
+    return night ? kNight : kDay;
+}
+
 constexpr Rgba kNone{};
 
 const std::string* find(const Tags& tags, const char* tag)
@@ -65,7 +70,7 @@ LineStyle road(LineLayer layer, Rgba fill, Rgba casing, float width,
 
 // Road style by highway class; *_link roads are drawn like their class but
 // narrower.
-bool road_style(const std::string& highway, int zoom, LineStyle& out)
+bool road_style(const std::string& highway, int zoom, const Palette& p, LineStyle& out)
 {
     std::string base = highway;
     bool link = false;
@@ -74,25 +79,25 @@ bool road_style(const std::string& highway, int zoom, LineStyle& out)
         link = true;
     }
     if (base == "motorway")
-        out = road(LineLayer::Motorway, kMotorway, kMotorwayCasing, 9.0f, 2.0f);
+        out = road(LineLayer::Motorway, p.motorway, p.motorway_casing, 9.0f, 2.0f);
     else if (base == "trunk")
-        out = road(LineLayer::Trunk, kTrunk, kTrunkCasing, 8.5f, 2.0f);
+        out = road(LineLayer::Trunk, p.trunk, p.trunk_casing, 8.5f, 2.0f);
     else if (base == "primary")
-        out = road(LineLayer::Primary, kRoad, kRoadCasing, 8.0f, 2.0f);
+        out = road(LineLayer::Primary, p.road, p.road_casing, 8.0f, 2.0f);
     else if (base == "secondary")
-        out = road(LineLayer::Secondary, kRoad, kRoadCasing, 7.0f, 2.0f);
+        out = road(LineLayer::Secondary, p.road, p.road_casing, 7.0f, 2.0f);
     else if (base == "tertiary" && zoom >= 12)
-        out = road(LineLayer::Tertiary, kRoad, kRoadCasing, 6.0f, 1.5f);
+        out = road(LineLayer::Tertiary, p.road, p.road_casing, 6.0f, 1.5f);
     else if ((base == "residential" || base == "unclassified" ||
               base == "living_street" || base == "road") && zoom >= 13)
-        out = road(LineLayer::Minor, kRoad, kMinorCasing, 5.0f, 1.5f);
+        out = road(LineLayer::Minor, p.road, p.minor_casing, 5.0f, 1.5f);
     else if (base == "pedestrian" && zoom >= 14)
-        out = road(LineLayer::Minor, kPlaza, kMinorCasing, 4.0f, 1.5f);
+        out = road(LineLayer::Minor, p.plaza, p.minor_casing, 4.0f, 1.5f);
     else if ((base == "service" || base == "track") && zoom >= 15)
-        out = road(LineLayer::Service, kRoad, kMinorCasing, 3.0f, 1.0f);
+        out = road(LineLayer::Service, p.road, p.minor_casing, 3.0f, 1.0f);
     else if ((base == "footway" || base == "path" || base == "cycleway" ||
               base == "steps") && zoom >= 16)
-        out = road(LineLayer::Path, kPath, kNone, 1.2f, 0.0f);
+        out = road(LineLayer::Path, p.path, kNone, 1.2f, 0.0f);
     else
         return false;
     if (link) {
@@ -193,13 +198,14 @@ int place_label_rank(const std::string& place, int zoom)
     return -1;
 }
 
-Rgba land_colour()
+Rgba land_colour(bool night)
 {
-    return kLand;
+    return palette(night).land;
 }
 
-FeatureStyle classify(const Tags& tags, bool is_area, int zoom)
+FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night)
 {
+    const Palette& p = palette(night);
     FeatureStyle style;
     const auto* highway = find(tags, "highway");
     const auto* building = find(tags, "building");
@@ -213,19 +219,19 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom)
     if (is_area) {
         if (building && zoom >= 15) {
             style.has_area = true;
-            style.area = {AreaLayer::Building, kBuilding};
+            style.area = {AreaLayer::Building, p.building};
             if (zoom >= 16) {
                 style.has_line = true;
-                style.line = road(LineLayer::BuildingOutline, kBuildingOutline,
+                style.line = road(LineLayer::BuildingOutline, p.building_outline,
                                   kNone, 1.0f, 0.0f);
             }
         } else if (is(natural, "water") || is(waterway, "riverbank") ||
                    any_of(landuse, {"reservoir", "basin"})) {
             style.has_area = true;
-            style.area = {AreaLayer::Water, kWater};
+            style.area = {AreaLayer::Water, p.water};
         } else if (any_of(landuse, {"forest"}) || is(natural, "wood")) {
             style.has_area = true;
-            style.area = {AreaLayer::Forest, kForest};
+            style.area = {AreaLayer::Forest, p.forest};
         } else if (any_of(leisure, {"park", "garden", "nature_reserve",
                                     "recreation_ground", "pitch",
                                     "golf_course"}) ||
@@ -233,26 +239,26 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom)
                                     "village_green", "cemetery", "allotments"}) ||
                    any_of(natural, {"grassland", "scrub", "heath"})) {
             style.has_area = true;
-            style.area = {AreaLayer::Park, kPark};
+            style.area = {AreaLayer::Park, p.park};
         } else if (any_of(natural, {"beach", "sand"})) {
             style.has_area = true;
-            style.area = {AreaLayer::Sand, kSand};
+            style.area = {AreaLayer::Sand, p.sand};
         } else if (any_of(amenity, {"hospital", "clinic"})) {
             style.has_area = true;
-            style.area = {AreaLayer::Landuse, kHospital};
+            style.area = {AreaLayer::Landuse, p.hospital};
         } else if (any_of(amenity, {"school", "university", "college",
                                     "kindergarten"})) {
             style.has_area = true;
-            style.area = {AreaLayer::Landuse, kEducation};
+            style.area = {AreaLayer::Landuse, p.education};
         } else if (highway && zoom >= 15) {
             style.has_area = true;
-            style.area = {AreaLayer::Plaza, kPlaza};
+            style.area = {AreaLayer::Plaza, p.plaza};
         }
         return style;
     }
 
     if (highway) {
-        if (road_style(*highway, zoom, style.line)) {
+        if (road_style(*highway, zoom, p, style.line)) {
             style.has_line = true;
             if (is(find(tags, "tunnel"), "yes")) {
                 // Tunnels: faded, no outline.
@@ -266,22 +272,22 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom)
     if (any_of(railway, {"rail", "light_rail", "narrow_gauge"}) && zoom >= 13 &&
         !is(find(tags, "tunnel"), "yes")) {
         style.has_line = true;
-        style.line = road(LineLayer::Rail, kRail, kNone, 1.6f, 0.0f);
+        style.line = road(LineLayer::Rail, p.rail, kNone, 1.6f, 0.0f);
         return style;
     }
     if (is(railway, "tram") && zoom >= 15) {
         style.has_line = true;
-        style.line = road(LineLayer::Rail, kRail, kNone, 1.0f, 0.0f);
+        style.line = road(LineLayer::Rail, p.rail, kNone, 1.0f, 0.0f);
         return style;
     }
     if (any_of(waterway, {"river", "canal"})) {
         style.has_line = true;
-        style.line = road(LineLayer::Waterway, kWater, kNone, 5.0f, 0.0f);
+        style.line = road(LineLayer::Waterway, p.water, kNone, 5.0f, 0.0f);
         return style;
     }
     if (any_of(waterway, {"stream", "ditch"}) && zoom >= 15) {
         style.has_line = true;
-        style.line = road(LineLayer::Waterway, kWater, kNone, 1.5f, 0.0f);
+        style.line = road(LineLayer::Waterway, p.water, kNone, 1.5f, 0.0f);
     }
     return style;
 }

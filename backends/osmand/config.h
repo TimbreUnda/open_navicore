@@ -38,8 +38,15 @@ struct Config {
     bool production_profile_suppressed = false;
     std::string production_attempt =
         "/datastore/navicore-backend/.production-profile-attempt";
-    // GPU vector map instead of OsmAnd's raster tiles and labels.
+    // GPU vector map instead of OsmAnd's raster tiles and labels (default;
+    // disable-vector-map turns it off).
     bool vector_map = false;
+    // Bench: start with the tilted camera / night palette (markers
+    // start-tilted, start-night) so they can be tested without a tap.
+    bool start_tilted = false;
+    bool start_night = false;
+    // Built vector tiles, per map file; empty disables the disk cache.
+    std::string vector_cache = "/datastore/navicore-backend/vectorcache";
     // Crash guard, as for the production profile.
     bool vector_map_suppressed = false;
     std::string vector_map_attempt =

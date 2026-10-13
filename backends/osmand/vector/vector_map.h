@@ -7,6 +7,7 @@
 // Used by the navigation backend (camera from OsmAnd's renderer) and by the
 // standalone vector-poc tool (scripted camera).
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -35,6 +36,9 @@ struct MapView {
     // Location dot (also kept clear of labels).
     bool location_dot = true;
     float dot_x = 0.0f, dot_y = 0.0f;
+    // Screen rectangles covered by UI (x, y, width, height); no label is
+    // placed under them.
+    std::vector<std::array<float, 4>> blocked;
 };
 
 struct VectorMapStats {
@@ -50,6 +54,12 @@ struct VectorMapStats {
     std::size_t gpu_tiles = 0;
     std::size_t gpu_bytes = 0;
     std::size_t atlas_uploads = 0, atlas_resets = 0;
+    std::uint64_t disk_hits = 0, disk_writes = 0, disk_failures = 0;
+    double disk_ms_total = 0.0;     // reading cached tiles
+    std::uint64_t aborted = 0;      // fetches cancelled as no longer wanted
+    std::uint64_t empty_tiles = 0;  // no map data after the retries
+    std::size_t wanted_tiles = 0, prefetch_tiles = 0;
+    int min_tile_zoom = 0;          // detail levels in the last frame
     int tile_zoom = 0;
     double zoom = 0.0;
 };
@@ -72,8 +82,22 @@ public:
     bool init_gl();
     void release_gl(bool context_lost);
 
+    // Built tiles are kept under dir/<hash of identity>/ (identity names the
+    // map file and anything else that changes geometry). Empty dir: off.
+    // Writes stop while the file system has less than min_free_bytes free.
+    void set_disk_cache(const std::string& dir, const std::string& identity,
+                        std::uint64_t min_free_bytes);
+
     // Route polyline in 31-bit coordinates; empty clears it.
     void set_route(const std::vector<std::pair<std::int32_t, std::int32_t>>& points31);
+    // Vehicle position on the route: the part behind it is drawn grey and
+    // tiles ahead of it are prefetched. valid=false: no progress.
+    void set_route_progress(bool valid, std::int32_t x31, std::int32_t y31);
+    // Turn arrow on the route at route point `geometry_index` (the
+    // manoeuvre); show=false hides it.
+    void set_maneuver(bool show, std::size_t geometry_index);
+    // Night palette; tiles are rebuilt (or read from their own cache).
+    void set_night(bool night);
 
     // Draws map, route and labels into the current framebuffer; clear fills
     // it with the land colour first. Returns true while it wants more frames
@@ -90,6 +114,7 @@ public:
     static bool set_from_correspondences(MapView& view, const double world31[4][2],
                                          const double screen[4][2]);
 
+    // Maxima (fetch_ms_max, label_place_ms_max) are since the previous call.
     VectorMapStats stats() const;
     bool last_frame_incomplete() const;
 

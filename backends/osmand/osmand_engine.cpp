@@ -99,6 +99,9 @@ private:
     bool vector_mode_ = false;
     std::unique_ptr<navicore_vector::VectorMap> vector_map_;
     std::string vector_attempt_;
+    std::string vector_cache_dir_;
+    std::string vector_cache_identity_;
+    void sync_vector_guidance(const ui::GuidanceState* state);
     std::chrono::steady_clock::time_point vector_last_frame_{};
     std::chrono::steady_clock::time_point vector_reported_at_{};
     bool render_vector_map(const MockNavBackendRenderTargetV1& target);
@@ -317,6 +320,14 @@ bool OsmAndEngine::initialize(const Config& config,
                              std::shared_ptr<Wakeup> wakeup)
 {
     simulation_enabled_ = config.simulate_route;
+    if (config.start_tilted) {
+        camera_.set_tilt(true);
+        trace("camera=start_tilted");
+    }
+    if (config.start_night) {
+        night_ = true;
+        trace("style=start_night");
+    }
     autostart_ = config.benchmark_autostart && config.simulate_route
                      ? Autostart::Search : Autostart::Off;
     if (autostart_ != Autostart::Off)
@@ -336,6 +347,15 @@ bool OsmAndEngine::initialize(const Config& config,
     if (config.vector_map_suppressed)
         trace("vector_map=suppressed_after_unstable_run");
     vector_attempt_ = vector_mode_ ? config.vector_map_attempt : std::string();
+    if (vector_mode_ && !config.vector_cache.empty()) {
+        struct stat map_info {};
+        const bool map_known = ::stat(config.map.c_str(), &map_info) == 0;
+        // Anything that changes built geometry or labels must change this.
+        vector_cache_dir_ = config.vector_cache;
+        vector_cache_identity_ = config.map + "|" +
+            std::to_string(map_known ? map_info.st_size : 0) + "|" +
+            std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-2";
+    }
     // The shootout swaps OsmAnd layers; meaningless with the vector map.
     render_shootout_enabled_ = config.render_shootout &&
                                !sustained_basemap_benchmark_ && !vector_mode_;
@@ -546,6 +566,10 @@ bool OsmAndEngine::initialize(const Config& config,
                 obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); }));
             if (!vector_map_->init_gl())
                 throw std::runtime_error("vector_map gl");
+            if (!vector_cache_dir_.empty())
+                vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
+                                            200ull << 20);
+            vector_map_->set_night(night_);
             trace("init=vector_map");
         } catch (...) {
             // Fall back to OsmAnd's own map for this run.
@@ -747,6 +771,7 @@ bool OsmAndEngine::update_guidance()
     }
     gps_dirty_ = false;
     guidance_active_ = true;
+    sync_vector_guidance(&state);
     return view_->apply_guidance(std::move(state));
 }
 
@@ -886,6 +911,8 @@ bool OsmAndEngine::apply_camera()
             break;
         case ui::MapCommand::ToggleNight:
             night_ = !night_;
+            if (vector_map_)
+                vector_map_->set_night(night_);
             apply_style_settings();
             if (caching_raster_)
                 caching_raster_->set_cache(make_tile_cache());
@@ -1051,6 +1078,7 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     } else if (navigation_->screen() != ui::Screen::Guidance &&
                guidance_active_) {
         guidance_active_ = false;
+        sync_vector_guidance(nullptr);
         guidance_tracker_.reset();
         simulation_running_ = false;
         // Simulated motion ends with guidance; real GPS keeps following.
@@ -1243,6 +1271,27 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
 // The camera comes from OsmAnd: four screen points are unprojected onto the
 // ground and the vector map uses the homography through them, which is
 // exact for OsmAnd's flat ground in 2D and tilted 3D.
+// Route progress (grey behind the vehicle, prefetch ahead) and the turn
+// arrow for the next manoeuvre, shown from 400 m out.
+void OsmAndEngine::sync_vector_guidance(const ui::GuidanceState* state)
+{
+    if (!vector_map_)
+        return;
+    if (!state || !state->position_available) {
+        vector_map_->set_route_progress(false, 0, 0);
+        vector_map_->set_maneuver(false, 0);
+        return;
+    }
+    const auto position = OsmAnd::Utilities::convertLatLonTo31(
+        OsmAnd::LatLon(state->position.latitude, state->position.longitude));
+    vector_map_->set_route_progress(true, position.x, position.y);
+    const auto kind = state->maneuver.kind;
+    const bool turn = kind != ui::ManeuverKind::Straight && kind != ui::ManeuverKind::Arrive;
+    vector_map_->set_maneuver(turn && !state->arrived &&
+                                  state->distance_to_maneuver_metres <= 400.0,
+                              state->maneuver.geometry_index);
+}
+
 bool OsmAndEngine::render_vector_map(const MockNavBackendRenderTargetV1& target)
 {
     navicore_vector::MapView view;
@@ -1270,8 +1319,25 @@ bool OsmAndEngine::render_vector_map(const MockNavBackendRenderTargetV1& target)
     view.min_y31 = visible.top();
     view.max_x31 = visible.right();
     view.max_y31 = visible.bottom();
+    // Tilted, OsmAnd's box can stop short of the screen's near corners;
+    // widen it with every screen edge point that lies on the ground.
+    for (const auto& p : {std::pair<double, double>{0, h}, {w, h}, {w / 2, h}, {0, h / 2},
+                          {w, h / 2}, {0, 0}, {w, 0}, {w / 2, 0}}) {
+        OsmAnd::PointI64 location;
+        if (!renderer_->getLocationFromScreenPoint(OsmAnd::PointD(p.first, p.second), location))
+            continue;
+        view.min_x31 = std::min(view.min_x31, static_cast<double>(location.x));
+        view.min_y31 = std::min(view.min_y31, static_cast<double>(location.y));
+        view.max_x31 = std::max(view.max_x31, static_cast<double>(location.x));
+        view.max_y31 = std::max(view.max_y31, static_cast<double>(location.y));
+    }
     // The LVGL view draws the vehicle marker; keep labels clear of it.
     view.location_dot = false;
+    if (overlay_enabled_)
+        for (const auto& rect : overlay_occupancy_.regions())
+            view.blocked.push_back({static_cast<float>(rect.x), static_cast<float>(rect.y),
+                                    static_cast<float>(rect.width),
+                                    static_cast<float>(rect.height)});
     OsmAnd::PointI marker;
     if (renderer_->obtainScreenPointFromPosition(state.target31, marker, false)) {
         view.dot_x = static_cast<float>(marker.x);
@@ -1287,20 +1353,30 @@ bool OsmAndEngine::render_vector_map(const MockNavBackendRenderTargetV1& target)
         vector_reported_at_ = now;
         const auto s = vector_map_->stats();
         const double built = s.tiles_built ? static_cast<double>(s.tiles_built) : 1.0;
-        char message[320];
+        const double disk = s.disk_hits ? static_cast<double>(s.disk_hits) : 1.0;
+        char message[512];
         std::snprintf(message, sizeof(message),
                       "vector_map frames=%llu incomplete=%llu tiles_built=%llu "
                       "fetch_avg_ms=%.0f fetch_max_ms=%.0f build_avg_ms=%.1f "
-                      "labels_avg_ms=%.1f gpu_tiles=%zu gpu_mb=%.1f calls_avg=%.0f "
-                      "label_quads_avg=%.1f label_place_max_ms=%.1f zoom=%.2f tile_zoom=%d",
+                      "labels_avg_ms=%.1f disk_hits=%llu disk_avg_ms=%.1f disk_writes=%llu "
+                      "disk_failures=%llu aborted=%llu "
+                      "empty=%llu wanted=%zu prefetch=%zu gpu_tiles=%zu gpu_mb=%.1f "
+                      "calls_avg=%.0f label_quads_avg=%.1f label_place_max_ms=%.1f "
+                      "zoom=%.2f tile_zoom=%d..%d",
                       static_cast<unsigned long long>(s.frames),
                       static_cast<unsigned long long>(s.incomplete_frames),
                       static_cast<unsigned long long>(s.tiles_built),
                       s.fetch_ms_total / built, s.fetch_ms_max, s.build_ms_total / built,
-                      s.labels_ms_total / built, s.gpu_tiles, s.gpu_bytes / 1048576.0,
+                      s.labels_ms_total / std::max(1.0, static_cast<double>(s.tiles_built + s.disk_hits)),
+                      static_cast<unsigned long long>(s.disk_hits), s.disk_ms_total / disk,
+                      static_cast<unsigned long long>(s.disk_writes),
+                      static_cast<unsigned long long>(s.disk_failures),
+                      static_cast<unsigned long long>(s.aborted),
+                      static_cast<unsigned long long>(s.empty_tiles), s.wanted_tiles,
+                      s.prefetch_tiles, s.gpu_tiles, s.gpu_bytes / 1048576.0,
                       s.frames ? static_cast<double>(s.draw_calls) / s.frames : 0.0,
                       s.frames ? static_cast<double>(s.label_quads) / s.frames : 0.0,
-                      s.label_place_ms_max, s.zoom, s.tile_zoom);
+                      s.label_place_ms_max, s.zoom, s.min_tile_zoom, s.tile_zoom);
         trace(message);
     }
     return wants_more;

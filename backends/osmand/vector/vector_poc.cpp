@@ -350,6 +350,7 @@ int main(int argc, char** argv)
     std::size_t incomplete = 0, window_incomplete = 0, window_frames = 0;
     double first_complete_s = -1.0;
     auto window_start = Clock::now();
+    double run_fetch_max = 0.0, run_place_max = 0.0;
     const double shot_times[] = {3.5, duration * 0.3, duration * 0.55, duration * 0.95};
     std::size_t next_shot = 0;
     std::vector<std::uint8_t> pixels;
@@ -410,6 +411,8 @@ int main(int argc, char** argv)
         if (ms_since(window_start) >= 5000.0) {
             const double seconds = ms_since(window_start) / 1000.0;
             const VectorMapStats s = map.stats();
+            run_fetch_max = std::max(run_fetch_max, s.fetch_ms_max);
+            run_place_max = std::max(run_place_max, s.label_place_ms_max);
             std::printf("t=%5.1f fps=%5.1f cpu_p50=%.1f cpu_p95=%.1f swap_avg=%.1f "
                         "frame_p95=%.1f frame_max=%.1f incomplete=%zu/%zu zoom=%.2f "
                         "tiles_gpu=%zu gpu_mb=%.1f built=%llu\n",
@@ -431,7 +434,10 @@ int main(int argc, char** argv)
     std::size_t over50 = 0;
     for (double f : frame_ms)
         if (f > 50.0) ++over50;
-    const VectorMapStats s = map.stats();
+    VectorMapStats s = map.stats();
+    // stats() maxima cover one window; report the run's.
+    s.fetch_ms_max = std::max(run_fetch_max, s.fetch_ms_max);
+    s.label_place_ms_max = std::max(run_place_max, s.label_place_ms_max);
     const double built = s.tiles_built ? static_cast<double>(s.tiles_built) : 1.0;
     std::printf("summary frames=%llu seconds=%.1f fps=%.1f cpu_p50=%.1f cpu_p95=%.1f "
                 "cpu_max=%.1f swap_avg=%.1f frame_p95=%.1f frame_max=%.1f over50=%zu "
