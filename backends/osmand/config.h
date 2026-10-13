@@ -38,6 +38,12 @@ struct Config {
     bool production_profile_suppressed = false;
     std::string production_attempt =
         "/datastore/navicore-backend/.production-profile-attempt";
+    // GPU vector map instead of OsmAnd's raster tiles and labels.
+    bool vector_map = false;
+    // Crash guard, as for the production profile.
+    bool vector_map_suppressed = false;
+    std::string vector_map_attempt =
+        "/datastore/navicore-backend/.vector-map-attempt";
 
     static Config from_environment();
 };

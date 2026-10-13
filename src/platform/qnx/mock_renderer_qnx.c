@@ -20,6 +20,9 @@
  * showed eglSwapBuffers blocking ~37 ms with 3 buffers under the HMI but
  * ~4 ms with 2; whether more frames reach the display is what this tests. */
 #define MOCK_BUFFERS_MARKER "/datastore/navicore-backend/nav-buffers"
+/* Frame cap in fps (10..120). Swaps never wait (swap interval 0), so a cheap
+ * renderer would otherwise spin far above Screen's ~30 Hz composition. */
+#define MOCK_PACE_MARKER "/datastore/navicore-backend/nav-pace-fps"
 #define MOCK_PRESENT_TRACE_PATH "/tmp/open-navicore-present.log"
 #define MOCK_CONTENT_X 0
 #define MOCK_CONTENT_Y 72
@@ -55,6 +58,7 @@ typedef struct {
     uint64_t next_present_nanoseconds;
     uint64_t trace_window_start_nanoseconds;
     uint64_t trace_pace_nanoseconds;
+    uint64_t pace_nanoseconds;
     uint64_t trace_swap_nanoseconds;
     uint64_t trace_swap_max_nanoseconds;
     uint32_t trace_presented;
@@ -86,11 +90,11 @@ static uint64_t monotonic_nanoseconds(void)
 static void pace_presentation(void)
 {
     uint64_t now = monotonic_nanoseconds();
-    if (MOCK_PRESENT_PACING_NANOSECONDS == 0u) return;
+    if (g_qnx.pace_nanoseconds == 0u) return;
     if (now == 0u) return;
     if (g_qnx.next_present_nanoseconds == 0u ||
         now > g_qnx.next_present_nanoseconds +
-              MOCK_PRESENT_PACING_NANOSECONDS) {
+              g_qnx.pace_nanoseconds) {
         g_qnx.next_present_nanoseconds = now;
     }
     while (now < g_qnx.next_present_nanoseconds) {
@@ -102,7 +106,7 @@ static void pace_presentation(void)
         now = monotonic_nanoseconds();
         if (now == 0u) return;
     }
-    g_qnx.next_present_nanoseconds += MOCK_PRESENT_PACING_NANOSECONDS;
+    g_qnx.next_present_nanoseconds += g_qnx.pace_nanoseconds;
 }
 
 static void hist_add(uint32_t *hist, uint64_t nanoseconds)
@@ -380,6 +384,10 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
         }
     }
     {
+        const int pace_fps = marker_integer(MOCK_PACE_MARKER);
+        g_qnx.pace_nanoseconds = (pace_fps >= 10 && pace_fps <= 120)
+            ? UINT64_C(1000000000) / (uint64_t)pace_fps
+            : MOCK_PRESENT_PACING_NANOSECONDS;
         const int marker_buffers = marker_integer(MOCK_BUFFERS_MARKER);
         if (marker_buffers == 2 || marker_buffers == 3)
             requested_buffers = marker_buffers;
@@ -501,11 +509,12 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                       "usage=0x%x pipeline=%d overlay_requested=%d "
                       "overlay_pipeline=%d overlay_applied=%d "
                       "opaque_requested=%d opaque_applied=%d "
-                      "transparency=%d buffers=%d\n",
+                      "transparency=%d buffers=%d pace_us=%llu\n",
                       (unsigned int)class_usage, class_pipeline,
                       (unsigned int)usage, pipeline, overlay_requested,
                       overlay_pipeline, overlay_applied, opaque_requested,
-                      opaque_applied, transparency, requested_buffers);
+                      opaque_applied, transparency, requested_buffers,
+                      (unsigned long long)(g_qnx.pace_nanoseconds / 1000u));
         (void)fflush(g_qnx.trace_file);
     }
     set_diagnostic(diagnostic, capacity,

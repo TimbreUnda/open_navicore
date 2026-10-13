@@ -163,6 +163,11 @@ void TileTessellator::add_line(const Ring& points, const LineStyle& style)
         extrude(run, style, bucket);
 }
 
+void TileTessellator::add_line_unclipped(const Ring& points, const LineStyle& style)
+{
+    extrude(points, style, lines_[static_cast<int>(style.layer)]);
+}
+
 void TileTessellator::extrude(const Ring& raw, const LineStyle& style,
                               LineBucket& out)
 {

@@ -1,4 +1,7 @@
 #include "caching_raster_provider.h"
+#include "diagnostics.h"
+
+#include <cstdio>
 
 #include <OsmAndCore/Map/IMapTiledDataProvider.h>
 #include <OsmAndCore/Map/IRasterMapLayerProvider.h>
@@ -65,6 +68,36 @@ std::shared_ptr<TileCache> CachingRasterProvider::cache() const
     return cache_;
 }
 
+void CachingRasterProvider::record(bool hit, std::uint64_t us)
+{
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    if (hit) {
+        ++hits_;
+        hit_us_ += us;
+    } else {
+        ++misses_;
+        miss_us_ += us;
+        if (us > miss_max_us_)
+            miss_max_us_ = us;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - stats_since_ < std::chrono::seconds(5))
+        return;
+    char message[200];
+    std::snprintf(message, sizeof(message),
+                  "tile_stats hits=%llu hit_avg_us=%llu misses=%llu "
+                  "miss_avg_ms=%llu miss_max_ms=%llu",
+                  static_cast<unsigned long long>(hits_),
+                  static_cast<unsigned long long>(hits_ ? hit_us_ / hits_ : 0),
+                  static_cast<unsigned long long>(misses_),
+                  static_cast<unsigned long long>(
+                      misses_ ? miss_us_ / misses_ / 1000 : 0),
+                  static_cast<unsigned long long>(miss_max_us_ / 1000));
+    trace(message);
+    stats_since_ = now;
+    hits_ = hit_us_ = misses_ = miss_us_ = miss_max_us_ = 0;
+}
+
 bool CachingRasterProvider::obtainData(
     const OsmAnd::IMapDataProvider::Request& request,
     std::shared_ptr<OsmAnd::IMapDataProvider::Data>& output,
@@ -83,6 +116,13 @@ bool CachingRasterProvider::obtainData(
     // Not thread_local: dynamic TLS in this dlopen()ed plugin (static
     // libstdc++, QNX 6.6) is not trusted; one allocation per tile is cheap
     // next to rasterizing it.
+    const auto started = std::chrono::steady_clock::now();
+    const auto elapsed = [&] {
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - started)
+                .count());
+    };
     std::vector<std::uint8_t> pixels;
     if (store->get(key, pixels)) {
         if (auto image = decode_tile(pixels, store->format(),
@@ -93,6 +133,7 @@ bool CachingRasterProvider::obtainData(
                     ? OsmAnd::AlphaChannelPresence::NotPresent
                     : OsmAnd::AlphaChannelPresence::Present,
                 getTileDensityFactor(), image);
+            record(true, elapsed());
             return true;
         }
     }
@@ -107,6 +148,7 @@ bool CachingRasterProvider::obtainData(
                                  pixels))
             (void)store->put(key, pixels.data(), pixels.size());
     }
+    record(false, elapsed());
     return true;
 }
 

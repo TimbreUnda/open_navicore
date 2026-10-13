@@ -17,6 +17,7 @@
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
 #include "ui/recents_store.h"
+#include "vector/vector_map.h"
 
 #include <OsmAndCore.h>
 #include <OsmAndCore/CoreResourcesEmbeddedBundle.h>
@@ -40,6 +41,7 @@
 #include <QString>
 
 #include <algorithm>
+#include <stdexcept>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -92,6 +94,81 @@ private:
     // Outlives OsmAnd's GPU worker thread; destroyed after releaseRendering().
     std::shared_ptr<GpuUploadContext> upload_context_;
     std::unique_ptr<RetainedSymbolLayer> retained_symbols_;
+    // Vector mode: OsmAnd keeps camera, routing and guidance; the map,
+    // route and labels are drawn by VectorMap after OsmAnd's (empty) frame.
+    bool vector_mode_ = false;
+    std::unique_ptr<navicore_vector::VectorMap> vector_map_;
+    std::string vector_attempt_;
+    std::chrono::steady_clock::time_point vector_last_frame_{};
+    std::chrono::steady_clock::time_point vector_reported_at_{};
+    bool render_vector_map(const MockNavBackendRenderTargetV1& target);
+    // Tile backlog as the screen sees it: OsmAnd's outstanding resource
+    // requests sampled each frame. "settle" is how long the map stayed
+    // incomplete after new tiles were first needed.
+    struct TileBacklog {
+        std::chrono::steady_clock::time_point window_start{};
+        std::chrono::steady_clock::time_point busy_since{};
+        bool busy = false;
+        unsigned int max_requests = 0;
+        std::int64_t busy_us = 0;
+        unsigned int settles = 0;
+        std::int64_t settle_max_ms = 0;
+        std::int64_t settle_sum_ms = 0;
+    } tile_backlog_;
+    void sample_tile_backlog()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        auto& b = tile_backlog_;
+        if (b.window_start == std::chrono::steady_clock::time_point{})
+            b.window_start = now;
+        const unsigned int requests =
+            renderer_->getActiveResourceRequestsCount();
+        b.max_requests = std::max(b.max_requests, requests);
+        if (requests > 0 && !b.busy) {
+            b.busy = true;
+            b.busy_since = now;
+        } else if (requests == 0 && b.busy) {
+            b.busy = false;
+            const auto ms = std::chrono::duration_cast<
+                std::chrono::milliseconds>(now - b.busy_since).count();
+            b.busy_us += ms * 1000;
+            ++b.settles;
+            b.settle_sum_ms += ms;
+            b.settle_max_ms = std::max<std::int64_t>(b.settle_max_ms, ms);
+        }
+        if (now - b.window_start < std::chrono::seconds(5))
+            return;
+        std::int64_t busy_us = b.busy_us;
+        if (b.busy)
+            busy_us += std::chrono::duration_cast<std::chrono::microseconds>(
+                now - std::max(b.busy_since, b.window_start)).count();
+        const auto window_ms = std::chrono::duration_cast<
+            std::chrono::milliseconds>(now - b.window_start).count();
+        char message[200];
+        std::snprintf(message, sizeof(message),
+                      "tile_backlog window_ms=%lld busy_pct=%lld "
+                      "max_requests=%u settles=%u settle_avg_ms=%lld "
+                      "settle_max_ms=%lld still_busy_ms=%lld",
+                      static_cast<long long>(window_ms),
+                      static_cast<long long>(
+                          window_ms ? busy_us / 10 / window_ms : 0),
+                      b.max_requests, b.settles,
+                      static_cast<long long>(
+                          b.settles ? b.settle_sum_ms / b.settles : 0),
+                      static_cast<long long>(b.settle_max_ms),
+                      static_cast<long long>(
+                          b.busy ? std::chrono::duration_cast<
+                                       std::chrono::milliseconds>(
+                                       now - b.busy_since).count()
+                                 : 0));
+        trace(message);
+        const bool busy = b.busy;
+        const auto since = b.busy_since;
+        b = TileBacklog{};
+        b.window_start = now;
+        b.busy = busy;
+        b.busy_since = since;
+    }
     bool retained_symbols_creation_attempted_ = false;
     std::unique_ptr<ui::NavigationModel> navigation_;
     std::unique_ptr<ui::NavigationView> view_;
@@ -248,8 +325,20 @@ bool OsmAndEngine::initialize(const Config& config,
     baked_map_symbols_ = config.baked_map_symbols;
     bounded_map_symbols_ = config.bounded_map_symbols;
     retained_map_symbols_ = config.retained_map_symbols;
+    vector_mode_ = config.vector_map;
+    if (vector_mode_) {
+        // The vector map draws its own labels; nothing rasterizes tiles.
+        retained_map_symbols_ = false;
+        baked_map_symbols_ = false;
+        bounded_map_symbols_ = false;
+        trace("vector_map=enabled");
+    }
+    if (config.vector_map_suppressed)
+        trace("vector_map=suppressed_after_unstable_run");
+    vector_attempt_ = vector_mode_ ? config.vector_map_attempt : std::string();
+    // The shootout swaps OsmAnd layers; meaningless with the vector map.
     render_shootout_enabled_ = config.render_shootout &&
-                               !sustained_basemap_benchmark_;
+                               !sustained_basemap_benchmark_ && !vector_mode_;
     frame_metrics_ = FrameMetrics(config.performance_metrics);
     OsmAnd::enablePerformanceMetrics(config.detailed_tile_metrics);
     if (config.performance_metrics)
@@ -433,12 +522,14 @@ bool OsmAndEngine::initialize(const Config& config,
     renderer_->setAzimuth(0.0f);
     renderer_->setElevationAngle(90.0f);
     route_lines_ = std::make_shared<OsmAnd::VectorLinesCollection>();
-    if ((!sustained_basemap_benchmark_ || bounded_map_symbols_) &&
-        !retained_map_symbols_ &&
-        !baked_map_symbols_)
-        renderer_->addSymbolsProvider(symbols_);
-    renderer_->addSymbolsProvider(route_lines_);
-    renderer_->setMapLayerProvider(0, raster_);
+    if (!vector_mode_) {
+        if ((!sustained_basemap_benchmark_ || bounded_map_symbols_) &&
+            !retained_map_symbols_ &&
+            !baked_map_symbols_)
+            renderer_->addSymbolsProvider(symbols_);
+        renderer_->addSymbolsProvider(route_lines_);
+        renderer_->setMapLayerProvider(0, raster_);
+    }
 
     // GPU API/resources/stages may initialize before _isRenderingInitialized
     // becomes true. releaseRendering refuses to clean that partial state.
@@ -449,6 +540,24 @@ bool OsmAndEngine::initialize(const Config& config,
     // below so an LVGL construction exception can still release OsmAnd.
     phase_ = Phase::Ready;
     trace("init=rendering");
+    if (vector_mode_) {
+        try {
+            vector_map_.reset(new navicore_vector::VectorMap(
+                obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); }));
+            if (!vector_map_->init_gl())
+                throw std::runtime_error("vector_map gl");
+            trace("init=vector_map");
+        } catch (...) {
+            // Fall back to OsmAnd's own map for this run.
+            if (vector_map_)
+                vector_map_->release_gl(false);
+            vector_map_.reset();
+            vector_mode_ = false;
+            renderer_->addSymbolsProvider(route_lines_);
+            renderer_->setMapLayerProvider(0, raster_);
+            trace("error=vector_map_init_fallback_raster");
+        }
+    }
     navigation_ = std::unique_ptr<ui::NavigationModel>(new ui::NavigationModel());
     recents_store_.reset(new ui::RecentsStore(config.recents));
     navigation_->set_recents(recents_store_->load());
@@ -462,7 +571,8 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=routing_xml");
     trace("init=routing_resource");
     navigation_wakeup_ = std::move(wakeup);
-    start_precache(config);
+    if (!vector_mode_)
+        start_precache(config);
     navigation_map_ = config.map;
     navigation_routing_xml_.assign(
         routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
@@ -501,6 +611,13 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route)
     for (std::size_t index = 1; index < route.geometry.size(); ++index) {
         simulation_geometry_length_metres_ += geometry_distance(
             route.geometry[index - 1], route.geometry[index]);
+    }
+    if (vector_map_) {
+        std::vector<std::pair<std::int32_t, std::int32_t>> route31;
+        route31.reserve(static_cast<std::size_t>(points.size()));
+        for (const auto& point : points)
+            route31.emplace_back(point.x, point.y);
+        vector_map_->set_route(route31);
     }
     if (points.size() < 2) return;
     OsmAnd::VectorLineBuilder()
@@ -954,6 +1071,7 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     stage_started = Clock::now();
     const bool prepared = renderer_->prepareFrame();
     measurement.prepare_us = elapsed_us(stage_started);
+    sample_tile_backlog();
     if (!prepared)
         return finish(
             {FrameOutcome::Pending, PendingStage::Prepare, !renderer_->isIdle()},
@@ -966,6 +1084,12 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     if (!map_rendered)
         return finish({FrameOutcome::Pending, PendingStage::Render, true},
                       MeasuredFrameOutcome::RenderPending);
+    bool vector_wants_frames = false;
+    if (vector_map_) {
+        stage_started = Clock::now();
+        vector_wants_frames = render_vector_map(target);
+        measurement.map_render_us += elapsed_us(stage_started);
+    }
     if (retained_symbols_) {
         retained_symbols_->request(renderer_->getMapState());
         if (!retained_symbols_->present(*renderer_, target.width, target.height)) {
@@ -1101,12 +1225,85 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         if (!recents_store_->save(navigation_->recents()))
             trace("error=recents_save");
     }
+    if (!vector_attempt_.empty() &&
+        std::chrono::steady_clock::now() - production_started_at_ >=
+            std::chrono::minutes(2)) {
+        std::remove(vector_attempt_.c_str());
+        vector_attempt_.clear();
+        trace("vector_map=stable");
+    }
     return finish({FrameOutcome::Presented, PendingStage::None,
-                   guidance_changed || camera_animating ||
+                   guidance_changed || camera_animating || vector_wants_frames ||
                        !renderer_->isIdle() ||
                        (autostart_ != Autostart::Off &&
                         autostart_ != Autostart::Done)},
                   MeasuredFrameOutcome::Presented);
+}
+
+// The camera comes from OsmAnd: four screen points are unprojected onto the
+// ground and the vector map uses the homography through them, which is
+// exact for OsmAnd's flat ground in 2D and tilted 3D.
+bool OsmAndEngine::render_vector_map(const MockNavBackendRenderTargetV1& target)
+{
+    navicore_vector::MapView view;
+    view.width = static_cast<int>(target.width);
+    view.height = static_cast<int>(target.height);
+    const auto state = renderer_->getMapState();
+    view.origin_x31 = state.target31.x;
+    view.origin_y31 = state.target31.y;
+    const double w = view.width, h = view.height;
+    const double screen[4][2] = {{w * 0.15, h * 0.55}, {w * 0.85, h * 0.55},
+                                 {w * 0.85, h * 0.95}, {w * 0.15, h * 0.95}};
+    double world[4][2];
+    for (int i = 0; i < 4; ++i) {
+        OsmAnd::PointI64 location;
+        if (!renderer_->getLocationFromScreenPoint(
+                OsmAnd::PointD(screen[i][0], screen[i][1]), location))
+            return false;
+        world[i][0] = static_cast<double>(location.x);
+        world[i][1] = static_cast<double>(location.y);
+    }
+    if (!navicore_vector::VectorMap::set_from_correspondences(view, world, screen))
+        return false;
+    const auto visible = renderer_->getVisibleBBox31();
+    view.min_x31 = visible.left();
+    view.min_y31 = visible.top();
+    view.max_x31 = visible.right();
+    view.max_y31 = visible.bottom();
+    // The LVGL view draws the vehicle marker; keep labels clear of it.
+    view.location_dot = false;
+    OsmAnd::PointI marker;
+    if (renderer_->obtainScreenPointFromPosition(state.target31, marker, false)) {
+        view.dot_x = static_cast<float>(marker.x);
+        view.dot_y = static_cast<float>(marker.y);
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const double dt = vector_last_frame_ == std::chrono::steady_clock::time_point{}
+        ? 0.016
+        : std::min(0.1, std::chrono::duration<double>(now - vector_last_frame_).count());
+    vector_last_frame_ = now;
+    const bool wants_more = vector_map_->render(view, dt, true);
+    if (now - vector_reported_at_ >= std::chrono::seconds(5)) {
+        vector_reported_at_ = now;
+        const auto s = vector_map_->stats();
+        const double built = s.tiles_built ? static_cast<double>(s.tiles_built) : 1.0;
+        char message[320];
+        std::snprintf(message, sizeof(message),
+                      "vector_map frames=%llu incomplete=%llu tiles_built=%llu "
+                      "fetch_avg_ms=%.0f fetch_max_ms=%.0f build_avg_ms=%.1f "
+                      "labels_avg_ms=%.1f gpu_tiles=%zu gpu_mb=%.1f calls_avg=%.0f "
+                      "label_quads_avg=%.1f label_place_max_ms=%.1f zoom=%.2f tile_zoom=%d",
+                      static_cast<unsigned long long>(s.frames),
+                      static_cast<unsigned long long>(s.incomplete_frames),
+                      static_cast<unsigned long long>(s.tiles_built),
+                      s.fetch_ms_total / built, s.fetch_ms_max, s.build_ms_total / built,
+                      s.labels_ms_total / built, s.gpu_tiles, s.gpu_bytes / 1048576.0,
+                      s.frames ? static_cast<double>(s.draw_calls) / s.frames : 0.0,
+                      s.frames ? static_cast<double>(s.label_quads) / s.frames : 0.0,
+                      s.label_place_ms_max, s.zoom, s.tile_zoom);
+        trace(message);
+    }
+    return wants_more;
 }
 
 void OsmAndEngine::advance_benchmark_autostart()
@@ -1188,6 +1385,10 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
             retained_symbols_.reset();
         }
         retained_symbols_creation_attempted_ = false;
+        if (vector_map_) {
+            vector_map_->release_gl(mode == ReleaseMode::ContextLost);
+            vector_map_.reset();
+        }
         navigation_wakeup_.reset();
         navigation_map_.clear();
         navigation_routing_xml_.clear();

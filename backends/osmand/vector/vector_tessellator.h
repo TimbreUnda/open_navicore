@@ -49,6 +49,8 @@ public:
                   const AreaStyle& style);
     // Polyline (or a closed ring for outlines), clipped to the tile.
     void add_line(const Ring& points, const LineStyle& style);
+    // Same, without clipping (a route in its own coordinate frame).
+    void add_line_unclipped(const Ring& points, const LineStyle& style);
     TileMesh finish();
 
     std::size_t clipped_away() const { return clipped_away_; }

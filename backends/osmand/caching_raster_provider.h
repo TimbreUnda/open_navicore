@@ -4,6 +4,7 @@
 
 #include <OsmAndCore/Map/MapRasterLayerProvider_Software.h>
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 
@@ -33,8 +34,21 @@ public:
 
 private:
     std::shared_ptr<TileCache> cache() const;
+    // Tile timing, traced every 5 s as tile_stats: cache hits (decode) and
+    // misses (OBF read + Skia rasterization + encode/store) on the
+    // resource worker threads. This is the background work that the frame
+    // timings never see.
+    void record(bool hit, std::uint64_t us);
 
     mutable std::mutex mutex_;
+    std::mutex stats_mutex_;
+    std::chrono::steady_clock::time_point stats_since_{
+        std::chrono::steady_clock::now()};
+    std::uint64_t hits_ = 0;
+    std::uint64_t hit_us_ = 0;
+    std::uint64_t misses_ = 0;
+    std::uint64_t miss_us_ = 0;
+    std::uint64_t miss_max_us_ = 0;
     std::shared_ptr<TileCache> cache_;
 };
 

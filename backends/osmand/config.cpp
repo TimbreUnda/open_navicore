@@ -114,6 +114,24 @@ Config Config::from_environment()
             config.retained_map_symbols = true;
         }
     }
+    if (marker_or_environment(
+            "OPEN_NAVICORE_OSMAND_VECTOR_MAP",
+            "/datastore/navicore-backend/enable-vector-map")) {
+        config.vector_map_attempt =
+            path("OPEN_NAVICORE_OSMAND_VECTOR_MAP_ATTEMPT",
+                 "/datastore/navicore-backend/.vector-map-attempt");
+        if (std::FILE* previous =
+                std::fopen(config.vector_map_attempt.c_str(), "r")) {
+            std::fclose(previous);
+            std::remove(config.vector_map_attempt.c_str());
+            config.vector_map_suppressed = true;
+        } else {
+            if (std::FILE* attempt =
+                    std::fopen(config.vector_map_attempt.c_str(), "w"))
+                std::fclose(attempt);
+            config.vector_map = true;
+        }
+    }
     return config;
 }
 } // namespace navicore_osmand
