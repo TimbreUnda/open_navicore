@@ -89,6 +89,20 @@ ICONS = {
     'pin_24': (24, stroked(path(UI['pin']), 2), True, 0),
     'fuel_24': (24, stroked(path(UI['fuel']), 2), True, 0),
 }
+# Place card category badges (design POI_CAT) and the arrival flag.
+BADGES = {
+    'fuel': UI['fuel'],
+    'charging': 'M13 2 4 14h7l-1 8 9-12h-7z',
+    'parking': 'M7 21V3h6a5 5 0 0 1 0 10H7',
+    'hospital': 'M12 5v14M5 12h14',
+    'food': 'M7 2v9M4 2v5a3 3 0 0 0 6 0V2M7 11v11M17 2c-2 2-3 5-3 8h4v12',
+    'hotel': 'M3 18V8M3 14h18v4M21 18v-4a3 3 0 0 0-3-3h-7v3M7 11a1.5 1.5 0 1 0 0-.01',
+    'sight': 'm12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z',
+    'place': UI['pin'],
+}
+for key, d in BADGES.items():
+    ICONS['badge_%s_26' % key] = (26, stroked(path(d), 2), True, 0)
+ICONS['flag_38'] = (38, stroked(path('M6 21V4M6 4h11l-3 4 3 4H6'), 2.2), True, 0)
 for key in ('search', 'spin', 'nores', 'route', 'alert'):
     ICONS['message_%s_32' % key] = (32, stroked(path(UI[key]), 1.8), True, 0)
 # Key labels Montserrat lacks; the design shows them in the browser's

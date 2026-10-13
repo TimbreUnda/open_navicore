@@ -268,6 +268,41 @@ void test_car_controls()
         assert(view.set_moving(false));
     }
 }
+
+void test_place_card_and_back()
+{
+    NavigationModel model;
+    NavigationView view(model, 1024, 574);
+    settle(view, 31);
+    Destination wog{"poi:1,2", "WOG", "Fuel · 0.4 km", "", 50.44, 30.52};
+    // Close (left button) hides the card; the screen stays free drive.
+    assert(view.show_place_card(wog, "amenity_fuel"));
+    settle(view, 2);
+    assert(model.place_card() && model.place_card()->title == "WOG");
+    tap(view, 16 + 16 + 71, 574 - 16 - 160 + 80 + 32);
+    assert(!model.place_card() && model.screen() == Screen::FreeDrive);
+    // Navigate (right button) routes to the place.
+    assert(view.show_place_card(wog, "amenity_fuel"));
+    settle(view, 2);
+    tap(view, 16 + 166 + 99, 574 - 16 - 160 + 80 + 32);
+    assert(model.screen() == Screen::Search);
+    assert(model.destination() && model.destination()->id == "poi:1,2");
+    assert(!model.place_card());
+    // Place cards only open over free drive.
+    assert(!view.show_place_card(wog, "amenity_fuel"));
+
+    // Route preview Back returns to the search screen.
+    RouteAlternative route;
+    route.duration = "5 min";
+    route.distance = "1.0 km";
+    route.geometry = {{50.0, 30.0}, {50.01, 30.0}};
+    assert(view.apply_routes(model.route_revision(), {route}));
+    assert(model.screen() == Screen::RoutePreview);
+    settle(view, 2);
+    tap(view, 16 + 40, 16 + 32);
+    assert(model.screen() == Screen::Search);
+    assert(model.routes().empty() && !model.destination());
+}
 } // namespace
 
 void test_recents_store()
@@ -302,6 +337,7 @@ int main()
     test_overlay_occupancy();
     test_recents_store();
     test_car_controls();
+    test_place_card_and_back();
 
     assert(compact_font_text(u8"Січневого Повстання") ==
            "Sichnevoho Povstannya");
@@ -407,7 +443,11 @@ int main()
     assert(model.guidance().arrived);
     assert(model.guidance().maneuver.kind == ManeuverKind::Arrive);
     assert(view.render(16));
-    assert(model.end_guidance());
+    // The arrival card returns to free drive by itself after 8 s.
+    for (int i = 0; i < 40 && model.screen() == Screen::Guidance; ++i) {
+        view.process_input(250);
+        (void)view.render(0);
+    }
     assert(model.screen() == Screen::FreeDrive);
 
     model.close_search();

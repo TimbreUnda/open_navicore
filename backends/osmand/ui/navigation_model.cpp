@@ -14,6 +14,7 @@ void NavigationModel::open_search()
 {
     screen_ = Screen::Search;
     message_.clear();
+    has_place_ = false;
 }
 
 void NavigationModel::close_search() noexcept
@@ -265,6 +266,43 @@ std::uint64_t NavigationModel::select_place(Destination place)
     ++search_revision_;
     results_ = {std::move(place)};
     return select_destination(0);
+}
+
+
+bool NavigationModel::back_to_search() noexcept
+{
+    if (screen_ != Screen::RoutePreview)
+        return false;
+    screen_ = Screen::Search;
+    routes_.clear();
+    has_destination_ = false;
+    selected_route_ = 0;
+    ++route_revision_;
+    message_.clear();
+    return true;
+}
+
+const Destination* NavigationModel::place_card() const noexcept
+{
+    return has_place_ ? &place_ : nullptr;
+}
+
+bool NavigationModel::show_place_card(Destination place, std::string icon)
+{
+    if (screen_ != Screen::FreeDrive)
+        return false;
+    place_ = std::move(place);
+    place_icon_ = std::move(icon);
+    has_place_ = true;
+    return true;
+}
+
+bool NavigationModel::close_place_card() noexcept
+{
+    if (!has_place_)
+        return false;
+    has_place_ = false;
+    return true;
 }
 
 } // namespace navicore_osmand::ui

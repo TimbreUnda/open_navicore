@@ -422,6 +422,7 @@ void NavigationView::build_free_drive()
     lv_obj_add_event_cb(search, open_search_cb, LV_EVENT_CLICKED, this);
 
     build_recent_card(top + margin + tile + 8);
+    build_place_card();
     build_map_controls(true);
 }
 
@@ -888,6 +889,154 @@ void NavigationView::refresh_results()
     design::text(panel_status, text, &nav_font_20_600, text2, x + 46, 74);
 }
 
+namespace {
+// Place card badge per map icon (design POI_CAT colours).
+struct Badge { const lv_image_dsc_t* image; uint32_t colour; };
+Badge badge_for(const std::string& icon)
+{
+    const auto has = [&](const char* word) { return icon.find(word) != std::string::npos; };
+    if (has("fuel")) return {&nav_icon_badge_fuel_26, 0x3d7bff};
+    if (has("charging")) return {&nav_icon_badge_charging_26, 0x20a46b};
+    if (has("parking")) return {&nav_icon_badge_parking_26, 0x4b6bd6};
+    if (has("hospital") || has("pharmacy") || has("doctor") || has("clinic"))
+        return {&nav_icon_badge_hospital_26, 0xe0524a};
+    if (has("restaurant") || has("cafe") || has("fast_food") || has("food") || has("bar"))
+        return {&nav_icon_badge_food_26, 0xe08a2c};
+    if (has("hotel") || has("motel") || has("hostel") || has("guest"))
+        return {&nav_icon_badge_hotel_26, 0x8c62d0};
+    if (has("tourism") || has("museum") || has("attraction") || has("monument") ||
+        has("theatre") || has("viewpoint"))
+        return {&nav_icon_badge_sight_26, 0xc99a2e};
+    return {&nav_icon_badge_place_26, 0x3d7bff};
+}
+} // namespace
+
+// Place card (design proposal G2): a tapped POI with Close and Navigate,
+// bottom left over the free-drive map.
+void NavigationView::build_place_card()
+{
+    using namespace design;
+    const Destination* place = model_.place_card();
+    if (!place)
+        return;
+    const int top = content_top(height_);
+    const int height = content_height(height_);
+    lv_obj_t* card = box(screen_, margin, top + height - margin - 160, 380, 160, surface, 12, true);
+    shadow(card, 8, 28, 0.5f);
+    const Badge badge = badge_for(model_.place_card_icon());
+    lv_obj_t* circle = box(card, 16, 16, 48, 48, badge.colour, 24);
+    icon(circle, badge.image, white, 11, 11);
+    clipped_text(card, place->title.c_str(), &nav_font_24_700, text1, 78, 17, 275);
+    if (!place->subtitle.empty())
+        clipped_text(card, place->subtitle.c_str(), &nav_font_14_400, text2, 78, 46, 275);
+    // Buttons share 348 px as 1fr : 1.4fr with an 8 px gap.
+    lv_obj_t* close = box(card, 16, 80, 142, tile, control, 8, true);
+    const int close_width = text_width("Close", &nav_font_20_600);
+    design::text(close, "Close", &nav_font_20_600, text1, (142 - close_width) / 2, 20);
+    lv_obj_add_event_cb(close, place_close_cb, LV_EVENT_CLICKED, this);
+    lv_obj_t* go = box(card, 166, 80, 198, tile, maneuver, 8, true);
+    const int go_width = 24 + 8 + text_width("Navigate", &nav_font_20_700);
+    const int go_x = (198 - go_width) / 2;
+    icon(go, &nav_icon_route_24, white, go_x, 20);
+    design::text(go, "Navigate", &nav_font_20_700, white, go_x + 32, 20);
+    lv_obj_add_event_cb(go, place_navigate_cb, LV_EVENT_CLICKED, this);
+}
+
+// Arrival card (design proposal G5): replaces the manoeuvre and trip cards
+// and returns to free drive after 8 s, or on Done.
+void NavigationView::build_arrival_card()
+{
+    using namespace design;
+    constexpr uint32_t ok = 0x4cc38a;
+    constexpr uint32_t ok_bg = 0x12291f;
+    const int top = content_top(height_);
+    const Destination* destination = model_.destination();
+    std::string where = destination ? destination->title : std::string("Destination");
+    if (destination && !destination->subtitle.empty())
+        where += " · " + destination->subtitle;
+    const int lines = std::min(2, wrapped_lines(where.c_str(), &nav_font_20_400, 272));
+    const int countdown_y = 131 + 26 * lines + 10;
+    const int done_y = countdown_y + 18 + 12;
+    lv_obj_t* card = box(screen_, margin, top + margin, column, done_y + tile + 16, ok_bg, 8, true);
+    ring(card, 2, ok);
+    lv_obj_t* badge = box(card, (column - 64) / 2, 22, 64, 64, ok, 32);
+    icon(badge, &nav_icon_flag_38, base, 13, 13);
+    const char* title = "You have arrived";
+    design::text(card, title, &nav_font_24_800, ok,
+                 (column - text_width(title, &nav_font_24_800)) / 2, 96);
+    lv_obj_t* body = clipped_text(card, where.c_str(), &nav_font_20_400, text1, 16, 132, 272,
+                                  lines, 26);
+    lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
+    arrival_countdown_ = design::text(card, "", &nav_font_14_400, text2, 16, countdown_y);
+    lv_obj_set_width(arrival_countdown_, 272);
+    lv_obj_set_style_text_align(arrival_countdown_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_t* done = box(card, 16, done_y, 272, tile, accent, 8, true);
+    design::text(done, "Done", &nav_font_20_700, white,
+                 (272 - text_width("Done", &nav_font_20_700)) / 2, 20);
+    lv_obj_add_event_cb(done, end_cb, LV_EVENT_CLICKED, this);
+    arrival_started_ = lv_tick_get();
+    arrival_seconds_shown_ = -1;
+    update_arrival();
+}
+
+void NavigationView::update_arrival()
+{
+    constexpr int seconds = 8;
+    if (!arrival_countdown_)
+        return;
+    const int left = seconds - static_cast<int>(lv_tick_elaps(arrival_started_) / 1000u);
+    if (left <= 0) {
+        trace("ui=arrival_auto_end");
+        if (model_.end_guidance())
+            rebuild();
+        return;
+    }
+    if (left == arrival_seconds_shown_)
+        return;
+    arrival_seconds_shown_ = left;
+    char text[48] = {};
+    std::snprintf(text, sizeof(text), "Returning to free drive in %d s", left);
+    set_label_text(arrival_countdown_, text);
+}
+
+bool NavigationView::show_place_card(Destination place, std::string icon)
+{
+    if (!model_.show_place_card(std::move(place), std::move(icon)))
+        return false;
+    rebuild();
+    return true;
+}
+
+bool NavigationView::close_place_card()
+{
+    if (!model_.close_place_card())
+        return false;
+    rebuild();
+    return true;
+}
+
+void NavigationView::place_close_cb(lv_event_t* event)
+{
+    static_cast<NavigationView*>(lv_event_get_user_data(event))->close_place_card();
+}
+
+void NavigationView::place_navigate_cb(lv_event_t* event)
+{
+    auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
+    const Destination* place = self->model_.place_card();
+    if (!place)
+        return;
+    trace("ui=place_navigate");
+    (void)self->select_place(*place);
+}
+
+void NavigationView::preview_back_cb(lv_event_t* event)
+{
+    auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
+    if (self->model_.back_to_search())
+        self->rebuild();
+}
+
 // Route preview (design: "Route preview · one route (today)"): opaque rail
 // with destination, route cards and Start; the map to the right.
 void NavigationView::build_route_preview()
@@ -899,13 +1048,21 @@ void NavigationView::build_route_preview()
     lv_obj_t* panel_rail = box(screen_, 0, top, rail, height, surface, 0, true);
     box(screen_, rail, top, 1, height, line, 0);  // box-shadow 1px 0 0 line
 
+    // Back (design G3) returns to the search results.
+    const int back_width = 12 + 26 + 6 + text_width("Back", &nav_font_20_600) + 18;
+    lv_obj_t* back = box(panel_rail, margin, margin, back_width, tile, control, 8, true);
+    icon(back, &nav_icon_back_26, text1, 12, 19);
+    design::text(back, "Back", &nav_font_20_600, text1, 44, 20);
+    lv_obj_add_event_cb(back, preview_back_cb, LV_EVENT_CLICKED, this);
+
     const Destination* destination = model_.destination();
     const char* title = destination ? destination->title.c_str() : "Destination";
+    const int title_y = 24 + tile + 8;
     const int title_lines = std::min(2, wrapped_lines(title, &nav_font_24_700, 296));
     lv_obj_t* title_label = clipped_text(panel_rail, title, &nav_font_24_700, text1,
-                                         20, 24, 296, title_lines, 30);
+                                         20, title_y, 296, title_lines, 30);
     lv_label_set_long_mode(title_label, LV_LABEL_LONG_MODE_DOTS);
-    const int subtitle_y = 24 + 30 * title_lines + 4;
+    const int subtitle_y = title_y + 30 * title_lines + 4;
     if (destination && !destination->subtitle.empty())
         clipped_text(panel_rail, destination->subtitle.c_str(), &nav_font_14_400, text2,
                      20, subtitle_y, 296);
@@ -950,6 +1107,11 @@ void NavigationView::build_guidance()
     const auto& guidance = model_.guidance();
     build_vehicle_marker();
 
+    if (guidance.position_available && guidance.arrived) {
+        build_arrival_card();
+        build_map_controls(true);
+        return;
+    }
     if (guidance.position_available) {
         guidance_card_ = box(screen_, margin, top + margin, column, 112, maneuver, 8, true);
         card_shadow(guidance_card_);
@@ -1110,6 +1272,7 @@ void NavigationView::clear_object_references() noexcept
     query_cursor_ = nullptr;
     query_placeholder_ = nullptr;
     keyboard_ = nullptr;
+    arrival_countdown_ = nullptr;
     guidance_card_ = nullptr;
     guidance_glyph_ = nullptr;
     guidance_exit_ = nullptr;
@@ -1181,6 +1344,7 @@ bool NavigationView::render(uint32_t elapsed_ms)
         lv_obj_invalidate(screen_);
         full_clear_pending_ = false;
     }
+    update_arrival();
     (void)lv_timer_handler();
     lv_refr_now(display_);
     if (rendered_frames_ != UINT32_MAX)
@@ -1228,7 +1392,8 @@ bool NavigationView::apply_routes(std::uint64_t revision,
 bool NavigationView::apply_guidance(GuidanceState guidance)
 {
     const bool structure_changed = built_screen_ != model_.screen() ||
-        model_.guidance().position_available != guidance.position_available;
+        model_.guidance().position_available != guidance.position_available ||
+        model_.guidance().arrived != guidance.arrived;
     const bool accepted = model_.update_guidance(std::move(guidance));
     if (accepted) {
         if (structure_changed)

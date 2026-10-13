@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace navicore_osmand::ui {
@@ -63,6 +64,10 @@ public:
     std::uint64_t select_recent(std::size_t index);
     // Routes to a place picked on the map (e.g. a POI).
     std::uint64_t select_place(Destination place);
+    // Place card for a tapped POI (free drive only); `icon` is the map
+    // icon name, which picks the category badge.
+    bool show_place_card(Destination place, std::string icon);
+    bool close_place_card();
 
     // Part of the window the camera frames: right of the 336 px rail. Free
     // drive and guidance float their cards over a full-width map, so the
@@ -90,6 +95,10 @@ private:
     void build_map_controls(bool full);
     void build_vehicle_marker();
     void build_recent_card(int y);
+    void build_place_card();
+    void build_arrival_card();
+    // Arrival countdown: returns to free drive when it runs out.
+    void update_arrival();
     void refresh_guidance();
     // Places the guidance card contents for the current text (simulation tag,
     // one- or two-line action, countdown bar) without rebuilding the screen.
@@ -119,6 +128,9 @@ private:
     static void end_cb(lv_event_t* event);
     static void map_command_cb(lv_event_t* event);
     static void recent_cb(lv_event_t* event);
+    static void place_close_cb(lv_event_t* event);
+    static void place_navigate_cb(lv_event_t* event);
+    static void preview_back_cb(lv_event_t* event);
 
     NavigationModel& model_;
     Screen built_screen_ = Screen::FreeDrive;
@@ -135,6 +147,9 @@ private:
     lv_obj_t* keyboard_ = nullptr;
     bool keyboard_shift_ = false;
     bool keyboard_numeric_ = false;
+    lv_obj_t* arrival_countdown_ = nullptr;
+    uint32_t arrival_started_ = 0;
+    int arrival_seconds_shown_ = -1;
     lv_obj_t* guidance_card_ = nullptr;
     lv_obj_t* guidance_glyph_ = nullptr;
     lv_obj_t* guidance_exit_ = nullptr;

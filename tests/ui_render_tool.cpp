@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace navicore_osmand::ui;
@@ -114,6 +115,69 @@ int main(int argc, char** argv)
             (void)view.set_moving(true);
         settle(view);
         ok = write(view, out + (lock ? "/lock.argb" : "/search.argb")) && ok;
+    }
+    {
+        // Place card over free drive (design proposal G2).
+        NavigationModel model;
+        model.set_recents({ocean,
+                           {"rail", "Kyiv-Pasazhyrskyi", "Railway station", "2.4 km", 50.44, 30.49},
+                           {"olena", "Home of Olena", "Saksahanskoho St 41", "1.2 km", 50.43, 30.51}});
+        NavigationView view(model, 1024, 574);
+        MapViewState night;
+        night.night = true;
+        (void)model.set_map_view(night);
+        (void)view.show_place_card({"poi:1,2", "WOG", "Fuel · 0.4 km · вулиця Саксаганського", "",
+                                    50.44, 30.52}, "amenity_fuel");
+        settle(view);
+        ok = write(view, out + "/place.argb") && ok;
+    }
+    {
+        // Route preview with Back and three alternatives (G3, G4).
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        const auto search = view.set_query("Ocean");
+        (void)view.apply_search_results(search, {ocean});
+        const auto route_revision = view.select_result(0);
+        std::vector<RouteAlternative> routes;
+        for (const auto& [time, distance, reason] :
+             {std::tuple<const char*, const char*, const char*>{"9 min", "2.4 km", "Fastest"},
+              {"11 min", "2.2 km", "Shortest"}, {"12 min", "2.9 km", "Fewer turns"}}) {
+            RouteAlternative route;
+            route.duration = time;
+            route.distance = distance;
+            route.reason = reason;
+            route.geometry = {{50.40, 30.52}, {50.41, 30.52}};
+            routes.push_back(route);
+        }
+        (void)view.apply_routes(route_revision, routes);
+        settle(view);
+        ok = write(view, out + "/alts.argb") && ok;
+    }
+    {
+        // Arrival card (G5).
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        const auto search = view.set_query("Ocean");
+        (void)view.apply_search_results(search, {{"ocean", "Ocean Plaza", "Antonovycha St 176",
+                                                  "", 50.41, 30.52}});
+        const auto route_revision = view.select_result(0);
+        RouteAlternative route;
+        route.geometry = {{50.40, 30.52}, {50.41, 30.52}};
+        (void)view.apply_routes(route_revision, {route});
+        (void)view.start_guidance(0);
+        MapViewState night;
+        night.night = true;
+        (void)model.set_map_view(night);
+        GuidanceState state;
+        state.position_available = true;
+        state.arrived = true;
+        state.maneuver.kind = ManeuverKind::Arrive;
+        (void)view.apply_guidance(state);
+        for (int i = 0; i < 5; ++i) {
+            view.process_input(16);
+            (void)view.render(0);
+        }
+        ok = write(view, out + "/arrival.argb") && ok;
     }
     std::puts(ok ? "ui-render-tool: ok" : "ui-render-tool: write failed");
     return ok ? 0 : 1;

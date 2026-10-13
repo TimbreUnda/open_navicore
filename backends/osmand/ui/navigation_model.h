@@ -175,6 +175,15 @@ public:
     // Routes to a place picked on the map (a POI) through the same flow;
     // 0 while guiding.
     std::uint64_t select_place(Destination place);
+    // Route preview Back: returns to the search results.
+    bool back_to_search() noexcept;
+
+    // Place card over free drive for a tapped POI (design G2): the place
+    // with its subtitle ("Fuel · 0.4 km") and the map icon of its category.
+    const Destination* place_card() const noexcept;
+    const std::string& place_card_icon() const noexcept { return place_icon_; }
+    bool show_place_card(Destination place, std::string icon);
+    bool close_place_card() noexcept;
 
 private:
     void remember_recent(const Destination& destination);
@@ -201,6 +210,9 @@ private:
     bool moving_ = false;
     std::vector<Destination> recents_;
     std::uint64_t recents_revision_ = 0;
+    Destination place_;
+    std::string place_icon_;
+    bool has_place_ = false;
 };
 
 } // namespace navicore_osmand::ui

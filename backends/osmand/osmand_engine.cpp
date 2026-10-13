@@ -1079,15 +1079,16 @@ bool OsmAndEngine::apply_drag(const ui::MapDrag& drag)
     return drag.active;
 }
 
-// A tap on a POI of the vector map routes there (route preview, then the
-// driver starts guidance). Taps elsewhere do nothing.
+// A tap on a POI of the vector map opens its place card (free drive);
+// Navigate there routes to it. A tap on bare map closes the card.
 void OsmAndEngine::handle_map_tap(int x, int y)
 {
-    if (!vector_map_ || navigation_->screen() == ui::Screen::Guidance)
+    if (!vector_map_ || navigation_->screen() != ui::Screen::FreeDrive)
         return;
     navicore_vector::PoiPick pick;
     if (!vector_map_->pick_poi(static_cast<float>(x), static_cast<float>(y), 24.0f, pick)) {
         trace_result("map_tap=miss", static_cast<std::size_t>(x), static_cast<std::size_t>(y));
+        (void)view_->close_place_card();
         return;
     }
     const auto location = OsmAnd::Utilities::convert31ToLatLon(OsmAnd::PointI(
@@ -1106,11 +1107,26 @@ void OsmAndEngine::handle_map_tap(int x, int y)
             c = ' ';
     if (!category.empty())
         category[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(category[0])));
-    place.subtitle = category;
     place.latitude = location.latitude;
     place.longitude = location.longitude;
-    if (view_->select_place(std::move(place)))
-        trace("map_tap=poi_route");
+    // "Fuel · 0.4 km": straight-line distance from the car when known.
+    std::string subtitle = category;
+    const auto vehicle = motion_.predict(
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - clock_origin_).count());
+    if (vehicle.valid) {
+        const double metres = OsmAnd::Utilities::distance(
+            OsmAnd::LatLon(vehicle.latitude, vehicle.longitude), location);
+        char distance[32] = {};
+        if (metres < 1000.0)
+            std::snprintf(distance, sizeof(distance), "%.0f m", std::round(metres / 10.0) * 10.0);
+        else
+            std::snprintf(distance, sizeof(distance), "%.1f km", metres / 1000.0);
+        subtitle += subtitle.empty() ? distance : std::string(" · ") + distance;
+    }
+    place.subtitle = subtitle;
+    place.distance = std::string();
+    if (view_->show_place_card(std::move(place), pick.icon))
+        trace("map_tap=place_card");
 }
 
 bool OsmAndEngine::ensure_navigation_worker()
