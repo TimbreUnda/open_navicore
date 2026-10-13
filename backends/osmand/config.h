@@ -45,6 +45,9 @@ struct Config {
     // start-tilted, start-night) so they can be tested without a tap.
     bool start_tilted = false;
     bool start_night = false;
+    // Vector map: z14 tiles at full detail for every deeper zoom (marker
+    // vector-overzoom), instead of z15/z16 tiles.
+    bool vector_overzoom = false;
     // Built vector tiles, per map file; empty disables the disk cache.
     std::string vector_cache = "/datastore/navicore-backend/vectorcache";
     // Crash guard, as for the production profile.

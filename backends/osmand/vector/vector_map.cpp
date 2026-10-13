@@ -11,6 +11,9 @@
 #include <OsmAndCore/CoreResourcesEmbeddedBundle.h>
 #include <OsmAndCore/FunctorQueryController.h>
 #include <OsmAndCore/IObfsCollection.h>
+#include <OsmAndCore/ObfDataInterface.h>
+#include <OsmAndCore/Utilities.h>
+#include <OsmAndCore/Data/BinaryMapObject.h>
 #include <OsmAndCore/SkiaUtilities.h>
 #include <OsmAndCore/TextRasterizer.h>
 #include <OsmAndCore/Data/MapObject.h>
@@ -54,6 +57,11 @@ using navicore_osmand::ScreenPoint;
 
 constexpr int kMinTileZoom = 11;
 constexpr int kMaxTileZoom = 16;  // deeper zooms reuse z16 geometry
+// Map data is read in blocks of this zoom (at the detail level of the
+// tiles inside), then cut into the tiles: one read instead of up to 16.
+constexpr int kBlockZoom = 14;
+// Overzoom mode: z14 tiles at full z16 detail are the deepest tiles.
+constexpr int kOverzoomTileZoom = 14;
 constexpr std::size_t kMaxGpuTiles = 220;
 constexpr std::size_t kMaxWantedTiles = 64;
 
@@ -431,9 +439,10 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         return !dir_.empty();
     }
-    bool load(const TileKey& key, bool night, TileMesh& mesh, TileLabels& labels) const
+    bool load(const TileKey& key, const std::string& variant, TileMesh& mesh,
+              TileLabels& labels) const
     {
-        const std::string path = file(key, night);
+        const std::string path = file(key, variant);
         if (path.empty())
             return false;
         std::FILE* f = std::fopen(path.c_str(), "rb");
@@ -453,9 +462,10 @@ public:
         }
         return true;
     }
-    bool store(const TileKey& key, bool night, const TileMesh& mesh, const TileLabels& labels)
+    bool store(const TileKey& key, const std::string& variant, const TileMesh& mesh,
+               const TileLabels& labels)
     {
-        const std::string path = file(key, night);
+        const std::string path = file(key, variant);
         if (path.empty() || !room())
             return false;
         const auto raw = encode_tile(mesh, labels);
@@ -480,7 +490,7 @@ public:
     }
 
 private:
-    std::string file(const TileKey& key, bool night) const
+    std::string file(const TileKey& key, const std::string& variant) const
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (dir_.empty())
@@ -488,7 +498,7 @@ private:
         char name[96];
         std::snprintf(name, sizeof(name), "/%016llx/%d/%d/%d.vt",
                       static_cast<unsigned long long>(
-                          fnv1a(identity_ + (night ? "|night" : "|day") + "|nvt1")),
+                          fnv1a(identity_ + "|" + variant + "|nvt1")),
                       key.z, key.x, key.y);
         return dir_ + name;
     }
@@ -536,8 +546,7 @@ public:
     TileBuilder(std::shared_ptr<const OsmAnd::IObfsCollection> obfs,
                 std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources,
                 int threads, std::function<void()> on_ready)
-        : provider_(std::make_shared<OsmAnd::ObfMapObjectsProvider>(
-              obfs, OsmAnd::ObfMapObjectsProvider::Mode::OnlyBinaryMapObjects)),
+        : obfs_(std::move(obfs)),
           resources_(std::move(resources)), on_ready_(std::move(on_ready)),
           started_(Clock::now())
     {
@@ -551,6 +560,7 @@ public:
             stopping_ = true;
         }
         wake_.notify_all();
+        block_ready_.notify_all();
         for (auto& thread : threads_)
             thread.join();
     }
@@ -605,6 +615,31 @@ public:
         return out;
     }
     DiskCache& disk() { return disk_; }
+    // Overzoom: the deepest tiles are z14 with z16 detail. Changing it
+    // starts over (tiles differ), like a palette switch.
+    void set_overzoom(bool on)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (on == overzoom_)
+                return;
+            overzoom_ = on;
+            ++generation_;
+            ++wanted_revision_;
+            done_.clear();
+            ready_.clear();
+            failures_.clear();
+            blocks_.clear();
+        }
+        wake_.notify_all();
+    }
+    bool overzoom() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return overzoom_;
+    }
+    std::uint64_t block_reads() const { return block_reads_.load(); }
+    std::uint64_t block_hits() const { return block_hits_.load(); }
     std::uint64_t aborted() const { return aborted_.load(); }
     std::uint64_t empty_tiles() const { return empty_tiles_.load(); }
     std::uint64_t disk_writes() const { return disk_writes_.load(); }
@@ -614,17 +649,122 @@ private:
     using TagCache =
         std::unordered_map<TagKey, std::pair<std::string, std::string>, TagKeyHash>;
 
-    // Cancelled when the tile left the wish list or the palette changed.
-    // The answer is recomputed only when the list changes.
-    bool still_wanted(const TileKey& key, std::uint64_t generation, std::uint64_t& seen_revision,
-                      bool& seen_answer)
+    // Detail (OBF level and style zoom) for a tile: its own zoom, or z16
+    // for the deepest overzoomed tiles.
+    static int detail_zoom(const TileKey& key, bool overzoom)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (seen_revision != wanted_revision_) {
-            seen_revision = wanted_revision_;
-            seen_answer = !stopping_ && generation == generation_ && wanted_set_.count(key);
+        return overzoom && key.z == kOverzoomTileZoom ? kMaxTileZoom : key.z;
+    }
+
+    // Map objects of one block at one detail level, shared by its tiles.
+    struct Block {
+        bool loading = true;
+        bool ok = false;
+        QList<std::shared_ptr<const OsmAnd::BinaryMapObject>> objects;
+        std::uint64_t used = 0;
+    };
+    struct BlockId {
+        TileKey block;
+        int detail;
+        bool operator<(const BlockId& o) const
+        {
+            return detail != o.detail ? detail < o.detail : block < o.block;
         }
-        return seen_answer;
+    };
+
+    static TileKey block_of(const TileKey& key)
+    {
+        const int bz = std::min(key.z, kBlockZoom);
+        return {bz, key.x >> (key.z - bz), key.y >> (key.z - bz)};
+    }
+
+    // Loads (or waits for another worker loading) the block holding `key`.
+    // Null when cancelled (aborted=true) or when there is no data.
+    std::shared_ptr<Block> obtain_block(const TileKey& key, int detail, std::uint64_t generation,
+                                        double& fetch_ms, bool& aborted)
+    {
+        const BlockId id{block_of(key), detail};
+        std::shared_ptr<Block> block;
+        for (;;) {
+            std::unique_lock<std::mutex> lock(mutex_);
+            const auto it = blocks_.find(id);
+            if (it == blocks_.end()) {
+                block = std::make_shared<Block>();
+                blocks_[id] = block;
+                break;
+            }
+            auto existing = it->second;
+            block_ready_.wait(lock, [&] { return !existing->loading || stopping_; });
+            if (stopping_ || generation != generation_) {
+                aborted = true;
+                return nullptr;
+            }
+            if (existing->ok) {
+                existing->used = ++block_clock_;
+                ++block_hits_;
+                return existing;
+            }
+            // That load failed or was cancelled; it removed itself. Retry.
+        }
+
+        const auto started = Clock::now();
+        const TileKey b = id.block;
+        const OsmAnd::AreaI bbox31 = OsmAnd::Utilities::tileBoundingBox31(
+            OsmAnd::TileId::fromXY(b.x, b.y), static_cast<OsmAnd::ZoomLevel>(b.z));
+        // Cancelled once no wanted tile lies in this block.
+        std::uint64_t seen_revision = ~0ull;
+        bool seen_answer = true;
+        const auto controller = std::make_shared<OsmAnd::FunctorQueryController>(
+            [&](const OsmAnd::FunctorQueryController*) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (seen_revision != wanted_revision_) {
+                    seen_revision = wanted_revision_;
+                    seen_answer = false;
+                    if (!stopping_ && generation == generation_)
+                        for (const auto& k : wanted_)
+                            if (k.z >= b.z && block_of(k) == b) {
+                                seen_answer = true;
+                                break;
+                            }
+                }
+                return !seen_answer;
+            });
+        bool loaded = false;
+        QList<std::shared_ptr<const OsmAnd::BinaryMapObject>> objects;
+        const auto level = static_cast<OsmAnd::ZoomLevel>(detail);
+        if (const auto data = obfs_->obtainDataInterface(
+                &bbox31, level, level,
+                OsmAnd::ObfDataTypesMask().set(OsmAnd::ObfDataType::Map)))
+            loaded = data->loadBinaryMapObjects(&objects, nullptr, nullptr, level, &bbox31,
+                                                nullptr, nullptr, nullptr, controller);
+        aborted = controller->isAborted();
+        fetch_ms = ms_since(started);
+        ++block_reads_;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            block->loading = false;
+            // Zero objects is what a read returns before OsmAnd has opened
+            // the map: no data, retried, never kept.
+            block->ok = loaded && !aborted && !objects.isEmpty();
+            block->objects = std::move(objects);
+            block->used = ++block_clock_;
+            const auto it = blocks_.find(id);
+            if (!block->ok && it != blocks_.end() && it->second == block)
+                blocks_.erase(it);
+            // Keep the most recently used blocks.
+            while (blocks_.size() > 6) {
+                auto oldest = blocks_.end();
+                for (auto i = blocks_.begin(); i != blocks_.end(); ++i)
+                    if (!i->second->loading &&
+                        (oldest == blocks_.end() || i->second->used < oldest->second->used))
+                        oldest = i;
+                if (oldest == blocks_.end())
+                    break;
+                blocks_.erase(oldest);
+            }
+        }
+        block_ready_.notify_all();
+        return block->ok ? block : nullptr;
     }
 
     void run()
@@ -634,7 +774,7 @@ private:
         for (;;) {
             TileKey key{};
             std::uint64_t generation = 0;
-            bool night = false;
+            bool night = false, overzoom = false;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
                 wake_.wait(lock, [this] {
@@ -653,10 +793,11 @@ private:
                 done_[key] = true;
                 generation = generation_;
                 night = night_;
+                overzoom = overzoom_;
             }
             BuiltTile tile;
             try {
-                tile = build(key, generation, night, cache);
+                tile = build(key, generation, night, overzoom, cache);
             } catch (...) {
                 tile = BuiltTile{};
                 tile.key = key;
@@ -717,13 +858,17 @@ private:
         return cache.emplace(key, std::move(value)).first->second;
     }
 
-    BuiltTile build(const TileKey& key, std::uint64_t generation, bool night, TagCache& cache)
+    BuiltTile build(const TileKey& key, std::uint64_t generation, bool night, bool overzoom,
+                    TagCache& cache)
     {
         BuiltTile out;
         out.key = key;
+        // Cache variant: palette, and overzoom (its z14 tiles hold z16 detail).
+        const std::string variant =
+            std::string(night ? "night" : "day") + (overzoom ? "|oz" : "");
         if (disk_.enabled()) {
             const auto disk_started = Clock::now();
-            if (disk_.load(key, night, out.mesh, out.labels)) {
+            if (disk_.load(key, variant, out.mesh, out.labels)) {
                 const auto labels_started = Clock::now();
                 attach_images(out.labels, night);
                 out.labels_ms = ms_since(labels_started);
@@ -736,27 +881,14 @@ private:
             out.labels = TileLabels{};
         }
 
-        const auto fetch_started = Clock::now();
-        OsmAnd::IMapTiledDataProvider::Request request;
-        request.tileId = OsmAnd::TileId::fromXY(key.x, key.y);
-        request.zoom = static_cast<OsmAnd::ZoomLevel>(key.z);
-        request.detailedZoom = request.zoom;
-        std::uint64_t seen_revision = ~0ull;
-        bool seen_answer = true;
-        request.queryController = std::make_shared<OsmAnd::FunctorQueryController>(
-            [&](const OsmAnd::FunctorQueryController*) {
-                return !still_wanted(key, generation, seen_revision, seen_answer);
-            });
-        std::shared_ptr<OsmAnd::IMapObjectsProvider::Data> data;
-        provider_->obtainTiledMapObjects(request, data);
-        out.fetch_ms = ms_since(fetch_started);
-        if (request.queryController->isAborted()) {
+        const int detail = detail_zoom(key, overzoom);
+        bool aborted = false;
+        const auto block = obtain_block(key, detail, generation, out.fetch_ms, aborted);
+        if (aborted) {
             out.aborted = true;
             return out;
         }
-        // Zero objects is what a tile returns before OsmAnd has opened the
-        // map, so it is "no data" (retried, never cached), not an empty tile.
-        if (!data || data->mapObjects.isEmpty())
+        if (!block)
             return out;
 
         const auto build_started = Clock::now();
@@ -776,9 +908,16 @@ private:
         Ring outer;
         std::vector<Ring> holes;
         double labels_ms = 0.0;
-        for (const auto& object : data->mapObjects) {
+        const double tile_x1 = origin_x + size31, tile_y1 = origin_y + size31;
+        for (const auto& object : block->objects) {
             if (!object || object->isCoastline || object->points31.isEmpty())
                 continue;
+            // The block is larger than the tile: skip objects not touching it.
+            const auto& box = object->bbox31;
+            if (box.right() > box.left() || box.bottom() > box.top())
+                if (box.left() > tile_x1 || box.right() < origin_x || box.top() > tile_y1 ||
+                    box.bottom() < origin_y)
+                    continue;
             tags.clear();
             for (int i = 0; i < object->attributeIds.size(); ++i)
                 tags.push_back(tag(cache, *object, static_cast<std::uint32_t>(i), false));
@@ -795,7 +934,7 @@ private:
             }
             if (object->points31.size() < 2)
                 continue;
-            const FeatureStyle style = classify(tags, area, key.z, night);
+            const FeatureStyle style = classify(tags, area, detail, night);
             if (!style.has_area && !style.has_line)
                 continue;
             local(object->points31, outer);
@@ -816,7 +955,7 @@ private:
         out.build_ms = ms_since(build_started) - labels_ms;
         // Written before the images are attached: the file holds records.
         if (disk_.enabled()) {
-            if (disk_.store(key, night, out.mesh, out.labels))
+            if (disk_.store(key, variant, out.mesh, out.labels))
                 ++disk_writes_;
             else
                 ++disk_failures_;
@@ -966,7 +1105,7 @@ private:
                             labels.places.end());
     }
 
-    std::shared_ptr<OsmAnd::ObfMapObjectsProvider> provider_;
+    std::shared_ptr<const OsmAnd::IObfsCollection> obfs_;
     std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources_;
     std::function<void()> on_ready_;
     const Clock::time_point started_;
@@ -982,6 +1121,11 @@ private:
     std::vector<BuiltTile> ready_;
     std::uint64_t generation_ = 0;
     bool night_ = false;
+    bool overzoom_ = false;
+    std::map<BlockId, std::shared_ptr<Block>> blocks_;
+    std::condition_variable block_ready_;
+    std::uint64_t block_clock_ = 0;
+    std::atomic<std::uint64_t> block_reads_{0}, block_hits_{0};
     bool stopping_ = false;
     std::atomic<std::uint64_t> aborted_{0}, empty_tiles_{0}, disk_writes_{0}, disk_failures_{0};
     std::vector<std::thread> threads_;
@@ -1287,6 +1431,8 @@ struct VectorMap::Impl {
     // Palette: requested from any thread, applied on the GL thread.
     std::atomic<bool> night_requested{false};
     bool night = false;
+    std::atomic<bool> overzoom_requested{false};
+    bool overzoom = false;
 
     // Route state (set from the engine thread, consumed in draw()).
     std::mutex route_mutex;
@@ -1431,6 +1577,12 @@ void VectorMap::set_maneuver(bool show, std::size_t geometry_index)
     impl_->maneuver_index = geometry_index;
 }
 
+void VectorMap::set_overzoom(bool on)
+{
+    impl_->overzoom_requested = on;
+    impl_->builder.set_overzoom(on);
+}
+
 void VectorMap::set_night(bool night)
 {
     impl_->night_requested = night;
@@ -1440,9 +1592,11 @@ void VectorMap::set_night(bool night)
 void VectorMap::Impl::apply_night()
 {
     const bool wanted = night_requested.load();
-    if (wanted == night)
+    const bool wanted_overzoom = overzoom_requested.load();
+    if (wanted == night && wanted_overzoom == overzoom)
         return;
     night = wanted;
+    overzoom = wanted_overzoom;
     // Every tile and label image was made for the old palette.
     for (auto& entry : gpu)
         glDeleteBuffers(4, entry.second.buffers);
@@ -1889,7 +2043,8 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
 {
     apply_night();
     const double zoom = VectorMap::zoom_of(view);
-    const int tz = std::clamp(static_cast<int>(std::floor(zoom)), kMinTileZoom, kMaxTileZoom);
+    const int max_tile_zoom = builder.overzoom() ? kOverzoomTileZoom : kMaxTileZoom;
+    const int tz = std::clamp(static_cast<int>(std::floor(zoom)), kMinTileZoom, max_tile_zoom);
     const std::uint64_t generation = builder.generation();
 
     // Finished tiles.
@@ -1968,7 +2123,7 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
     // Draw list: wanted tiles, or their nearest ready ancestor / children.
     std::vector<TileKey> draw_list;
     std::size_t missing = 0;
-    int min_z = kMaxTileZoom;
+    int min_z = max_tile_zoom;
     for (const auto& key : wanted) {
         min_z = std::min(min_z, key.z);
         if (gpu.count(key)) {
@@ -2425,6 +2580,8 @@ VectorMapStats VectorMap::stats() const
     out.empty_tiles = impl_->builder.empty_tiles();
     out.disk_writes = impl_->builder.disk_writes();
     out.disk_failures = impl_->builder.disk_failures();
+    out.block_reads = impl_->builder.block_reads();
+    out.block_hits = impl_->builder.block_hits();
     return out;
 }
 

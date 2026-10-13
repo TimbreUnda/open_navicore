@@ -101,6 +101,7 @@ private:
     std::string vector_attempt_;
     std::string vector_cache_dir_;
     std::string vector_cache_identity_;
+    bool vector_overzoom_ = false;
     void sync_vector_guidance(const ui::GuidanceState* state);
     std::chrono::steady_clock::time_point vector_last_frame_{};
     std::chrono::steady_clock::time_point vector_reported_at_{};
@@ -347,6 +348,9 @@ bool OsmAndEngine::initialize(const Config& config,
     if (config.vector_map_suppressed)
         trace("vector_map=suppressed_after_unstable_run");
     vector_attempt_ = vector_mode_ ? config.vector_map_attempt : std::string();
+    vector_overzoom_ = config.vector_overzoom;
+    if (vector_mode_ && vector_overzoom_)
+        trace("vector_map=overzoom");
     if (vector_mode_ && !config.vector_cache.empty()) {
         struct stat map_info {};
         const bool map_known = ::stat(config.map.c_str(), &map_info) == 0;
@@ -570,6 +574,7 @@ bool OsmAndEngine::initialize(const Config& config,
                 vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
                                             200ull << 20);
             vector_map_->set_night(night_);
+            vector_map_->set_overzoom(vector_overzoom_);
             trace("init=vector_map");
         } catch (...) {
             // Fall back to OsmAnd's own map for this run.
@@ -1359,7 +1364,7 @@ bool OsmAndEngine::render_vector_map(const MockNavBackendRenderTargetV1& target)
                       "vector_map frames=%llu incomplete=%llu tiles_built=%llu "
                       "fetch_avg_ms=%.0f fetch_max_ms=%.0f build_avg_ms=%.1f "
                       "labels_avg_ms=%.1f disk_hits=%llu disk_avg_ms=%.1f disk_writes=%llu "
-                      "disk_failures=%llu aborted=%llu "
+                      "disk_failures=%llu block_reads=%llu block_hits=%llu aborted=%llu "
                       "empty=%llu wanted=%zu prefetch=%zu gpu_tiles=%zu gpu_mb=%.1f "
                       "calls_avg=%.0f label_quads_avg=%.1f label_place_max_ms=%.1f "
                       "zoom=%.2f tile_zoom=%d..%d",
@@ -1371,6 +1376,8 @@ bool OsmAndEngine::render_vector_map(const MockNavBackendRenderTargetV1& target)
                       static_cast<unsigned long long>(s.disk_hits), s.disk_ms_total / disk,
                       static_cast<unsigned long long>(s.disk_writes),
                       static_cast<unsigned long long>(s.disk_failures),
+                      static_cast<unsigned long long>(s.block_reads),
+                      static_cast<unsigned long long>(s.block_hits),
                       static_cast<unsigned long long>(s.aborted),
                       static_cast<unsigned long long>(s.empty_tiles), s.wanted_tiles,
                       s.prefetch_tiles, s.gpu_tiles, s.gpu_bytes / 1048576.0,

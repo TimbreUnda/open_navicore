@@ -125,6 +125,8 @@ Config Config::from_environment()
                                                 "/datastore/navicore-backend/start-tilted");
     config.start_night = marker_or_environment("OPEN_NAVICORE_OSMAND_START_NIGHT",
                                                "/datastore/navicore-backend/start-night");
+    config.vector_overzoom = marker_or_environment(
+        "OPEN_NAVICORE_OSMAND_VECTOR_OVERZOOM", "/datastore/navicore-backend/vector-overzoom");
     config.vector_cache = path("OPEN_NAVICORE_OSMAND_VECTOR_CACHE",
                                "/datastore/navicore-backend/vectorcache");
     if (!vector_disabled) {

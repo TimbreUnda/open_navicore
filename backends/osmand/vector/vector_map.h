@@ -55,6 +55,8 @@ struct VectorMapStats {
     std::size_t gpu_bytes = 0;
     std::size_t atlas_uploads = 0, atlas_resets = 0;
     std::uint64_t disk_hits = 0, disk_writes = 0, disk_failures = 0;
+    std::uint64_t block_reads = 0;  // map reads (one per z14 block and detail)
+    std::uint64_t block_hits = 0;   // tiles cut from an already read block
     double disk_ms_total = 0.0;     // reading cached tiles
     std::uint64_t aborted = 0;      // fetches cancelled as no longer wanted
     std::uint64_t empty_tiles = 0;  // no map data after the retries
@@ -96,6 +98,9 @@ public:
     // Turn arrow on the route at route point `geometry_index` (the
     // manoeuvre); show=false hides it.
     void set_maneuver(bool show, std::size_t geometry_index);
+    // Overzoom: z14 tiles at full z16 detail serve every deeper zoom
+    // (fewer, larger tiles; more geometry per draw). Tiles are rebuilt.
+    void set_overzoom(bool on);
     // Night palette; tiles are rebuilt (or read from their own cache).
     void set_night(bool night);
 
