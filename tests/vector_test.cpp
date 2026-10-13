@@ -94,6 +94,26 @@ int main()
     const TileMesh order_mesh = ordered.finish();
     check(order_mesh.area_vertices.front().rgba[0] == 7, "water drawn first");
 
+    // Reuse: finish_into() leaves the tessellator empty and the same input
+    // gives the same mesh in the same buffers.
+    {
+        TileTessellator reused;
+        TileMesh into;
+        const Ring route{{0, 0}, {300, 0}, {300, 300}, {600, 300}};
+        reused.add_line_unclipped(route, road);
+        reused.finish_into(into);
+        const std::size_t vertices = into.line_vertices.size();
+        const auto* data = into.line_vertices.data();
+        reused.add_line_unclipped(route, road);
+        reused.finish_into(into);
+        check(vertices == 8 && into.line_vertices.size() == vertices &&
+                  into.line_indices.size() == 18, "finish_into same mesh");
+        check(into.line_vertices.data() == data, "finish_into keeps capacity");
+        reused.clear();
+        reused.finish_into(into);
+        check(into.line_vertices.empty() && into.line_indices.empty(), "clear empties");
+    }
+
     // Classification.
     check(classify(tags({{"highway", "motorway"}}), false, 15).line.layer ==
               LineLayer::Motorway, "motorway");
@@ -124,8 +144,15 @@ int main()
 
     // POIs: car services shown early, food only close in, churches never.
     check(classify_poi(tags({{"amenity", "fuel"}}), 14).show, "fuel at z14");
-    check(!classify_poi(tags({{"amenity", "cafe"}}), 16).show, "cafe hidden at z16");
-    check(classify_poi(tags({{"amenity", "cafe"}}), 17).show, "cafe at z17");
+    check(!classify_poi(tags({{"amenity", "cafe"}}), 15).show, "cafe hidden at z15");
+    check(classify_poi(tags({{"amenity", "cafe"}}), 16).show, "cafe at z16");
+    // Driver priorities: car services before trip needs before sights.
+    check(classify_poi(tags({{"highway", "speed_camera"}}), 15).show, "speed camera at z15");
+    check(classify_poi(tags({{"highway", "rest_area"}}), 13).show, "rest area at z13");
+    check(classify_poi(tags({{"shop", "car_repair"}}), 15).rank <
+              classify_poi(tags({{"amenity", "restaurant"}}), 16).rank, "repair outranks food");
+    check(classify_poi(tags({{"amenity", "toilets"}}), 16).rank <
+              classify_poi(tags({{"tourism", "museum"}}), 16).rank, "toilets outrank museums");
     check(!classify_poi(tags({{"amenity", "place_of_worship"}}), 18).show, "no churches");
     check(!classify_poi(tags({{"amenity", "library"}}), 18).show, "no libraries");
     check(classify_poi(tags({{"amenity", "fuel"}}), 15).rank <

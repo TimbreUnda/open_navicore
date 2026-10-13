@@ -69,6 +69,14 @@ struct VectorMapStats {
 // Pixels across one 2^zoom tile at style zoom `zoom` (density 1.5).
 constexpr double kVectorTilePx = 384.0;
 
+// A POI under the finger (see VectorMap::pick_poi).
+struct PoiPick {
+    std::string name;
+    std::string icon;     // OsmAnd icon name, e.g. "amenity_fuel"
+    double x31 = 0.0, y31 = 0.0;
+    float screen_x = 0.0f, screen_y = 0.0f;
+};
+
 class VectorMap {
 public:
     // on_tile_ready runs on a worker thread when a tile finishes (use it to
@@ -121,6 +129,9 @@ public:
 
     // Maxima (fetch_ms_max, label_place_ms_max) are since the previous call.
     VectorMapStats stats() const;
+    // The POI shown in the last frame nearest to (x, y) within `radius`
+    // pixels of its icon; false when there is none.
+    bool pick_poi(float x, float y, float radius, PoiPick& out) const;
     bool last_frame_incomplete() const;
 
 private:

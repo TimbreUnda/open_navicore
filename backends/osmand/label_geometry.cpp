@@ -52,9 +52,19 @@ bool place_along_path(const std::vector<ScreenPoint>& path, int pin_segment,
                       float pin_t, float width, float height,
                       OrientedBox& box, float max_turn)
 {
+    std::vector<float> cumulative;
+    return place_along_path(path, pin_segment, pin_t, width, height, box,
+                            max_turn, cumulative);
+}
+
+bool place_along_path(const std::vector<ScreenPoint>& path, int pin_segment,
+                      float pin_t, float width, float height,
+                      OrientedBox& box, float max_turn,
+                      std::vector<float>& cumulative)
+{
     if (path.size() < 2 || width <= 0.0f || height <= 0.0f)
         return false;
-    std::vector<float> cumulative(path.size(), 0.0f);
+    cumulative.assign(path.size(), 0.0f);
     for (std::size_t i = 1; i < path.size(); ++i)
         cumulative[i] = cumulative[i - 1] + segment_length(path[i - 1], path[i]);
     const float total = cumulative.back();

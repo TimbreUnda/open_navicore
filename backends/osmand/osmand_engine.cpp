@@ -41,6 +41,7 @@
 #include <QString>
 
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 #include <chrono>
 #include <cmath>
@@ -98,6 +99,7 @@ private:
     // route and labels are drawn by VectorMap after OsmAnd's (empty) frame.
     bool vector_mode_ = false;
     std::unique_ptr<navicore_vector::VectorMap> vector_map_;
+    navicore_vector::MapView vector_view_;
     std::string vector_attempt_;
     std::string vector_cache_dir_;
     std::string vector_cache_identity_;
@@ -193,6 +195,15 @@ private:
     MotionEstimator motion_;
     std::vector<ui::MapCommand> map_commands_;
     std::chrono::steady_clock::time_point camera_updated_at_{};
+    // LVGL time advances by the real frame interval.
+    std::chrono::steady_clock::time_point input_at_{};
+    // Finger drag: the 31-bit map point grabbed at the press stays under
+    // the finger; drag_target_ is the free camera's centre.
+    bool drag_valid_ = false;
+    double drag_grab_x_ = 0.0, drag_grab_y_ = 0.0;
+    double drag_target_x_ = 0.0, drag_target_y_ = 0.0;
+    bool apply_drag(const ui::MapDrag& drag);
+    void handle_map_tap(int x, int y);
     std::chrono::steady_clock::time_point clock_origin_ =
         std::chrono::steady_clock::now();
     CameraController::Pose applied_pose_{};
@@ -952,6 +963,13 @@ bool OsmAndEngine::apply_camera()
     int dy = 0;
     if (navigation_->take_pan(dx, dy))
         camera_.pan(dx, dy);
+    bool dragging = false;
+    ui::MapDrag drag;
+    if (navigation_->take_drag(drag))
+        dragging = apply_drag(drag);
+    int tap_x = 0, tap_y = 0;
+    while (navigation_->take_map_tap(tap_x, tap_y))
+        handle_map_tap(tap_x, tap_y);
 
     const auto vehicle = motion_.predict(now_s);
     const auto pose = camera_.update(vehicle, dt);
@@ -1015,7 +1033,84 @@ bool OsmAndEngine::apply_camera()
     if (precache_)
         precache_->set_throttled(moving);
 
-    return changed || (vehicle.valid && vehicle.speed_mps > 0.3);
+    return changed || dragging || (vehicle.valid && vehicle.speed_mps > 0.3);
+}
+
+// Keeps the grabbed map point under the finger: each frame the free
+// camera centre moves by the ground offset between the grabbed point and
+// what is under the finger now. Ground offsets are exact under rotation,
+// tilt and fractional zoom because OsmAnd unprojects them.
+bool OsmAndEngine::apply_drag(const ui::MapDrag& drag)
+{
+    const auto unproject = [this](double x, double y, double& x31, double& y31) {
+        OsmAnd::PointI64 location;
+        if (!renderer_->getLocationFromScreenPoint(OsmAnd::PointD(x, y), location))
+            return false;
+        x31 = static_cast<double>(location.x);
+        y31 = static_cast<double>(location.y);
+        return true;
+    };
+    const auto to_lat_lon = [](double x31, double y31) {
+        return OsmAnd::Utilities::convert31ToLatLon(OsmAnd::PointI(
+            static_cast<int32_t>(x31), static_cast<int32_t>(y31)));
+    };
+    if (drag.started) {
+        const auto& viewport = camera_.viewport();
+        drag_valid_ =
+            unproject(drag.start_x, drag.start_y, drag_grab_x_, drag_grab_y_) &&
+            unproject(viewport.left + viewport.width / 2.0, viewport.top + viewport.height / 2.0,
+                      drag_target_x_, drag_target_y_);
+        if (drag_valid_) {
+            const auto centre = to_lat_lon(drag_target_x_, drag_target_y_);
+            camera_.begin_free(centre.latitude, centre.longitude);
+        }
+    }
+    if (drag_valid_) {
+        double under_x = 0.0, under_y = 0.0;
+        if (unproject(drag.x, drag.y, under_x, under_y)) {
+            drag_target_x_ += drag_grab_x_ - under_x;
+            drag_target_y_ += drag_grab_y_ - under_y;
+            const auto centre = to_lat_lon(drag_target_x_, drag_target_y_);
+            camera_.set_free_location(centre.latitude, centre.longitude);
+        }
+    }
+    if (!drag.active)
+        drag_valid_ = false;
+    return drag.active;
+}
+
+// A tap on a POI of the vector map routes there (route preview, then the
+// driver starts guidance). Taps elsewhere do nothing.
+void OsmAndEngine::handle_map_tap(int x, int y)
+{
+    if (!vector_map_ || navigation_->screen() == ui::Screen::Guidance)
+        return;
+    navicore_vector::PoiPick pick;
+    if (!vector_map_->pick_poi(static_cast<float>(x), static_cast<float>(y), 24.0f, pick)) {
+        trace_result("map_tap=miss", static_cast<std::size_t>(x), static_cast<std::size_t>(y));
+        return;
+    }
+    const auto location = OsmAnd::Utilities::convert31ToLatLon(OsmAnd::PointI(
+        static_cast<int32_t>(pick.x31), static_cast<int32_t>(pick.y31)));
+    ui::Destination place;
+    place.id = "poi:" + std::to_string(static_cast<long long>(pick.x31)) + "," +
+               std::to_string(static_cast<long long>(pick.y31));
+    place.title = pick.name;
+    // "amenity_fuel" -> "Fuel": the category after the key, readable.
+    std::string category = pick.icon;
+    const auto underscore = category.find('_');
+    if (underscore != std::string::npos && underscore + 1 < category.size())
+        category = category.substr(underscore + 1);
+    for (auto& c : category)
+        if (c == '_')
+            c = ' ';
+    if (!category.empty())
+        category[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(category[0])));
+    place.subtitle = category;
+    place.latitude = location.latitude;
+    place.longitude = location.longitude;
+    if (view_->select_place(std::move(place)))
+        trace("map_tap=poi_route");
 }
 
 bool OsmAndEngine::ensure_navigation_worker()
@@ -1093,6 +1188,13 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     if (target.width != width_ || target.height != height_)
         resize(target);
     update_render_shootout();
+    if (overlay_enabled_) {
+        const auto input_now = std::chrono::steady_clock::now();
+        const auto elapsed_ms = input_at_ == std::chrono::steady_clock::time_point{} ? 16 :
+            std::chrono::duration_cast<std::chrono::milliseconds>(input_now - input_at_).count();
+        input_at_ = input_now;
+        view_->process_input(static_cast<uint32_t>(std::clamp<long long>(elapsed_ms, 0, 250)));
+    }
     const bool camera_animating = apply_camera();
     auto stage_started = Clock::now();
     const bool update_ok = renderer_->update();
@@ -1133,7 +1235,8 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
-    const bool ui_dirty = overlay_enabled_ && view_->render(16u);
+    // process_input() already advanced LVGL time for this frame.
+    const bool ui_dirty = overlay_enabled_ && view_->render(0u);
     measurement.ui_render_us = elapsed_us(stage_started);
     if (overlay_enabled_) {
         stage_started = Clock::now();
@@ -1299,7 +1402,10 @@ void OsmAndEngine::sync_vector_guidance(const ui::GuidanceState* state)
 
 bool OsmAndEngine::render_vector_map(const MockNavBackendRenderTargetV1& target)
 {
-    navicore_vector::MapView view;
+    // Reused every frame so the blocked list keeps its capacity.
+    auto& view = vector_view_;
+    view.blocked.clear();
+    view.dot_x = view.dot_y = 0.0f;
     view.width = static_cast<int>(target.width);
     view.height = static_cast<int>(target.height);
     const auto state = renderer_->getMapState();

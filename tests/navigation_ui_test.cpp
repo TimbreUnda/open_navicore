@@ -86,14 +86,20 @@ void test_overlay_occupancy()
     occupancy.update(pixels.data(), width, height, height + 5u, 3u);
     assert(occupancy.regions().empty());
 }
-void settle(NavigationView& view, int frames)
+// One engine frame: input first (real 16 ms), then rendering.
+void frame(NavigationView& view)
 {
-    for (int frame = 0; frame < frames; ++frame)
-        (void)view.render(16);
+    view.process_input(16);
+    (void)view.render(0);
 }
 
-// Holds each phase for 64 ms like a real touch: LVGL reads input on a 33 ms
-// timer, so two 16 ms frames can miss the first press after a new view.
+void settle(NavigationView& view, int frames)
+{
+    for (int i = 0; i < frames; ++i)
+        frame(view);
+}
+
+// Holds each phase for 64 ms like a real touch (LVGL press timing).
 void tap(NavigationView& view, int32_t x, int32_t y)
 {
     view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, x, y);
@@ -160,20 +166,39 @@ void test_car_controls()
         tap(view, column_x, 574 - 16 - 32);
         assert((commands(model) == std::vector<MapCommand>{MapCommand::Recenter}));
 
-        // Dragging bare map pans; dragging from a control does not.
-        int dx = 0;
-        int dy = 0;
+        // Dragging bare map reports absolute positions from the press point,
+        // in the same frame; dragging from a control does not.
+        MapDrag drag;
+        int tap_x = 0, tap_y = 0;
+        // The tap on the hidden recenter button landed on bare map.
+        assert(model.take_map_tap(tap_x, tap_y) && tap_x == column_x);
+        assert(!model.take_map_tap(tap_x, tap_y));
         view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 600, 300);
         view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 640, 320);
+        frame(view);
+        assert(model.take_drag(drag) && drag.started && drag.active);
+        assert(drag.start_x == 600 && drag.start_y == 300 && drag.x == 640 && drag.y == 320);
         view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 650, 330);
-        settle(view, 4);
-        assert(model.take_pan(dx, dy) && dx == 50 && dy == 30);
-        assert(!model.take_pan(dx, dy));
+        frame(view);
+        assert(model.take_drag(drag) && !drag.started && !drag.active);
+        assert(drag.x == 650 && drag.y == 330);
+        assert(!model.take_drag(drag));
+        assert(!model.take_map_tap(tap_x, tap_y));
+        // A small wobble is still a tap, not a drag.
+        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 600, 300);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 604, 303);
+        settle(view, 2);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 604, 303);
+        settle(view, 2);
+        assert(!model.take_drag(drag));
+        assert(model.take_map_tap(tap_x, tap_y) && tap_x == 600 && tap_y == 300);
+        assert(!model.take_map_tap(tap_x, tap_y));
         view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, column_x, button_y(0));
         view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, column_x - 60, 300);
         view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, column_x - 60, 300);
         settle(view, 4);
-        assert(!model.take_pan(dx, dy));
+        assert(!model.take_drag(drag));
+        assert(!model.take_map_tap(tap_x, tap_y));
         (void)commands(model);
 
         // The camera-driven marker draws inside the map area only.
@@ -218,6 +243,7 @@ void test_car_controls()
         assert(model.recents().front().id == "home");
         assert(model.recents().size() == 2);
         assert(model.select_recent(0) == 0); // not during guidance
+        assert(model.select_place(place("fuel", "Fuel", 50.4)) == 0);
     }
     {
         // Driving lock: no keyboard, read-only query, recents still usable.
@@ -283,7 +309,7 @@ int main()
     assert(model.screen() == Screen::FreeDrive);
 
     NavigationView view(model, 1024, 574);
-    (void)view.render(16);
+    frame(view);
     assert(std::any_of(view.pixels(),
                        view.pixels() + view.width() * view.height(),
                        [](std::uint32_t pixel) { return pixel != 0u; }));
@@ -301,17 +327,17 @@ int main()
     // Startup Screen events are quarantined until the first stable frames.
     view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 80, 40);
     view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 80, 40);
-    (void)view.render(16);
+    frame(view);
     assert(model.screen() == Screen::FreeDrive);
-    for (int frame = 2; frame < 30; ++frame)
-        (void)view.render(16);
+    for (int i = 2; i < 30; ++i)
+        frame(view);
     // Exercise the real provider action constants through LVGL's input queue.
     view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 80, 40);
-    (void)view.render(16);
-    (void)view.render(16);
+    frame(view);
+    frame(view);
     view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 80, 40);
-    (void)view.render(16);
-    (void)view.render(16);
+    frame(view);
+    frame(view);
     assert(model.screen() == Screen::Search);
 
     const auto stale_revision = view.set_query("River");
@@ -324,13 +350,13 @@ int main()
          {"mall", "Riverside Mall", "Riverside Ave 120",
           "9.4 km", 50.43, 30.51}}));
     assert(model.results().size() == 2);
-    (void)view.render(16);
+    frame(view);
     view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 100, 120);
-    (void)view.render(16);
-    (void)view.render(16);
+    frame(view);
+    frame(view);
     view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 100, 120);
-    (void)view.render(16);
-    (void)view.render(16);
+    frame(view);
+    frame(view);
     assert(model.destination());
     assert(model.destination()->id == "house-12");
     const auto route_revision = model.route_revision();

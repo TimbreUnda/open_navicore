@@ -171,7 +171,8 @@ void TileTessellator::add_line_unclipped(const Ring& points, const LineStyle& st
 void TileTessellator::extrude(const Ring& raw, const LineStyle& style,
                               LineBucket& out)
 {
-    Ring run;
+    Ring& run = run_;
+    run.clear();
     run.reserve(raw.size());
     for (const auto& p : raw)
         if (run.empty() || std::fabs(p[0] - run.back()[0]) +
@@ -230,13 +231,29 @@ void TileTessellator::extrude(const Ring& raw, const LineStyle& style,
 TileMesh TileTessellator::finish()
 {
     TileMesh mesh;
+    finish_into(mesh);
+    // Not reused for another tile: release the buckets now.
+    for (auto& bucket : areas_)
+        bucket = {};
+    for (auto& bucket : lines_)
+        bucket = {};
+    return mesh;
+}
+
+void TileTessellator::finish_into(TileMesh& mesh)
+{
+    mesh.area_vertices.clear();
+    mesh.area_indices.clear();
+    mesh.line_vertices.clear();
+    mesh.line_indices.clear();
     for (auto& bucket : areas_) {
         const auto base = static_cast<std::uint32_t>(mesh.area_vertices.size());
         mesh.area_vertices.insert(mesh.area_vertices.end(),
                                   bucket.vertices.begin(), bucket.vertices.end());
         for (const auto index : bucket.indices)
             mesh.area_indices.push_back(base + index);
-        bucket = {};
+        bucket.vertices.clear();
+        bucket.indices.clear();
     }
     for (auto& bucket : lines_) {
         const auto base = static_cast<std::uint32_t>(mesh.line_vertices.size());
@@ -244,9 +261,22 @@ TileMesh TileTessellator::finish()
                                   bucket.vertices.begin(), bucket.vertices.end());
         for (const auto index : bucket.indices)
             mesh.line_indices.push_back(base + index);
-        bucket = {};
+        bucket.vertices.clear();
+        bucket.indices.clear();
     }
-    return mesh;
+}
+
+void TileTessellator::clear()
+{
+    for (auto& bucket : areas_) {
+        bucket.vertices.clear();
+        bucket.indices.clear();
+    }
+    for (auto& bucket : lines_) {
+        bucket.vertices.clear();
+        bucket.indices.clear();
+    }
+    clipped_away_ = 0;
 }
 
 } // namespace navicore_vector

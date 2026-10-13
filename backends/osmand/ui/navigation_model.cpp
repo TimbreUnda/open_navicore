@@ -153,6 +153,62 @@ bool NavigationModel::take_pan(int& dx, int& dy) noexcept
     return dx != 0 || dy != 0;
 }
 
+void NavigationModel::begin_drag(int start_x, int start_y, int x, int y) noexcept
+{
+    drag_ = {true, true, start_x, start_y, x, y};
+    drag_pending_ = true;
+}
+
+void NavigationModel::move_drag(int x, int y) noexcept
+{
+    if (!drag_.active)
+        return;
+    drag_.x = x;
+    drag_.y = y;
+    drag_pending_ = true;
+}
+
+void NavigationModel::end_drag() noexcept
+{
+    if (!drag_.active)
+        return;
+    drag_.active = false;
+    drag_pending_ = true;
+}
+
+bool NavigationModel::take_drag(MapDrag& out) noexcept
+{
+    if (!drag_pending_)
+        return false;
+    out = drag_;
+    drag_.started = false;
+    drag_pending_ = false;
+    return true;
+}
+
+void NavigationModel::push_map_tap(int x, int y) noexcept
+{
+    if (tap_count_ >= 4)
+        return;
+    taps_[tap_count_][0] = x;
+    taps_[tap_count_][1] = y;
+    ++tap_count_;
+}
+
+bool NavigationModel::take_map_tap(int& x, int& y) noexcept
+{
+    if (tap_count_ == 0)
+        return false;
+    x = taps_[0][0];
+    y = taps_[0][1];
+    for (int i = 1; i < tap_count_; ++i) {
+        taps_[i - 1][0] = taps_[i][0];
+        taps_[i - 1][1] = taps_[i][1];
+    }
+    --tap_count_;
+    return true;
+}
+
 bool NavigationModel::set_map_view(const MapViewState& state) noexcept
 {
     if (state == map_view_)
@@ -197,11 +253,17 @@ std::uint64_t NavigationModel::select_recent(std::size_t index)
 {
     if (index >= recents_.size() || screen_ == Screen::Guidance)
         return 0;
-    const Destination recent = recents_[index];
+    return select_place(recents_[index]);
+}
+
+std::uint64_t NavigationModel::select_place(Destination place)
+{
+    if (screen_ == Screen::Guidance)
+        return 0;
     open_search();
-    query_ = recent.title;
+    query_ = place.title;
     ++search_revision_;
-    results_ = {recent};
+    results_ = {std::move(place)};
     return select_destination(0);
 }
 

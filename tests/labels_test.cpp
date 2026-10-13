@@ -94,6 +94,58 @@ int main()
     std::vector<ScreenPoint> straight = {{0, 0}, {300, 0}};
     assert(place_along_path(straight, 0, 0.0f, 100.0f, 16.0f, box));
     assert(near(box.cx, 50.0f, 0.5f) && near(box.angle, 0.0f, 1e-4f));
+    // The scratch variant places identically and reuses its buffer.
+    std::vector<float> scratch;
+    scratch.reserve(16);
+    const float* scratch_data = scratch.data();
+    for (const auto* path : {&diagonal, &reversed, &vertical, &straight}) {
+        OrientedBox plain, reused;
+        const bool ok_plain = place_along_path(*path, 0, 0.3f, 60.0f, 14.0f, plain);
+        const bool ok_reused =
+            place_along_path(*path, 0, 0.3f, 60.0f, 14.0f, reused, 0.6f, scratch);
+        assert(ok_plain == ok_reused);
+        assert(plain.cx == reused.cx && plain.cy == reused.cy && plain.angle == reused.angle);
+    }
+    assert(!place_along_path(elbow, 0, 1.0f, 80.0f, 16.0f, box, 0.6f, scratch));
+    assert(scratch.data() == scratch_data);
+
+    // Label id table: insert/find, insertion order, clear keeps memory,
+    // swap, growth past the reservation, id 0.
+    {
+        LabelIdMap<int> table(8);
+        const std::size_t capacity = table.capacity();
+        assert(capacity >= 8 && table.empty());
+        for (std::uint64_t id = 1; id <= 8; ++id) {
+            const auto added = table.emplace(id * 0x1000);
+            assert(added.second && *added.first == 0);
+            *added.first = static_cast<int>(id);
+        }
+        assert(!table.emplace(0x3000).second && *table.find(0x3000) == 3);
+        assert(table.size() == 8 && !table.contains(0x9000));
+        for (std::size_t i = 0; i < table.size(); ++i)
+            assert(table.key_at(i) == (i + 1) * 0x1000 && table.value_at(i) == int(i) + 1);
+        table.clear();
+        assert(table.empty() && !table.contains(0x1000) && table.capacity() == capacity);
+        table[0] = 7;
+        assert(table.contains(0) && *table.find(0) == 7);
+        LabelIdMap<int> other(8);
+        other[42] = 1;
+        table.swap(other);
+        assert(table.contains(42) && !table.contains(0));
+        assert(other.contains(0) && !other.contains(42));
+        for (std::uint64_t id = 100; id < 1100; ++id)
+            table[id] = static_cast<int>(id);
+        assert(table.size() == 1001 && table.capacity() >= 1001);
+        for (std::uint64_t id = 100; id < 1100; ++id)
+            assert(*table.find(id) == static_cast<int>(id));
+        assert(*table.find(42) == 1 && table.key_at(0) == 42);
+        // Refilled after clear(): no growth.
+        const std::size_t grown = table.capacity();
+        table.clear();
+        for (std::uint64_t id = 5000; id < 6000; ++id)
+            table[id] = 1;
+        assert(table.capacity() == grown);
+    }
 
     // Rotated collision: crossing diagonals overlap, parallel ones apart do
     // not, and axis-aligned boxes behave like rectangles.

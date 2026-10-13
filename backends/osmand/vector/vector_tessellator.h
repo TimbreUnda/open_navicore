@@ -52,6 +52,11 @@ public:
     // Same, without clipping (a route in its own coordinate frame).
     void add_line_unclipped(const Ring& points, const LineStyle& style);
     TileMesh finish();
+    // Same into `mesh`, reusing its capacity; the tessellator is left empty
+    // (with its buffers kept) for the next mesh.
+    void finish_into(TileMesh& mesh);
+    // Drops collected features, keeping the buffers.
+    void clear();
 
     std::size_t clipped_away() const { return clipped_away_; }
 
@@ -68,6 +73,7 @@ private:
 
     Bucket areas_[kAreaLayers];
     LineBucket lines_[kLineLayers];
+    Ring run_;  // extrude() scratch
     std::size_t clipped_away_ = 0;
 };
 

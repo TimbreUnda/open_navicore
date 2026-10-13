@@ -135,30 +135,57 @@ PoiStyle classify_poi(const Tags& tags, int zoom)
         const char* icon;
         int min_zoom;
     };
-    // Google-like category colours: car services blue, food orange,
-    // shopping indigo, health red, lodging pink, sights teal, transit blue.
+    // Ranked for a driver (lower first when POIs compete for space): car
+    // essentials, then what a trip needs (toilets, sleep, food, cash), then
+    // sights. Colours Google-like: car services blue, auto shops blue-grey,
+    // health and hazards red, lodging pink, food orange, shopping indigo,
+    // transit blue, sights teal.
     static const Rule rules[] = {
-        {"amenity", "fuel", 0, 0x1A73E8, "amenity_fuel", 14},
+        // Car essentials.
+        {"amenity", "fuel", 0, 0x1A73E8, "amenity_fuel", 13},
         {"amenity", "charging_station", 1, 0x1A73E8, "charging_station", 14},
+        {"highway", "services", 1, 0x1A73E8, "highway_services", 13},
+        {"highway", "rest_area", 2, 0x1A73E8, "rest_area", 13},
         {"amenity", "hospital", 2, 0xD93025, "amenity_hospital", 14},
-        {"amenity", "parking", 3, 0x5B6FD0, "amenity_parking", 16},
-        {"railway", "station", 4, 0x1967D2, "railway_station", 14},
-        {"railway", "subway_entrance", 6, 0x1967D2, "subway_entrance", 16},
-        {"amenity", "police", 5, 0x3C4043, "amenity_police", 15},
-        {"amenity", "pharmacy", 7, 0xD93025, "amenity_pharmacy", 16},
-        {"amenity", "clinic", 7, 0xD93025, "clinic", 16},
-        {"tourism", "museum", 8, 0x0F9D98, "tourism_museum", 15},
-        {"tourism", "attraction", 8, 0x0F9D98, "attraction", 15},
-        {"amenity", "theatre", 9, 0x0F9D98, "amenity_theatre", 16},
-        {"amenity", "cinema", 9, 0x0F9D98, "amenity_cinema", 16},
-        {"tourism", "hotel", 10, 0xC2185B, "tourism_hotel", 16},
-        {"shop", "mall", 10, 0x3949AB, "shop_mall", 15},
-        {"shop", "supermarket", 11, 0x3949AB, "shop_supermarket", 16},
-        {"amenity", "marketplace", 11, 0x3949AB, "amenity_marketplace", 16},
-        {"amenity", "restaurant", 12, 0xE8710A, "amenity_restaurant", 17},
-        {"amenity", "cafe", 13, 0xE8710A, "amenity_cafe", 17},
-        {"amenity", "fast_food", 13, 0xE8710A, "amenity_fast_food", 17},
+        {"highway", "speed_camera", 3, 0xD93025, "highway_speed_camera", 15},
+        {"amenity", "parking", 4, 0x5B6FD0, "amenity_parking", 15},
+        {"amenity", "parking_entrance", 4, 0x5B6FD0, "amenity_parking_entrance", 16},
+        {"shop", "car_repair", 5, 0x546E7A, "shop_car_repair", 15},
+        {"shop", "tyres", 5, 0x546E7A, "shop_tyres", 15},
+        {"amenity", "car_wash", 6, 0x546E7A, "amenity_car_wash", 15},
+        {"amenity", "compressed_air", 7, 0x546E7A, "compressed_air", 16},
+        {"amenity", "vehicle_inspection", 7, 0x546E7A, "vehicle_inspection", 16},
+        {"shop", "car_parts", 8, 0x546E7A, "shop_car_parts", 16},
+        {"shop", "car", 9, 0x546E7A, "shop_car", 16},
+        {"amenity", "police", 6, 0x3C4043, "amenity_police", 15},
+        {"amenity", "pharmacy", 7, 0xD93025, "amenity_pharmacy", 15},
+        {"aeroway", "aerodrome", 3, 0x1967D2, "aeroway_aerodrome", 11},
+        {"railway", "station", 5, 0x1967D2, "railway_station", 14},
+        {"amenity", "ferry_terminal", 6, 0x1967D2, "amenity_ferry_terminal", 14},
+        // What a trip needs.
+        {"amenity", "toilets", 8, 0x5F6368, "amenity_toilets", 16},
+        {"tourism", "motel", 9, 0xC2185B, "tourism_motel", 14},
+        {"tourism", "hotel", 10, 0xC2185B, "tourism_hotel", 15},
+        {"tourism", "guest_house", 12, 0xC2185B, "tourism_guest_house", 16},
+        {"tourism", "camp_site", 12, 0x0F9D58, "tourism_camp_site", 15},
+        {"shop", "supermarket", 10, 0x3949AB, "shop_supermarket", 15},
+        {"shop", "convenience", 12, 0x3949AB, "shop_convenience", 16},
+        {"shop", "mall", 11, 0x3949AB, "shop_mall", 15},
+        {"amenity", "atm", 11, 0x5F6368, "amenity_atm", 16},
         {"amenity", "bank", 14, 0x5F6368, "amenity_bank", 17},
+        {"amenity", "fast_food", 11, 0xE8710A, "amenity_fast_food", 16},
+        {"amenity", "restaurant", 12, 0xE8710A, "amenity_restaurant", 16},
+        {"amenity", "cafe", 13, 0xE8710A, "amenity_cafe", 16},
+        {"amenity", "clinic", 9, 0xD93025, "clinic", 16},
+        {"amenity", "doctors", 13, 0xD93025, "amenity_doctors", 17},
+        {"amenity", "bus_station", 12, 0x1967D2, "amenity_bus_station", 15},
+        {"railway", "subway_entrance", 12, 0x1967D2, "subway_entrance", 16},
+        {"amenity", "marketplace", 13, 0x3949AB, "amenity_marketplace", 16},
+        // Sights and culture.
+        {"tourism", "museum", 14, 0x0F9D98, "tourism_museum", 15},
+        {"tourism", "attraction", 14, 0x0F9D98, "attraction", 15},
+        {"amenity", "theatre", 15, 0x0F9D98, "amenity_theatre", 16},
+        {"amenity", "cinema", 15, 0x0F9D98, "amenity_cinema", 16},
     };
     PoiStyle style;
     for (const auto& rule : rules) {

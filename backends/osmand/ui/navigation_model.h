@@ -103,6 +103,16 @@ struct MapViewState {
     }
 };
 
+// A one-finger map drag in absolute screen pixels. The engine keeps the
+// map point under the start position under the finger (exact with
+// rotation and tilt), so only positions are passed, never deltas.
+struct MapDrag {
+    bool active = false;   // finger still down
+    bool started = false;  // first report of this drag
+    int start_x = 0, start_y = 0;
+    int x = 0, y = 0;
+};
+
 // Renderer-thread UI state only. Slow search and routing work is deliberately
 // not called from this model: a coordinator copies requests to a worker and
 // applies owned results only when their revision still matches.
@@ -140,6 +150,15 @@ public:
     void take_map_commands(std::vector<MapCommand>& output);
     void add_pan(int dx, int dy) noexcept;
     bool take_pan(int& dx, int& dy) noexcept;
+    void begin_drag(int start_x, int start_y, int x, int y) noexcept;
+    void move_drag(int x, int y) noexcept;
+    void end_drag() noexcept;
+    // True when the drag changed since the last call; `started` is reported
+    // once per drag.
+    bool take_drag(MapDrag& out) noexcept;
+    // Taps on bare map (bounded; oldest kept).
+    void push_map_tap(int x, int y) noexcept;
+    bool take_map_tap(int& x, int& y) noexcept;
     const MapViewState& map_view() const noexcept { return map_view_; }
     bool set_map_view(const MapViewState& state) noexcept;
 
@@ -153,6 +172,9 @@ public:
     void set_recents(std::vector<Destination> recents);
     // Routes to a recent destination through the normal search/route flow.
     std::uint64_t select_recent(std::size_t index);
+    // Routes to a place picked on the map (a POI) through the same flow;
+    // 0 while guiding.
+    std::uint64_t select_place(Destination place);
 
 private:
     void remember_recent(const Destination& destination);
@@ -171,6 +193,10 @@ private:
     std::vector<MapCommand> map_commands_;
     int pan_dx_ = 0;
     int pan_dy_ = 0;
+    MapDrag drag_;
+    bool drag_pending_ = false;
+    int taps_[4][2] = {};
+    int tap_count_ = 0;
     MapViewState map_view_;
     bool moving_ = false;
     std::vector<Destination> recents_;

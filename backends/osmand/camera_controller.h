@@ -73,6 +73,10 @@ public:
     void recenter() noexcept;
     // Pans the free camera by a screen delta in pixels.
     void pan(int dx, int dy) noexcept;
+    // Free camera centred on a location the engine computed (finger drag):
+    // keeps the current zoom and tilt. set_free_location moves it.
+    void begin_free(double latitude, double longitude) noexcept;
+    void set_free_location(double latitude, double longitude) noexcept;
     // Fits a lat/lon bounding box (route overview) until recenter/timeout.
     void overview(double min_latitude, double min_longitude,
                   double max_latitude, double max_longitude) noexcept;
@@ -105,6 +109,8 @@ private:
     double last_heading_ = 0.0;
     int last_anchor_x_ = 0;
     int last_anchor_y_ = 0;
+    float last_elevation_ = 90.0f;
+    bool free_tilted_ = false;  // a drag from a tilted view stays tilted
 };
 
 // Turns sparse position fixes (1 Hz GPS or per-frame simulation) into a

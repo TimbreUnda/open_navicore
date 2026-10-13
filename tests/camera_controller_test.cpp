@@ -85,6 +85,20 @@ int main()
         camera.toggle_orientation();
         const auto tilted = camera.update(vehicle(120.0, 10.0), 0.016);
         assert(tilted.elevation_degrees == settings.tilted_elevation);
+
+        // A finger drag from the tilted view stays tilted at the same zoom
+        // and centres where the engine puts it.
+        camera.begin_free(50.45, 30.52);
+        const auto dragged = camera.update(vehicle(120.0, 10.0), 0.016);
+        assert(camera.mode() == CameraController::Mode::Free);
+        assert(!dragged.following);
+        assert(dragged.elevation_degrees == settings.tilted_elevation);
+        assert(near(dragged.zoom, tilted.zoom, 1e-3));
+        camera.set_free_location(50.46, 30.53);
+        const auto moved = camera.update(vehicle(120.0, 10.0), 0.016);
+        assert(near(moved.latitude, 50.46, 1e-9) && near(moved.longitude, 30.53, 1e-9));
+        camera.recenter();
+        assert(camera.update(vehicle(120.0, 10.0), 0.016).following);
     }
     {
         // User zoom offset persists while following and is bounded.

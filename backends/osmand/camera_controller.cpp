@@ -98,12 +98,32 @@ void CameraController::recenter() noexcept
     idle_seconds_ = 0.0;
 }
 
+void CameraController::begin_free(double latitude, double longitude) noexcept
+{
+    idle_seconds_ = 0.0;
+    if (mode_ != Mode::Free) {
+        free_zoom_ = zoom_;
+        free_tilted_ = last_elevation_ < 90.0f;
+        mode_ = Mode::Free;
+    }
+    free_latitude_ = latitude;
+    free_longitude_ = longitude;
+}
+
+void CameraController::set_free_location(double latitude, double longitude) noexcept
+{
+    idle_seconds_ = 0.0;
+    free_latitude_ = latitude;
+    free_longitude_ = longitude;
+}
+
 void CameraController::pan(int dx, int dy) noexcept
 {
     idle_seconds_ = 0.0;
     if (dx == 0 && dy == 0)
         return;
     if (mode_ != Mode::Free) {
+        free_tilted_ = false;
         if (mode_ != Mode::Overview) {
             // Start from whatever is currently at the map-area centre so the
             // first drag does not jump the view.
@@ -215,8 +235,10 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
     }
     pose.zoom = zoom_;
     pose.azimuth_degrees = azimuth_;
-    pose.elevation_degrees = tilted_ && follow && mode_ == Mode::HeadingUp
+    pose.elevation_degrees =
+        tilted_ && ((follow && mode_ == Mode::HeadingUp) || (mode_ == Mode::Free && free_tilted_))
         ? settings_.tilted_elevation : 90.0f;
+    last_elevation_ = pose.elevation_degrees;
     pose.following = follow;
     last_anchor_x_ = pose.anchor_x;
     last_anchor_y_ = pose.anchor_y;

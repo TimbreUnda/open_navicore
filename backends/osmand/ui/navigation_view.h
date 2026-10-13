@@ -30,6 +30,10 @@ public:
 
     void resize(uint32_t width, uint32_t height);
     void pointer(int action, int32_t x, int32_t y);
+    // Advances LVGL time by the real frame interval and reads every queued
+    // pointer sample, so map drags reach the camera in the same frame.
+    // Call once per frame before the camera update.
+    void process_input(uint32_t elapsed_ms);
     bool render(uint32_t elapsed_ms);
 
     const uint32_t* pixels() const noexcept { return pixels_.data(); }
@@ -57,6 +61,8 @@ public:
     bool apply_guidance(GuidanceState guidance);
     bool start_guidance(std::size_t route);
     std::uint64_t select_recent(std::size_t index);
+    // Routes to a place picked on the map (e.g. a POI).
+    std::uint64_t select_place(Destination place);
 
     // Part of the window where the map is visible (right of the opaque rail).
     struct MapArea { int x = 0; int y = 0; int width = 0; int height = 0; };
@@ -132,9 +138,13 @@ private:
     int marker_x_ = 0;
     int marker_y_ = 0;
     float marker_rotation_ = 0.0f;
-    bool map_drag_ = false;
+    bool map_drag_ = false;      // pressed on bare map
+    bool map_dragging_ = false;  // moved past the slop: a drag, not a tap
     int32_t drag_last_x_ = 0;
     int32_t drag_last_y_ = 0;
+    int32_t press_x_ = 0;
+    int32_t press_y_ = 0;
+    uint32_t press_tick_ = 0;
     std::deque<PointerSample> pointer_queue_;
     PointerSample last_pointer_{2, 0, 0};
     uint32_t rendered_frames_ = 0;

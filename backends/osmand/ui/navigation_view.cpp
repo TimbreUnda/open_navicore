@@ -185,6 +185,8 @@ void NavigationView::create_display()
     lv_indev_set_display(indev_, display_);
     lv_indev_set_user_data(indev_, this);
     lv_indev_set_read_cb(indev_, pointer_cb);
+    // Read on demand from process_input(), not on LVGL's 33 ms timer.
+    lv_indev_set_mode(indev_, LV_INDEV_MODE_EVENT);
     rebuild();
 }
 
@@ -463,6 +465,14 @@ bool NavigationView::set_moving(bool moving)
     if (built_screen_ == Screen::Search)
         rebuild();
     return true;
+}
+
+std::uint64_t NavigationView::select_place(Destination place)
+{
+    const std::uint64_t revision = model_.select_place(std::move(place));
+    if (revision)
+        rebuild();
+    return revision;
 }
 
 std::uint64_t NavigationView::select_recent(std::size_t index)
@@ -844,6 +854,19 @@ void NavigationView::pointer(int action, int32_t x, int32_t y)
         input_sequence_active_ = false;
 }
 
+void NavigationView::process_input(uint32_t elapsed_ms)
+{
+    lv_tick_inc(elapsed_ms);
+    if (!indev_)
+        return;
+    // One read per queued sample (the callback consumes one each), and at
+    // least one per frame so held presses keep LVGL's press timing.
+    std::size_t reads = 0;
+    do {
+        lv_indev_read(indev_);
+    } while (!pointer_queue_.empty() && ++reads < 64);
+}
+
 bool NavigationView::render(uint32_t elapsed_ms)
 {
     dirty_ = false;
@@ -1012,10 +1035,15 @@ void NavigationView::pointer_cb(lv_indev_t* indev, lv_indev_data_t* data)
     data->continue_reading = !self->pointer_queue_.empty();
 }
 
+// Bare-map gestures: a press that moves past the slop is a drag (absolute
+// positions to the model); a short press that stays inside it is a tap.
 void NavigationView::handle_map_gesture(const PointerSample& sample)
 {
+    constexpr int32_t slop_px = 10;
+    constexpr uint32_t tap_ms = 500;
     if (sample.action == MOCK_NAV_BACKEND_POINTER_PRESS) {
         map_drag_ = false;
+        map_dragging_ = false;
         if (built_screen_ == Screen::Search || !screen_)
             return;
         lv_point_t point{sample.x, sample.y};
@@ -1024,18 +1052,33 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
         // non-clickable vehicle marker) pan the map.
         if (hit == screen_ || hit == nullptr || hit == vehicle_marker_) {
             map_drag_ = true;
-            drag_last_x_ = sample.x;
-            drag_last_y_ = sample.y;
+            press_x_ = drag_last_x_ = sample.x;
+            press_y_ = drag_last_y_ = sample.y;
+            press_tick_ = lv_tick_get();
         }
         return;
     }
     if (!map_drag_)
         return;
-    model_.add_pan(sample.x - drag_last_x_, sample.y - drag_last_y_);
     drag_last_x_ = sample.x;
     drag_last_y_ = sample.y;
-    if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE)
+    if (!map_dragging_) {
+        const int32_t dx = sample.x - press_x_, dy = sample.y - press_y_;
+        if (dx * dx + dy * dy > slop_px * slop_px) {
+            map_dragging_ = true;
+            model_.begin_drag(press_x_, press_y_, sample.x, sample.y);
+        }
+    } else {
+        model_.move_drag(sample.x, sample.y);
+    }
+    if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+        if (map_dragging_)
+            model_.end_drag();
+        else if (lv_tick_elaps(press_tick_) <= tap_ms)
+            model_.push_map_tap(press_x_, press_y_);
         map_drag_ = false;
+        map_dragging_ = false;
+    }
 }
 
 void NavigationView::map_command_cb(lv_event_t* event)
