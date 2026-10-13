@@ -220,7 +220,8 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
     if (follow) {
         pose.latitude = vehicle.latitude;
         pose.longitude = vehicle.longitude;
-        pose.anchor_x = centre_x;
+        pose.anchor_x = mode_ == Mode::HeadingUp
+            ? centre_x + settings_.heading_up_anchor_dx : centre_x;
         pose.anchor_y = mode_ == Mode::HeadingUp
             ? viewport_.top + static_cast<int>(viewport_.height *
                                                settings_.heading_up_anchor)

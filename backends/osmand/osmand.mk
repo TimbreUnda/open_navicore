@@ -57,6 +57,9 @@ OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
 LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
 OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
 OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)
+# Design fonts and icons (tools/ui_assets/), compiled as C like LVGL.
+UI_ASSET_SOURCES := $(wildcard backends/osmand/ui/assets/*.c)
+OSMAND_OBJECTS += $(patsubst backends/osmand/ui/assets/%.c,$(OSMAND_BUILD_DIR)/uiassets/%.o,$(UI_ASSET_SOURCES))
 OSMAND_OBF_SMOKE_TARGET := $(OSMAND_BUILD_DIR)/qnx-osmand-obf-smoke
 OSMAND_ROUTE_SMOKE_TARGET := $(OSMAND_BUILD_DIR)/qnx-osmand-route-smoke
 OSMAND_PLUGIN_SMOKE_TARGET := $(OSMAND_BUILD_DIR)/qnx-osmand-plugin-smoke
@@ -64,7 +67,7 @@ OSMAND_ENV = QNX_HOST=$(QNX_HOST) QNX_TARGET=$(QNX_TARGET) LD_LIBRARY_PATH=$(HOS
 OSMAND_COMPILE = $(OSMAND_ENV) $(OSMAND_CXX) --sysroot=$(QNX_TARGET) \
 	-B$(OSMAND_BINUTILS_DIR)/ $(OSMAND_CXXFLAGS) $(OSMAND_INCLUDES) $(OSMAND_LVGL_FLAGS)
 
-.PHONY: osmand-check osmand-manifest camera-controller-test tile-cache-test labels-test osmand-session-test osmand-route-smoke
+.PHONY: ui-render-tool osmand-check osmand-manifest camera-controller-test tile-cache-test labels-test osmand-session-test osmand-route-smoke
 
 osmand-backend: $(OSMAND_PLUGIN_TARGET) | $(DIST_DIR)
 	cp $< $(DIST_DIR)/libMockNavBackendOsmAnd.so
@@ -131,6 +134,15 @@ $(OSMAND_BUILD_DIR)/lvgl/%.o: third_party/lvgl/src/%.c \
 		-std=c99 -O2 -fPIC -ffunction-sections -fdata-sections \
 		-I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
 		$(OSMAND_LVGL_FLAGS) -MMD -MP -c $< -o $@
+
+$(OSMAND_BUILD_DIR)/uiassets/%.o: backends/osmand/ui/assets/%.c \
+		backends/osmand/ui/lv_conf.h \
+		$(OSMAND_CC) $(OSMAND_BINUTILS_STAMP)
+	mkdir -p $(dir $@)
+	$(OSMAND_ENV) $(OSMAND_CC) --sysroot=$(QNX_TARGET) -B$(OSMAND_BINUTILS_DIR)/ \
+		-std=c99 -O2 -fPIC -ffunction-sections -fdata-sections \
+		-I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
+		$(OSMAND_LVGL_FLAGS) -c $< -o $@
 
 $(OSMAND_PLUGIN_TARGET): $(OSMAND_OBJECTS) backends/osmand/osmand_backend.map \
 		$(OSMAND_CORE_LIB_DIR)/libOsmAndCore_shared.so
@@ -239,8 +251,26 @@ $(LVGL_HOST_BUILD_DIR)/%.o: third_party/lvgl/src/%.c backends/osmand/ui/lv_conf.
 	$(CC) -std=c99 -O2 -I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
 		-DLV_CONF_PATH='"backends/osmand/ui/lv_conf.h"' -c $< -o $@
 
-$(LVGL_HOST_BUILD_DIR)/liblvgl.a: $(LVGL_HOST_OBJECTS)
+$(LVGL_HOST_BUILD_DIR)/uiassets/%.o: backends/osmand/ui/assets/%.c backends/osmand/ui/lv_conf.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c99 -O2 -I$(CURDIR) -I$(CURDIR)/third_party/lvgl \
+		-DLV_CONF_PATH='"backends/osmand/ui/lv_conf.h"' -c $< -o $@
+
+LVGL_HOST_ASSET_OBJECTS := $(patsubst backends/osmand/ui/assets/%.c,$(LVGL_HOST_BUILD_DIR)/uiassets/%.o,$(UI_ASSET_SOURCES))
+
+$(LVGL_HOST_BUILD_DIR)/liblvgl.a: $(LVGL_HOST_OBJECTS) $(LVGL_HOST_ASSET_OBJECTS)
 	$(AR) rcs $@ $^
+
+# Renders the UI states of the navigation design for pixel comparison
+# (tools/ui_assets/compare.py).
+ui-render-tool: $(LVGL_HOST_BUILD_DIR)/liblvgl.a
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror \
+		-Iinclude -Ibackends/osmand -Ithird_party/lvgl -I$(CURDIR) \
+		-DLV_CONF_PATH='"backends/osmand/ui/lv_conf.h"' \
+		backends/osmand/diagnostics.cpp \
+		backends/osmand/ui/navigation_model.cpp \
+		backends/osmand/ui/navigation_view.cpp tests/ui_render_tool.cpp \
+		$(LVGL_HOST_BUILD_DIR)/liblvgl.a -lm -o $(LVGL_HOST_BUILD_DIR)/ui-render-tool
 
 navigation-ui-test: $(LVGL_HOST_BUILD_DIR)/liblvgl.a
 	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror \

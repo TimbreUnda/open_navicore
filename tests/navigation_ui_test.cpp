@@ -228,9 +228,10 @@ void test_car_controls()
         model.set_recents({place("home", "Home", 50.4), place("work", "Work", 50.5)});
         NavigationView view(model, 1024, 574);
         settle(view, 31);
-        // Recent rows follow "Where to?" (64), shortcuts (80) and the label.
+        // Recent rows follow "Where to?" (16 + 64 + 8) and the card's
+        // RECENT heading (12 + 22): the first row spans y 122..186.
         const auto revision = model.route_revision();
-        tap(view, 160, 16 + 64 + 12 + 80 + 12 + 17 + 12 + 32);
+        tap(view, 160, 122 + 32);
         assert(model.screen() == Screen::Search);
         assert(model.destination() && model.destination()->id == "home");
         assert(model.route_revision() > revision);

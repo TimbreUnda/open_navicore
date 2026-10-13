@@ -51,7 +51,7 @@ int main()
         auto camera = controller();
         const auto pose = camera.update(vehicle(90.0, 10.0), 0.016);
         assert(pose.following);
-        assert(pose.anchor_x == 336 + 688 / 2);
+        assert(pose.anchor_x == 336 + 688 / 2 + settings.heading_up_anchor_dx);
         assert(pose.anchor_y > 574 / 2 && pose.anchor_y < 574);
         assert(near(pose.azimuth_degrees, 90.0, 1e-3));
         assert(pose.elevation_degrees == 90.0f);

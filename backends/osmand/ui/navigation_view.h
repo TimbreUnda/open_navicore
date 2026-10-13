@@ -64,7 +64,9 @@ public:
     // Routes to a place picked on the map (e.g. a POI).
     std::uint64_t select_place(Destination place);
 
-    // Part of the window where the map is visible (right of the opaque rail).
+    // Part of the window the camera frames: right of the 336 px rail. Free
+    // drive and guidance float their cards over a full-width map, so the
+    // map (and the vehicle marker) is visible beyond this area there.
     struct MapArea { int x = 0; int y = 0; int width = 0; int height = 0; };
     MapArea map_area() const noexcept;
     // Re-reads model.map_view() into the map control buttons.
@@ -88,7 +90,11 @@ private:
     void build_map_controls(bool full);
     void build_vehicle_marker();
     void build_recents(_lv_obj_t* parent);
+    void build_recent_card(int y);
     void refresh_guidance();
+    // Places the guidance card contents for the current text (simulation tag,
+    // one- or two-line action, countdown bar) without rebuilding the screen.
+    void layout_guidance_card();
     int rail_width() const noexcept;
     void handle_map_gesture(const PointerSample& sample);
     void clear_object_references() noexcept;
@@ -120,17 +126,22 @@ private:
     lv_obj_t* screen_ = nullptr;
     lv_obj_t* results_panel_ = nullptr;
     lv_obj_t* query_field_ = nullptr;
-    lv_obj_t* guidance_symbol_ = nullptr;
+    lv_obj_t* guidance_card_ = nullptr;
+    lv_obj_t* guidance_glyph_ = nullptr;
+    lv_obj_t* guidance_exit_ = nullptr;
     lv_obj_t* guidance_simulation_ = nullptr;
     lv_obj_t* guidance_distance_ = nullptr;
     lv_obj_t* guidance_action_ = nullptr;
     lv_obj_t* guidance_road_ = nullptr;
-    lv_obj_t* guidance_following_ = nullptr;
-    lv_obj_t* guidance_lanes_ = nullptr;
-    lv_obj_t* guidance_summary_ = nullptr;
+    lv_obj_t* guidance_bar_ = nullptr;
+    lv_obj_t* guidance_bar_fill_ = nullptr;
+    lv_obj_t* guidance_time_ = nullptr;
+    lv_obj_t* guidance_remaining_ = nullptr;
+    lv_obj_t* guidance_next_glyph_ = nullptr;
     lv_obj_t* guidance_instruction_ = nullptr;
     lv_obj_t* control_recenter_ = nullptr;
-    lv_obj_t* control_orientation_ = nullptr;
+    lv_obj_t* control_heading_ = nullptr;
+    lv_obj_t* control_north_ = nullptr;
     lv_obj_t* control_tilt_ = nullptr;
     lv_obj_t* control_night_ = nullptr;
     lv_obj_t* vehicle_marker_ = nullptr;

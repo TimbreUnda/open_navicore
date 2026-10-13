@@ -1,6 +1,8 @@
 #include "navigation_view.h"
 
 #include "../diagnostics.h"
+#include "assets/nav_fonts.h"
+#include "assets/nav_icons.h"
 
 #include <lvgl.h>
 #include <open_navicore/backend.h>
@@ -30,7 +32,7 @@ constexpr uint32_t input_quarantine_frames = 30;
 constexpr int map_button = 64;
 constexpr int map_gap = 8;
 constexpr int map_margin = 16;
-constexpr int marker_size = 52;
+constexpr int marker_size = 64;  // nav_icon_vehicle_64
 // Marker updates below these thresholds are not redrawn.
 constexpr int marker_move_threshold = 1;
 constexpr float marker_rotation_threshold = 2.0f;
@@ -112,25 +114,6 @@ const char* maneuver_action(ManeuverKind kind)
     return "Continue";
 }
 
-const char* maneuver_symbol(ManeuverKind kind)
-{
-    switch (kind) {
-    case ManeuverKind::Left:
-    case ManeuverKind::SlightLeft:
-    case ManeuverKind::SharpLeft:
-    case ManeuverKind::KeepLeft: return "<";
-    case ManeuverKind::Right:
-    case ManeuverKind::SlightRight:
-    case ManeuverKind::SharpRight:
-    case ManeuverKind::KeepRight: return ">";
-    case ManeuverKind::UTurn: return "U";
-    case ManeuverKind::Roundabout: return "O";
-    case ManeuverKind::Arrive: return "X";
-    case ManeuverKind::Straight: return "^";
-    }
-    return "^";
-}
-
 void set_label_text(lv_obj_t* label, const char* text)
 {
     if (!label || !text)
@@ -146,6 +129,166 @@ void set_hidden(lv_obj_t* object, bool hidden)
         return;
     if (lv_obj_is_hidden(object) != hidden)
         lv_obj_set_hidden(object, hidden);
+}
+
+// ---- Uconnect navigation design (Nav component, 1024x574) ----
+// Tokens and geometry come from the mockups; every element below is placed
+// at the mockup's pixel position, relative to its card.
+namespace design {
+// Colours shared with the search screen (base, surface, control, line,
+// accent, maneuver) are the file-level tokens above.
+constexpr uint32_t text1 = 0xeef0f3;
+constexpr uint32_t text2 = 0xa4abb5;
+constexpr uint32_t text3 = 0x6f7782;
+constexpr uint32_t warning = 0xf6c86a;
+constexpr uint32_t warning_bg = 0x2e2612;
+constexpr uint32_t danger = 0xff8a80;
+constexpr uint32_t danger_bg = 0x3a1614;
+constexpr uint32_t white = 0xffffff;
+constexpr int margin = 16;      // screen edge to cards and controls
+constexpr int column = 304;     // card width in the 336 px column
+constexpr int rail = 336;
+constexpr int tile = 64;    // touch target / control size
+// Turn countdown bar spans the last 400 m before a manoeuvre.
+constexpr double countdown_metres = 400.0;
+
+// CSS box-shadow 0 Y B rgba(0,0,0,A): LVGL spreads its blur over the full
+// width, CSS over twice the blur radius.
+void shadow(lv_obj_t* object, int offset_y, int blur, float alpha)
+{
+    lv_obj_set_style_shadow_width(object, blur * 2, 0);
+    lv_obj_set_style_shadow_offset_y(object, offset_y, 0);
+    lv_obj_set_style_shadow_color(object, lv_color_hex(0), 0);
+    lv_obj_set_style_shadow_opa(object, static_cast<lv_opa_t>(alpha * 255.0f + 0.5f), 0);
+}
+void card_shadow(lv_obj_t* object) { shadow(object, 4, 16, 0.45f); }
+
+// A plain rectangle without theme styles. Clickable boxes absorb presses
+// (cards over the map must not pan it); decorations pass them to the parent.
+lv_obj_t* box(lv_obj_t* parent, int x, int y, int width, int height,
+              uint32_t background, int radius, bool clickable = false)
+{
+    lv_obj_t* object = lv_obj_create(parent);
+    lv_obj_remove_style_all(object);
+    lv_obj_set_pos(object, x, y);
+    lv_obj_set_size(object, width, height);
+    lv_obj_set_style_radius(object, radius, 0);
+    lv_obj_set_style_bg_color(object, lv_color_hex(background), 0);
+    lv_obj_set_style_bg_opa(object, LV_OPA_COVER, 0);
+    no_scroll(object);
+    lv_obj_set_clickable(object, clickable);
+    return object;
+}
+
+void border(lv_obj_t* object, int width, uint32_t colour)
+{
+    lv_obj_set_style_border_width(object, width, 0);
+    lv_obj_set_style_border_color(object, lv_color_hex(colour), 0);
+    lv_obj_set_style_border_opa(object, LV_OPA_COVER, 0);
+}
+
+// CSS inset box-shadow ring: drawn inside the box without moving its
+// children (an LVGL border would inset the content area).
+void ring(lv_obj_t* object, int width, uint32_t colour)
+{
+    lv_obj_set_style_outline_width(object, width, 0);
+    lv_obj_set_style_outline_pad(object, -width, 0);
+    lv_obj_set_style_outline_color(object, lv_color_hex(colour), 0);
+    lv_obj_set_style_outline_opa(object, LV_OPA_COVER, 0);
+}
+
+int text_width(const char* text, const lv_font_t* font, int letter_space = 0)
+{
+    lv_point_t size{};
+    lv_text_get_size(&size, text, font, letter_space, 0, LV_COORD_MAX,
+                     LV_TEXT_FLAG_NONE);
+    return size.x;
+}
+
+// A label whose top is the CSS text box top (fonts use browser metrics).
+lv_obj_t* text(lv_obj_t* parent, const char* value, const lv_font_t* font,
+               uint32_t colour, int x, int y)
+{
+    lv_obj_t* object = lv_label_create(parent);
+    lv_obj_remove_style_all(object);
+    lv_label_set_text(object, value);
+    lv_obj_set_style_text_font(object, font, 0);
+    lv_obj_set_style_text_color(object, lv_color_hex(colour), 0);
+    lv_obj_set_pos(object, x, y);
+    lv_obj_set_clickable(object, false);
+    return object;
+}
+
+// Fixed-width text ending in an ellipsis after `lines` lines.
+lv_obj_t* clipped_text(lv_obj_t* parent, const char* value, const lv_font_t* font,
+                       uint32_t colour, int x, int y, int width, int lines = 1,
+                       int line_height = 0)
+{
+    lv_obj_t* object = text(parent, value, font, colour, x, y);
+    const int line = line_height ? line_height : lv_font_get_line_height(font);
+    lv_obj_set_style_text_line_space(object, line - lv_font_get_line_height(font), 0);
+    lv_label_set_long_mode(object, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_size(object, width, line * lines - (line - lv_font_get_line_height(font)));
+    return object;
+}
+
+// Number of lines `value` wraps to in `width` (for line-clamped text).
+int wrapped_lines(const char* value, const lv_font_t* font, int width)
+{
+    lv_point_t size{};
+    lv_text_get_size(&size, value, font, 0, 0, width, LV_TEXT_FLAG_NONE);
+    const int line = lv_font_get_line_height(font);
+    return std::max(1, static_cast<int>((size.y + line / 2) / line));
+}
+
+// Design icons are A8 masks drawn in the given colour.
+lv_obj_t* icon(lv_obj_t* parent, const lv_image_dsc_t* image, uint32_t colour,
+               int x, int y)
+{
+    lv_obj_t* object = lv_image_create(parent);
+    lv_obj_remove_style_all(object);
+    lv_image_set_src(object, image);
+    lv_obj_set_style_image_recolor(object, lv_color_hex(colour), 0);
+    lv_obj_set_style_image_recolor_opa(object, LV_OPA_COVER, 0);
+    lv_obj_set_pos(object, x, y);
+    lv_obj_set_clickable(object, false);
+    return object;
+}
+
+const lv_image_dsc_t* glyph(ManeuverKind kind, bool large)
+{
+    switch (kind) {
+    case ManeuverKind::Left: return large ? &nav_icon_glyph_left_72 : &nav_icon_glyph_left_32;
+    case ManeuverKind::SlightLeft: return large ? &nav_icon_glyph_slight_left_72 : &nav_icon_glyph_slight_left_32;
+    case ManeuverKind::SharpLeft: return large ? &nav_icon_glyph_sharp_left_72 : &nav_icon_glyph_sharp_left_32;
+    case ManeuverKind::Right: return large ? &nav_icon_glyph_right_72 : &nav_icon_glyph_right_32;
+    case ManeuverKind::SlightRight: return large ? &nav_icon_glyph_slight_right_72 : &nav_icon_glyph_slight_right_32;
+    case ManeuverKind::SharpRight: return large ? &nav_icon_glyph_sharp_right_72 : &nav_icon_glyph_sharp_right_32;
+    case ManeuverKind::KeepLeft: return large ? &nav_icon_glyph_keep_left_72 : &nav_icon_glyph_keep_left_32;
+    case ManeuverKind::KeepRight: return large ? &nav_icon_glyph_keep_right_72 : &nav_icon_glyph_keep_right_32;
+    case ManeuverKind::UTurn: return large ? &nav_icon_glyph_uturn_72 : &nav_icon_glyph_uturn_32;
+    case ManeuverKind::Roundabout: return large ? &nav_icon_glyph_roundabout_72 : &nav_icon_glyph_roundabout_32;
+    case ManeuverKind::Arrive: return large ? &nav_icon_glyph_arrive_72 : &nav_icon_glyph_arrive_32;
+    case ManeuverKind::Straight: break;
+    }
+    return large ? &nav_icon_glyph_straight_72 : &nav_icon_glyph_straight_32;
+}
+} // namespace design
+
+std::string maneuver_text(const Maneuver& maneuver)
+{
+    if (maneuver.kind == ManeuverKind::Roundabout && maneuver.roundabout_exit > 0) {
+        static const char* const ordinals[] = {"1st", "2nd", "3rd"};
+        char text[64] = {};
+        if (maneuver.roundabout_exit <= 3)
+            std::snprintf(text, sizeof(text), "At the roundabout, take the %s exit",
+                          ordinals[maneuver.roundabout_exit - 1]);
+        else
+            std::snprintf(text, sizeof(text), "At the roundabout, take the %dth exit",
+                          maneuver.roundabout_exit);
+        return text;
+    }
+    return maneuver_action(maneuver.kind);
 }
 
 } // namespace
@@ -220,10 +363,11 @@ lv_obj_t* NavigationView::label(lv_obj_t* parent, const char* text,
     lv_obj_t* object = lv_label_create(parent);
     lv_label_set_text(object, text);
     lv_obj_set_style_text_color(object, color(text_color), 0);
-    const lv_font_t* font = &lv_font_montserrat_14;
-    if (font_size >= 28) font = &lv_font_montserrat_28;
-    else if (font_size >= 24) font = &lv_font_montserrat_24;
-    else if (font_size >= 20) font = &lv_font_montserrat_20;
+    // Design Montserrat with Cyrillic (search results are Ukrainian names).
+    const lv_font_t* font = &nav_font_14_400;
+    if (font_size >= 28) font = &nav_font_28_800;
+    else if (font_size >= 24) font = &nav_font_24_700;
+    else if (font_size >= 18) font = &nav_font_20_600;
     lv_obj_set_style_text_font(object, font, 0);
     return object;
 }
@@ -263,41 +407,72 @@ void NavigationView::rebuild()
     lv_obj_invalidate(screen_);
 }
 
+// Free drive (design: "Free drive · recent · night · following"): the map
+// fills the screen; "Where to?" and up to three recents float over it.
 void NavigationView::build_free_drive()
 {
-    const int rail_width = std::min<int>(336, width_);
-    lv_obj_t* rail = lv_obj_create(screen_);
-    panel(rail, base);
-    lv_obj_set_pos(rail, 0, content_top(height_));
-    lv_obj_set_size(rail, rail_width, content_height(height_));
-    lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_all(rail, 16, 0);
-    lv_obj_set_style_pad_row(rail, 12, 0);
+    using namespace design;
+    const int top = content_top(height_);
+    build_vehicle_marker();  // below the cards
 
-    lv_obj_t* search = button(rail, "Where to?");
-    lv_obj_set_width(search, LV_PCT(100));
+    lv_obj_t* search = box(screen_, margin, top + margin, column, tile, surface, 8, true);
+    card_shadow(search);
+    icon(search, &nav_icon_search_26, accent, 18, 19);
+    design::text(search, "Where to?", &nav_font_20_600, text1, 56, 20);
     lv_obj_add_event_cb(search, open_search_cb, LV_EVENT_CLICKED, this);
 
-    lv_obj_t* shortcuts = lv_obj_create(rail);
-    panel(shortcuts, base);
-    lv_obj_set_width(shortcuts, LV_PCT(100));
-    lv_obj_set_height(shortcuts, 80);
-    lv_obj_set_flex_flow(shortcuts, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(shortcuts, 8, 0);
-    for (const char* title : {"Home", "Work"}) {
-        lv_obj_t* shortcut = button(shortcuts, title);
-        lv_obj_set_flex_grow(shortcut, 1);
-        lv_obj_set_height(shortcut, 80);
-    }
-    label(rail, "RECENT", tertiary, 14);
-    build_recents(rail);
-    lv_obj_t* spacer = lv_obj_create(rail);
-    panel(spacer, base);
-    lv_obj_set_flex_grow(spacer, 1);
-    lv_obj_set_width(spacer, 1);
-    label(rail, "Offline maps", tertiary, 14);
+    build_recent_card(top + margin + tile + 8);
     build_map_controls(true);
-    build_vehicle_marker();
+}
+
+// Recent destinations card: RECENT, then rows of clock, title over
+// subtitle, distance; or the empty state.
+void NavigationView::build_recent_card(int y)
+{
+    using namespace design;
+    constexpr std::size_t visible = 3;
+    const auto& recents = model_.recents();
+    const std::size_t rows = std::min(visible, recents.size());
+    const int height = rows ? 12 + 22 + static_cast<int>(rows) * 64 + 12 : 192;
+    lv_obj_t* card = box(screen_, margin, y, column, height, surface, 8, true);
+    card_shadow(card);
+    lv_obj_t* heading = design::text(card, "RECENT", &nav_font_14_700, text3, 16, 12);
+    lv_obj_set_style_text_letter_space(heading, 1, 0);
+
+    if (!rows) {
+        icon(card, &nav_icon_clock_40, text3, (column - 40) / 2, 58);
+        const char* title = "No recent destinations";
+        design::text(card, title, &nav_font_20_600, text2,
+                     (column - text_width(title, &nav_font_20_600)) / 2, 106);
+        const char* hint = "Places you navigate to appear here.";
+        design::text(card, hint, &nav_font_14_400, text3,
+                     (column - text_width(hint, &nav_font_14_400)) / 2, 138);
+        return;
+    }
+    for (std::size_t index = 0; index < rows; ++index) {
+        const auto& item = recents[index];
+        lv_obj_t* row = box(card, 12, 34 + static_cast<int>(index) * 64, 280, 64,
+                            surface, 0, true);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        border(row, 1, line);
+        lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+        icon(row, &nav_icon_clock_22, text3, 4, 20);
+        int right = 276;  // row width minus 4 px padding
+        if (!item.distance.empty()) {
+            const int width = text_width(item.distance.c_str(), &nav_font_14_400);
+            design::text(row, item.distance.c_str(), &nav_font_14_400, text2,
+                         right - width, 23);
+            right -= width + 12;
+        }
+        const bool has_subtitle = !item.subtitle.empty();
+        clipped_text(row, item.title.c_str(), &nav_font_20_600, text1,
+                     38, has_subtitle ? 11 : 20, right - 38);
+        if (has_subtitle)
+            clipped_text(row, item.subtitle.c_str(), &nav_font_14_400, text2, 38, 35,
+                         right - 38);
+        lv_obj_add_event_cb(row, recent_cb, LV_EVENT_CLICKED, this);
+        lv_obj_set_user_data(row, reinterpret_cast<void*>(index + 1));
+    }
 }
 
 void NavigationView::build_recents(lv_obj_t* parent)
@@ -342,44 +517,44 @@ NavigationView::MapArea NavigationView::map_area() const noexcept
     return area;
 }
 
+// Map controls (design toolbar): 64 px tiles 16 px from the right edge,
+// 8 px apart; recenter is the round accent button bottom right.
 void NavigationView::build_map_controls(bool full)
 {
-    control_recenter_ = control_orientation_ = nullptr;
+    using namespace design;
+    control_recenter_ = control_heading_ = control_north_ = nullptr;
     control_tilt_ = control_night_ = nullptr;
     const MapArea area = map_area();
-    if (area.width < map_button + 2 * map_margin)
+    if (area.width < tile + 2 * margin)
         return;
-    const int x = area.x + area.width - map_margin - map_button;
-    int y = area.y + map_margin;
-    const auto add = [&](const char* text, MapCommand command, int font) {
-        lv_obj_t* object = lv_button_create(screen_);
-        panel(object, surface, 12);
-        lv_obj_set_style_bg_opa(object, LV_OPA_90, 0);
-        lv_obj_set_size(object, map_button, map_button);
-        lv_obj_set_pos(object, x, y);
-        lv_obj_t* caption = label(object, text, primary, font);
-        lv_obj_center(caption);
+    const int x = area.x + area.width - margin - tile;
+    int y = area.y + margin;
+    const auto add = [&](MapCommand command) {
+        lv_obj_t* object = box(screen_, x, y, tile, tile, surface, 12, true);
+        shadow(object, 2, 10, 0.35f);
         lv_obj_add_event_cb(object, map_command_cb, LV_EVENT_CLICKED, this);
         lv_obj_set_user_data(object, reinterpret_cast<void*>(
             static_cast<std::uintptr_t>(command) + 1u));
-        y += map_button + map_gap;
-        return caption;
+        y += tile + 8;
+        return object;
     };
-    (void)add(LV_SYMBOL_PLUS, MapCommand::ZoomIn, 24);
-    (void)add(LV_SYMBOL_MINUS, MapCommand::ZoomOut, 24);
+    icon(add(MapCommand::ZoomIn), &nav_icon_plus_28, text1, 18, 18);
+    icon(add(MapCommand::ZoomOut), &nav_icon_minus_28, text1, 18, 18);
     if (full) {
-        control_orientation_ = add("N", MapCommand::ToggleOrientation, 20);
-        control_tilt_ = add("2D", MapCommand::ToggleTilt, 20);
-        control_night_ = add("Day", MapCommand::ToggleNight, 14);
+        lv_obj_t* orientation = add(MapCommand::ToggleOrientation);
+        control_heading_ = icon(orientation, &nav_icon_heading_28, accent, 18, 18);
+        control_north_ = design::text(orientation, "N", &nav_font_24_800, accent, 0, 0);
+        lv_obj_center(control_north_);
+        control_tilt_ = design::text(add(MapCommand::ToggleTilt), "2D", &nav_font_20_700,
+                                     text1, 0, 20);
+        lv_obj_align(control_tilt_, LV_ALIGN_TOP_MID, 0, 20);
+        control_night_ = icon(add(MapCommand::ToggleNight), &nav_icon_sun_26, text1, 19, 19);
         // Recenter sits apart at the bottom so it is found without looking
         // at the zoom column; it only shows while the camera is free.
-        lv_obj_t* recenter = lv_button_create(screen_);
-        panel(recenter, accent, 32);
-        lv_obj_set_size(recenter, map_button, map_button);
-        lv_obj_set_pos(recenter, x,
-                       area.y + area.height - map_margin - map_button);
-        lv_obj_t* caption = label(recenter, LV_SYMBOL_GPS, primary, 24);
-        lv_obj_center(caption);
+        lv_obj_t* recenter = box(screen_, x, area.y + area.height - margin - tile,
+                                 tile, tile, accent, tile / 2, true);
+        shadow(recenter, 4, 14, 0.4f);
+        icon(recenter, &nav_icon_gps_30, white, 17, 17);
         lv_obj_add_event_cb(recenter, map_command_cb, LV_EVENT_CLICKED, this);
         lv_obj_set_user_data(recenter, reinterpret_cast<void*>(
             static_cast<std::uintptr_t>(MapCommand::Recenter) + 1u));
@@ -393,34 +568,26 @@ void NavigationView::apply_map_view()
     const auto& view = model_.map_view();
     set_hidden(control_recenter_, view.following);
     // Shows the current mode: an arrow for heading-up, N for north-up.
-    set_label_text(control_orientation_, view.heading_up ? LV_SYMBOL_UP : "N");
+    set_hidden(control_heading_, !view.heading_up);
+    set_hidden(control_north_, view.heading_up);
     set_label_text(control_tilt_, view.tilted ? "3D" : "2D");
-    set_label_text(control_night_, view.night ? "Night" : "Day");
+    // The button offers the other palette: a sun on the night map.
+    if (control_night_)
+        lv_image_set_src(control_night_, view.night ? &nav_icon_sun_26 : &nav_icon_moon_26);
 }
 
+// Vehicle marker (design map layer): accent dot with a white ring, heading
+// pointer and soft halo, pre-rendered from the mockup; rotated as an image.
 void NavigationView::build_vehicle_marker()
 {
     marker_visible_ = false;
-    lv_obj_t* halo = lv_obj_create(screen_);
-    panel(halo, accent, marker_size / 2);
-    lv_obj_set_style_bg_opa(halo, LV_OPA_30, 0);
-    lv_obj_set_size(halo, marker_size, marker_size);
-    lv_obj_set_style_transform_pivot_x(halo, marker_size / 2, 0);
-    lv_obj_set_style_transform_pivot_y(halo, marker_size / 2, 0);
-    lv_obj_set_clickable(halo, false);
-    lv_obj_t* dot = lv_obj_create(halo);
-    panel(dot, accent, 13);
-    lv_obj_set_size(dot, 26, 26);
-    lv_obj_set_style_border_width(dot, 4, 0);
-    lv_obj_set_style_border_color(dot, color(primary), 0);
-    lv_obj_set_clickable(dot, false);
-    lv_obj_center(dot);
-    // Heading pointer at the top edge; the whole halo rotates.
-    lv_obj_t* pointer = label(halo, LV_SYMBOL_UP, primary, 14);
-    lv_obj_set_clickable(pointer, false);
-    lv_obj_align(pointer, LV_ALIGN_TOP_MID, 0, -2);
-    lv_obj_set_hidden(halo, true);
-    vehicle_marker_ = halo;
+    lv_obj_t* marker = lv_image_create(screen_);
+    lv_obj_remove_style_all(marker);
+    lv_image_set_src(marker, &nav_icon_vehicle_64);
+    lv_image_set_pivot(marker, marker_size / 2, marker_size / 2);
+    lv_obj_set_clickable(marker, false);
+    lv_obj_set_hidden(marker, true);
+    vehicle_marker_ = marker;
 }
 
 void NavigationView::set_vehicle_marker(bool visible, int x, int y,
@@ -428,7 +595,12 @@ void NavigationView::set_vehicle_marker(bool visible, int x, int y,
 {
     if (!vehicle_marker_)
         return;
-    const MapArea area = map_area();
+    // Floating screens show the map, and the car, under and around the cards.
+    MapArea area = map_area();
+    if (built_screen_ == Screen::FreeDrive || built_screen_ == Screen::Guidance) {
+        area.x = 0;
+        area.width = static_cast<int>(width_);
+    }
     visible = visible && x >= area.x && x < area.x + area.width &&
               y >= area.y && y < area.y + area.height;
     if (!visible) {
@@ -448,8 +620,8 @@ void NavigationView::set_vehicle_marker(bool visible, int x, int y,
         return;
     lv_obj_set_pos(vehicle_marker_, x - marker_size / 2, y - marker_size / 2);
     if (rotation_delta >= marker_rotation_threshold || !marker_visible_) {
-        lv_obj_set_style_transform_rotation(
-            vehicle_marker_, static_cast<int32_t>(rotation_degrees * 10.0f), 0);
+        lv_image_set_rotation(vehicle_marker_,
+                              static_cast<int32_t>(rotation_degrees * 10.0f));
         marker_rotation_ = rotation_degrees;
     }
     set_hidden(vehicle_marker_, false);
@@ -579,190 +751,176 @@ void NavigationView::refresh_results()
     }
 }
 
+// Route preview (design: "Route preview · one route (today)"): opaque rail
+// with destination, route cards and Start; the map to the right.
 void NavigationView::build_route_preview()
 {
-    const int rail_width = std::min<int>(336, width_);
-    lv_obj_t* rail = lv_obj_create(screen_);
-    panel(rail, base);
-    lv_obj_set_pos(rail, 0, content_top(height_));
-    lv_obj_set_size(rail, rail_width, content_height(height_));
-    lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_all(rail, 16, 0);
-    lv_obj_set_style_pad_row(rail, 10, 0);
+    using namespace design;
+    const int top = content_top(height_);
+    const int height = content_height(height_);
+    build_vehicle_marker();
+    lv_obj_t* panel_rail = box(screen_, 0, top, rail, height, surface, 0, true);
+    box(screen_, rail, top, 1, height, line, 0);  // box-shadow 1px 0 0 line
+
     const Destination* destination = model_.destination();
-    label(rail, destination ? destination->title.c_str() : "Destination",
-          primary, 20);
-    if (destination) label(rail, destination->subtitle.c_str(), secondary, 14);
+    const char* title = destination ? destination->title.c_str() : "Destination";
+    const int title_lines = std::min(2, wrapped_lines(title, &nav_font_24_700, 296));
+    lv_obj_t* title_label = clipped_text(panel_rail, title, &nav_font_24_700, text1,
+                                         20, 24, 296, title_lines, 30);
+    lv_label_set_long_mode(title_label, LV_LABEL_LONG_MODE_DOTS);
+    const int subtitle_y = 24 + 30 * title_lines + 4;
+    if (destination && !destination->subtitle.empty())
+        clipped_text(panel_rail, destination->subtitle.c_str(), &nav_font_14_400, text2,
+                     20, subtitle_y, 296);
 
     const auto& routes = model_.routes();
-    for (std::size_t index = 0; index < routes.size(); ++index) {
+    int y = subtitle_y + 18 + 16;
+    for (std::size_t index = 0; index < routes.size(); ++index, y += 94) {
         const auto& route = routes[index];
-        lv_obj_t* row = lv_button_create(rail);
-        panel(row, index == model_.selected_route() ? 0x16233f : surface, 8);
-        lv_obj_set_width(row, LV_PCT(100));
-        lv_obj_set_height(row, 86);
-        lv_obj_set_style_border_width(row,
-            index == model_.selected_route() ? 2 : 1, 0);
-        lv_obj_set_style_border_color(row,
-            color(index == model_.selected_route() ? accent : line), 0);
-        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
-        std::string summary = route.duration + "  " + route.distance;
-        label(row, summary.c_str(), primary, 20);
-        label(row, route.reason.c_str(), secondary, 14);
-        lv_obj_add_event_cb(row, route_cb, LV_EVENT_CLICKED, this);
-        lv_obj_set_user_data(row, reinterpret_cast<void*>(index + 1));
+        const bool selected = index == model_.selected_route();
+        lv_obj_t* card = box(panel_rail, margin, y, column, 86, control, 8, true);
+        if (!selected)
+            lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
+        ring(card, selected ? 2 : 1, selected ? accent : line);
+        design::text(card, route.duration.c_str(), &nav_font_28_700, text1, 16, 14);
+        design::text(card, route.distance.c_str(), &nav_font_20_400, text2, 16, 48);
+        if (!route.reason.empty()) {
+            const int width = text_width(route.reason.c_str(), &nav_font_14_600) + 20;
+            lv_obj_t* tag = box(card, column - 16 - width, 29, width, 28, base, 6);
+            design::text(tag, route.reason.c_str(), &nav_font_14_600, text2, 10, 5);
+        }
+        lv_obj_add_event_cb(card, route_cb, LV_EVENT_CLICKED, this);
+        lv_obj_set_user_data(card, reinterpret_cast<void*>(index + 1));
     }
-    lv_obj_t* spacer = lv_obj_create(rail);
-    panel(spacer, base);
-    lv_obj_set_flex_grow(spacer, 1);
-    lv_obj_t* start = button(rail, "Start");
-    lv_obj_set_width(start, LV_PCT(100));
-    lv_obj_set_style_bg_color(start, color(maneuver), 0);
+
+    lv_obj_t* start = box(panel_rail, margin, height - margin - tile, column, tile,
+                          maneuver, 8, true);
+    const int label_width = text_width("Start", &nav_font_20_700);
+    const int x = (column - (24 + 10 + label_width)) / 2;
+    icon(start, &nav_icon_route_24, white, x, 20);
+    design::text(start, "Start", &nav_font_20_700, white, x + 34, 20);
     lv_obj_add_event_cb(start, start_cb, LV_EVENT_CLICKED, this);
     build_map_controls(false);
 }
 
+// Guidance (design: "Guidance · turn within 400 m"): manoeuvre card top
+// left, trip card bottom left, both floating over the full-width map.
 void NavigationView::build_guidance()
 {
-    const int rail_width = std::min<int>(336, width_);
+    using namespace design;
+    const int top = content_top(height_);
+    const int height = content_height(height_);
     const auto& guidance = model_.guidance();
-    const Destination* destination = model_.destination();
-    lv_obj_t* rail = lv_obj_create(screen_);
-    panel(rail, base);
-    lv_obj_set_pos(rail, 0, content_top(height_));
-    lv_obj_set_size(rail, rail_width, content_height(height_));
-    lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_COLUMN);
+    build_vehicle_marker();
 
-    if (!guidance.position_available) {
-        lv_obj_t* warning = lv_obj_create(rail);
-        panel(warning, 0x2a2414);
-        lv_obj_set_width(warning, LV_PCT(100));
-        lv_obj_set_height(warning, 132);
-        lv_obj_set_style_pad_all(warning, 20, 0);
-        lv_obj_set_style_pad_row(warning, 8, 0);
-        lv_obj_set_flex_flow(warning, LV_FLEX_FLOW_COLUMN);
-        label(warning, "No GPS fix", 0xf6c86a, 24);
-        lv_obj_t* explanation = label(
-            warning, "Guidance is paused until a position is available.",
-            0xe6dcc4, 14);
-        lv_obj_set_width(explanation, LV_PCT(100));
-        lv_label_set_long_mode(explanation, LV_LABEL_LONG_WRAP);
-
-        lv_obj_t* next = lv_obj_create(rail);
-        panel(next, base);
-        lv_obj_set_width(next, LV_PCT(100));
-        lv_obj_set_height(next, 86);
-        lv_obj_set_style_pad_all(next, 18, 0);
-        lv_obj_set_style_pad_row(next, 5, 0);
-        lv_obj_set_flex_flow(next, LV_FLEX_FLOW_COLUMN);
-        label(next, "NEXT ON ROUTE", tertiary, 14);
-        std::string instruction = maneuver_action(guidance.maneuver.kind);
-        if (!guidance.maneuver.road.empty())
-            instruction += "  " + guidance.maneuver.road;
-        guidance_instruction_ = label(next, instruction.c_str(), secondary, 18);
-    } else {
-        lv_obj_t* primary_card = lv_obj_create(rail);
-        panel(primary_card, maneuver);
-        lv_obj_set_width(primary_card, LV_PCT(100));
-        // Four lines: simulation tag, distance (28), action (20), road (14).
-        lv_obj_set_height(primary_card, 168);
-        lv_obj_set_style_pad_all(primary_card, 18, 0);
-        lv_obj_set_style_pad_column(primary_card, 14, 0);
-        lv_obj_set_flex_flow(primary_card, LV_FLEX_FLOW_ROW);
-        guidance_symbol_ = label(primary_card,
-            maneuver_symbol(guidance.maneuver.kind), primary, 28);
-        lv_obj_set_width(guidance_symbol_, 48);
-        lv_obj_set_style_text_align(guidance_symbol_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_t* copy = lv_obj_create(primary_card);
-        panel(copy, maneuver);
-        lv_obj_set_flex_grow(copy, 1);
-        lv_obj_set_height(copy, LV_PCT(100));
-        lv_obj_set_flex_flow(copy, LV_FLEX_FLOW_COLUMN);
-        guidance_simulation_ = label(copy, "ROUTE SIMULATION", 0xffd166, 14);
-        if (!guidance.simulated)
-            lv_obj_set_hidden(guidance_simulation_, true);
-        const std::string next_distance = guidance.arrived ? "0 m" :
-            distance_text(guidance.distance_to_maneuver_metres);
-        guidance_distance_ = label(copy, next_distance.c_str(), primary, 28);
-        guidance_action_ = label(
-            copy, maneuver_action(guidance.maneuver.kind), primary, 20);
-        const char* road = !guidance.maneuver.road.empty()
-            ? guidance.maneuver.road.c_str()
-            : (destination ? destination->title.c_str() : "Route");
-        guidance_road_ = label(copy, road, 0xc9d6ff, 14);
-        lv_obj_set_width(guidance_road_, LV_PCT(100));
-        lv_label_set_long_mode(guidance_road_, LV_LABEL_LONG_DOT);
-
-        lv_obj_t* following = lv_obj_create(rail);
-        panel(following, 0x183ea8);
-        lv_obj_set_width(following, LV_PCT(100));
-        lv_obj_set_height(following, 48);
-        lv_obj_set_style_pad_left(following, 20, 0);
-        lv_obj_set_flex_flow(following, LV_FLEX_FLOW_ROW);
-        if (guidance.has_following_maneuver) {
-            std::string then = "Then  ";
-            then += maneuver_action(guidance.following_maneuver.kind);
-            if (!guidance.following_maneuver.road.empty())
-                then += "  " + guidance.following_maneuver.road;
-            guidance_following_ = label(
-                following, then.c_str(), 0xc9d6ff, 14);
-        } else {
-            guidance_following_ = label(
-                following, "Continue to destination", 0xc9d6ff, 14);
-        }
-        lv_obj_t* lanes = lv_obj_create(rail);
-        panel(lanes, base);
-        lv_obj_set_width(lanes, LV_PCT(100));
-        lv_obj_set_height(lanes, 44);
-        lv_obj_set_style_pad_left(lanes, 20, 0);
-        guidance_lanes_ = label(lanes, guidance.simulated ?
-            "SIMULATION - Lane info unavailable" :
-            "Lane info not available here", tertiary, 14);
-    }
-
-    lv_obj_t* spacer = lv_obj_create(rail);
-    panel(spacer, base);
-    lv_obj_set_flex_grow(spacer, 1);
-    lv_obj_set_width(spacer, 1);
-
-    lv_obj_t* summary = lv_obj_create(rail);
-    panel(summary, base);
-    lv_obj_set_width(summary, LV_PCT(100));
-    lv_obj_set_height(summary, 58);
-    lv_obj_set_style_pad_left(summary, 20, 0);
-    lv_obj_set_style_border_width(summary, 1, 0);
-    lv_obj_set_style_border_side(summary, LV_BORDER_SIDE_TOP, 0);
-    lv_obj_set_style_border_color(summary, color(line), 0);
     if (guidance.position_available) {
-        const std::string trip = duration_text(guidance.remaining_seconds) +
-            "  " + distance_text(guidance.remaining_metres);
-        guidance_summary_ = label(summary, trip.c_str(), primary, 20);
+        guidance_card_ = box(screen_, margin, top + margin, column, 112, maneuver, 8, true);
+        card_shadow(guidance_card_);
+        lv_obj_set_style_clip_corner(guidance_card_, true, 0);
+        guidance_glyph_ = icon(guidance_card_, design::glyph(guidance.maneuver.kind, true),
+                               white, 16, 20);
+        guidance_exit_ = design::text(guidance_card_, "", &nav_font_14_800, white, 0, 0);
+        lv_obj_set_width(guidance_exit_, 18);
+        lv_obj_set_style_text_align(guidance_exit_, LV_TEXT_ALIGN_CENTER, 0);
+        guidance_simulation_ = box(guidance_card_, 102, 14, 0, 22, warning, 4);
+        lv_obj_t* tag = design::text(guidance_simulation_, "ROUTE SIMULATION",
+                                     &nav_font_14_800, base, 8, 2);
+        lv_obj_set_style_text_letter_space(tag, 1, 0);
+        lv_obj_set_width(guidance_simulation_,
+                         text_width("ROUTE SIMULATION", &nav_font_14_800, 1) + 16);
+        guidance_distance_ = design::text(guidance_card_, "", &nav_font_28_800, white, 102, 0);
+        guidance_action_ = clipped_text(guidance_card_, "", &nav_font_20_600, white,
+                                        102, 0, 186, 2);
+        guidance_road_ = clipped_text(guidance_card_, "", &nav_font_20_400, white, 102, 0, 186);
+        lv_obj_set_style_text_opa(guidance_road_, static_cast<lv_opa_t>(0.8f * 255 + 0.5f), 0);
+        guidance_bar_ = box(guidance_card_, 0, 0, column, 6, white, 0);
+        lv_obj_set_style_bg_opa(guidance_bar_, static_cast<lv_opa_t>(0.22f * 255 + 0.5f), 0);
+        guidance_bar_fill_ = box(guidance_card_, 0, 0, 0, 6, white, 0);
     } else {
-        guidance_summary_ = label(summary, "--:--  ETA paused", tertiary, 20);
+        // No GPS fix: warning card, then the next instruction.
+        lv_obj_t* card = box(screen_, margin, top + margin, column, 168, warning_bg, 8, true);
+        ring(card, 2, warning);
+        lv_obj_t* badge = box(card, (column - 64) / 2, 18, 64, 64, warning, 32);
+        icon(badge, &nav_icon_no_gps_38, base, 13, 13);
+        const char* title = "No GPS fix";
+        design::text(card, title, &nav_font_24_800, warning,
+                     (column - text_width(title, &nav_font_24_800)) / 2, 92);
+        lv_obj_t* body = design::text(card, "Guidance is paused until a position is available.",
+                                      &nav_font_20_400, text1, 16, 128);
+        lv_obj_set_width(body, column - 32);
+        lv_label_set_long_mode(body, LV_LABEL_LONG_MODE_WRAP);
+        lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_line_space(body, 2, 0);
+        const int lines = wrapped_lines(lv_label_get_text(body), &nav_font_20_400, column - 32);
+        const int card_height = std::max(168, 127 + 26 * lines + 16);
+        lv_obj_set_height(card, card_height);
+        const int next_y = top + margin + card_height + 16;
+        lv_obj_t* next = design::text(screen_, "NEXT ON ROUTE", &nav_font_14_700, text3,
+                                      margin, next_y);
+        lv_obj_set_style_text_letter_space(next, 1, 0);
+        guidance_next_glyph_ = icon(screen_, design::glyph(guidance.maneuver.kind, false),
+                                    text2, margin, next_y + 26 + 12);
+        guidance_instruction_ = clipped_text(screen_, "", &nav_font_20_400, text2,
+                                             margin + 44, next_y + 26 + 16, column - 44);
     }
 
-    lv_obj_t* controls = lv_obj_create(rail);
-    panel(controls, base);
-    lv_obj_set_width(controls, LV_PCT(100));
-    lv_obj_set_height(controls, 76);
-    lv_obj_set_style_pad_all(controls, 8, 0);
-    lv_obj_set_style_pad_column(controls, 8, 0);
-    lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
-    lv_obj_t* info = button(controls, "Overview");
-    lv_obj_set_flex_grow(info, 1);
-    lv_obj_set_height(info, 60);
-    lv_obj_add_event_cb(info, map_command_cb, LV_EVENT_CLICKED, this);
-    lv_obj_set_user_data(info, reinterpret_cast<void*>(
-        static_cast<std::uintptr_t>(MapCommand::Overview) + 1u));
-    lv_obj_t* end = button(controls, "End");
-    lv_obj_set_flex_grow(end, 1);
-    lv_obj_set_height(end, 60);
-    lv_obj_set_style_bg_color(end, color(0x3a1614), 0);
-    lv_obj_set_style_text_color(end, color(0xff8a80), 0);
+    // Trip card: remaining time over distance, Overview and End.
+    lv_obj_t* trip = box(screen_, margin, top + height - margin - 88, column, 88, surface, 8, true);
+    card_shadow(trip);
+    guidance_time_ = design::text(trip, "", &nav_font_28_800, text1, 16, 15);
+    guidance_remaining_ = design::text(trip, "", &nav_font_20_400, text2, 16, 48);
+    const int end_width = text_width("End", &nav_font_20_700) + 44;
+    lv_obj_t* end = box(trip, column - 12 - end_width, 12, end_width, tile, danger_bg, 8, true);
+    design::text(end, "End", &nav_font_20_700, danger, 22, 20);
     lv_obj_add_event_cb(end, end_cb, LV_EVENT_CLICKED, this);
+    lv_obj_t* overview = box(trip, column - 12 - end_width - 8 - tile, 12, tile, tile,
+                             control, 8, true);
+    icon(overview, &nav_icon_overview_26, text1, 19, 19);
+    lv_obj_add_event_cb(overview, map_command_cb, LV_EVENT_CLICKED, this);
+    lv_obj_set_user_data(overview, reinterpret_cast<void*>(
+        static_cast<std::uintptr_t>(MapCommand::Overview) + 1u));
 
     build_map_controls(true);
-    build_vehicle_marker();
+    refresh_guidance();
+}
+
+void NavigationView::layout_guidance_card()
+{
+    if (!guidance_card_)
+        return;
+    const auto& guidance = model_.guidance();
+    const bool simulated = guidance.simulated;
+    const int lines = std::min(2, design::wrapped_lines(lv_label_get_text(guidance_action_),
+                                                &nav_font_20_600, 186));
+    // Column: [tag 22 + 2], distance line 32, 2, action 24/line, 2, road 24.
+    const int column_top = 14 + (simulated ? 24 : 0);
+    const int column_height = (simulated ? 24 : 0) + 32 + 2 + 24 * lines + 2 + 24;
+    const int height = column_height + 28;
+    lv_obj_set_height(guidance_card_, height);
+    set_hidden(guidance_simulation_, !simulated);
+    lv_obj_set_y(guidance_distance_, column_top - 1);  // 28 px text in a 32 px line
+    lv_obj_set_y(guidance_action_, column_top + 34);
+    lv_obj_set_height(guidance_action_, 24 * lines);
+    lv_obj_set_y(guidance_road_, column_top + 34 + 24 * lines + 2);
+    const int glyph_y = (height - 72) / 2;
+    lv_obj_set_y(guidance_glyph_, glyph_y);
+    lv_obj_set_pos(guidance_exit_, 16 + 27, glyph_y + 17);
+
+    // Countdown to a turn: the bar empties over the last 400 m.
+    const auto kind = guidance.maneuver.kind;
+    const bool near = !guidance.arrived && kind != ManeuverKind::Straight &&
+        kind != ManeuverKind::Arrive &&
+        guidance.distance_to_maneuver_metres <= design::countdown_metres;
+    set_hidden(guidance_bar_, !near);
+    set_hidden(guidance_bar_fill_, !near);
+    if (near) {
+        const double fraction = std::clamp(
+            guidance.distance_to_maneuver_metres / design::countdown_metres, 0.0, 1.0);
+        lv_obj_set_y(guidance_bar_, height - 6);
+        lv_obj_set_pos(guidance_bar_fill_, 0, height - 6);
+        lv_obj_set_width(guidance_bar_fill_,
+                         static_cast<int32_t>(std::lround(design::column * fraction)));
+    }
 }
 
 void NavigationView::refresh_guidance()
@@ -771,62 +929,63 @@ void NavigationView::refresh_guidance()
     const Destination* destination = model_.destination();
     if (!guidance.position_available) {
         if (guidance_instruction_) {
-            std::string instruction = maneuver_action(guidance.maneuver.kind);
+            std::string instruction = maneuver_text(guidance.maneuver);
             if (!guidance.maneuver.road.empty())
-                instruction += "  " + guidance.maneuver.road;
+                instruction += " · " + guidance.maneuver.road;
             set_label_text(guidance_instruction_, instruction.c_str());
         }
-        set_label_text(guidance_summary_, "--:--  ETA paused");
+        if (guidance_next_glyph_)
+            lv_image_set_src(guidance_next_glyph_, design::glyph(guidance.maneuver.kind, false));
+        set_label_text(guidance_time_, "--:--");
+        set_label_text(guidance_remaining_, "ETA paused");
         return;
     }
 
-    set_label_text(guidance_symbol_, maneuver_symbol(guidance.maneuver.kind));
-    set_hidden(guidance_simulation_, !guidance.simulated);
+    if (guidance_glyph_ && lv_image_get_src(guidance_glyph_) !=
+                               design::glyph(guidance.maneuver.kind, true))
+        lv_image_set_src(guidance_glyph_, design::glyph(guidance.maneuver.kind, true));
+    if (guidance_exit_) {
+        const int exit = guidance.maneuver.kind == ManeuverKind::Roundabout
+            ? guidance.maneuver.roundabout_exit : 0;
+        const std::string number = exit > 0 ? std::to_string(exit) : std::string();
+        set_label_text(guidance_exit_, number.c_str());
+    }
     const std::string next_distance = guidance.arrived ? "0 m" :
         distance_text(guidance.distance_to_maneuver_metres);
     set_label_text(guidance_distance_, next_distance.c_str());
-    set_label_text(guidance_action_, maneuver_action(guidance.maneuver.kind));
+    set_label_text(guidance_action_, maneuver_text(guidance.maneuver).c_str());
     if (guidance_road_) {
         const char* road = !guidance.maneuver.road.empty()
             ? guidance.maneuver.road.c_str()
             : (destination ? destination->title.c_str() : "Route");
         set_label_text(guidance_road_, road);
     }
-    if (guidance_following_) {
-        std::string following = "Continue to destination";
-        if (guidance.has_following_maneuver) {
-            following = "Then  ";
-            following += maneuver_action(guidance.following_maneuver.kind);
-            if (!guidance.following_maneuver.road.empty())
-                following += "  " + guidance.following_maneuver.road;
-        }
-        set_label_text(guidance_following_, following.c_str());
-    }
-    set_label_text(guidance_lanes_, guidance.simulated ?
-        "SIMULATION - Lane info unavailable" :
-        "Lane info not available here");
-    if (guidance_summary_) {
-        const std::string trip = duration_text(guidance.remaining_seconds) +
-            "  " + distance_text(guidance.remaining_metres);
-        set_label_text(guidance_summary_, trip.c_str());
-    }
+    const std::string time = duration_text(guidance.remaining_seconds);
+    set_label_text(guidance_time_, time.c_str());
+    set_label_text(guidance_remaining_, distance_text(guidance.remaining_metres).c_str());
+    layout_guidance_card();
 }
 
 void NavigationView::clear_object_references() noexcept
 {
     results_panel_ = nullptr;
     query_field_ = nullptr;
-    guidance_symbol_ = nullptr;
+    guidance_card_ = nullptr;
+    guidance_glyph_ = nullptr;
+    guidance_exit_ = nullptr;
     guidance_simulation_ = nullptr;
     guidance_distance_ = nullptr;
     guidance_action_ = nullptr;
     guidance_road_ = nullptr;
-    guidance_following_ = nullptr;
-    guidance_lanes_ = nullptr;
-    guidance_summary_ = nullptr;
+    guidance_bar_ = nullptr;
+    guidance_bar_fill_ = nullptr;
+    guidance_time_ = nullptr;
+    guidance_remaining_ = nullptr;
+    guidance_next_glyph_ = nullptr;
     guidance_instruction_ = nullptr;
     control_recenter_ = nullptr;
-    control_orientation_ = nullptr;
+    control_heading_ = nullptr;
+    control_north_ = nullptr;
     control_tilt_ = nullptr;
     control_night_ = nullptr;
     vehicle_marker_ = nullptr;

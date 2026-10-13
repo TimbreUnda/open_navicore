@@ -56,7 +56,9 @@ public:
         float azimuth_time_constant_s = 0.6f;
         float heading_min_speed_mps = 1.5f; // below this keep last azimuth
         float recenter_after_s = 10.0f;
-        float heading_up_anchor = 0.70f;    // fraction of map height from top
+        // Heading-up car position (design: 24 px left of centre, y 400/574).
+        float heading_up_anchor = 0.697f;   // fraction of map height from top
+        int heading_up_anchor_dx = -24;     // px from the map-area centre
     };
 
     CameraController() = default;
