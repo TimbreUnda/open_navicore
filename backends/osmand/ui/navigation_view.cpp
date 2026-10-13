@@ -705,22 +705,34 @@ void NavigationView::build_search()
 }
 
 namespace {
-// Design keyboard rows (full-width layout): label, flex weight.
+// Design keyboard rows (full-width layout): label, flex weight. The
+// language key (УКР/ENG) is ours; the mockup shows the Latin layout only.
 struct Key { const char* label; float weight; };
-constexpr Key letters[4][10] = {
-    {{"q", 1}, {"w", 1}, {"e", 1}, {"r", 1}, {"t", 1}, {"y", 1}, {"u", 1}, {"i", 1}, {"o", 1}, {"p", 1}},
-    {{"a", 1}, {"s", 1}, {"d", 1}, {"f", 1}, {"g", 1}, {"h", 1}, {"j", 1}, {"k", 1}, {"l", 1}, {nullptr, 0}},
-    {{"⇧", 1.5f}, {"z", 1}, {"x", 1}, {"c", 1}, {"v", 1}, {"b", 1}, {"n", 1}, {"m", 1}, {"⌫", 1.5f}, {nullptr, 0}},
-    {{"123", 1.5f}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}}};
-constexpr Key upper[3][10] = {
-    {{"Q", 1}, {"W", 1}, {"E", 1}, {"R", 1}, {"T", 1}, {"Y", 1}, {"U", 1}, {"I", 1}, {"O", 1}, {"P", 1}},
-    {{"A", 1}, {"S", 1}, {"D", 1}, {"F", 1}, {"G", 1}, {"H", 1}, {"J", 1}, {"K", 1}, {"L", 1}, {nullptr, 0}},
-    {{"⇧", 1.5f}, {"Z", 1}, {"X", 1}, {"C", 1}, {"V", 1}, {"B", 1}, {"N", 1}, {"M", 1}, {"⌫", 1.5f}, {nullptr, 0}}};
-constexpr Key numbers[4][10] = {
-    {{"1", 1}, {"2", 1}, {"3", 1}, {"4", 1}, {"5", 1}, {"6", 1}, {"7", 1}, {"8", 1}, {"9", 1}, {"0", 1}},
-    {{"-", 1}, {"/", 1}, {":", 1}, {";", 1}, {"(", 1}, {")", 1}, {"&", 1}, {"@", 1}, {"\"", 1}, {nullptr, 0}},
-    {{"#", 1}, {"+", 1}, {"=", 1}, {"_", 1}, {"'", 1}, {"?", 1}, {"!", 1}, {"№", 1}, {"⌫", 1.5f}, {nullptr, 0}},
-    {{"ABC", 1.5f}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}}};
+constexpr Key latin[4][12] = {
+    {{"q", 1}, {"w", 1}, {"e", 1}, {"r", 1}, {"t", 1}, {"y", 1}, {"u", 1}, {"i", 1}, {"o", 1}, {"p", 1}, {nullptr, 0}, {nullptr, 0}},
+    {{"a", 1}, {"s", 1}, {"d", 1}, {"f", 1}, {"g", 1}, {"h", 1}, {"j", 1}, {"k", 1}, {"l", 1}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}},
+    {{"⇧", 1.5f}, {"z", 1}, {"x", 1}, {"c", 1}, {"v", 1}, {"b", 1}, {"n", 1}, {"m", 1}, {"⌫", 1.5f}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}},
+    {{"123", 1.5f}, {"УКР", 1}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}}};
+constexpr Key latin_upper[4][12] = {
+    {{"Q", 1}, {"W", 1}, {"E", 1}, {"R", 1}, {"T", 1}, {"Y", 1}, {"U", 1}, {"I", 1}, {"O", 1}, {"P", 1}, {nullptr, 0}, {nullptr, 0}},
+    {{"A", 1}, {"S", 1}, {"D", 1}, {"F", 1}, {"G", 1}, {"H", 1}, {"J", 1}, {"K", 1}, {"L", 1}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}},
+    {{"⇧", 1.5f}, {"Z", 1}, {"X", 1}, {"C", 1}, {"V", 1}, {"B", 1}, {"N", 1}, {"M", 1}, {"⌫", 1.5f}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}},
+    {{"123", 1.5f}, {"УКР", 1}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}}};
+constexpr Key ukrainian[4][12] = {
+    {{"й", 1}, {"ц", 1}, {"у", 1}, {"к", 1}, {"е", 1}, {"н", 1}, {"г", 1}, {"ш", 1}, {"щ", 1}, {"з", 1}, {"х", 1}, {"ї", 1}},
+    {{"ф", 1}, {"і", 1}, {"в", 1}, {"а", 1}, {"п", 1}, {"р", 1}, {"о", 1}, {"л", 1}, {"д", 1}, {"ж", 1}, {"є", 1}, {nullptr, 0}},
+    {{"⇧", 1.5f}, {"я", 1}, {"ч", 1}, {"с", 1}, {"м", 1}, {"и", 1}, {"т", 1}, {"ь", 1}, {"б", 1}, {"ю", 1}, {"⌫", 1.5f}, {nullptr, 0}},
+    {{"123", 1.5f}, {"ENG", 1}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}}};
+constexpr Key ukrainian_upper[4][12] = {
+    {{"Й", 1}, {"Ц", 1}, {"У", 1}, {"К", 1}, {"Е", 1}, {"Н", 1}, {"Г", 1}, {"Ш", 1}, {"Щ", 1}, {"З", 1}, {"Х", 1}, {"Ї", 1}},
+    {{"Ф", 1}, {"І", 1}, {"В", 1}, {"А", 1}, {"П", 1}, {"Р", 1}, {"О", 1}, {"Л", 1}, {"Д", 1}, {"Ж", 1}, {"Є", 1}, {nullptr, 0}},
+    {{"⇧", 1.5f}, {"Я", 1}, {"Ч", 1}, {"С", 1}, {"М", 1}, {"И", 1}, {"Т", 1}, {"Ь", 1}, {"Б", 1}, {"Ю", 1}, {"⌫", 1.5f}, {nullptr, 0}},
+    {{"123", 1.5f}, {"ENG", 1}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}}};
+constexpr Key numbers[4][12] = {
+    {{"1", 1}, {"2", 1}, {"3", 1}, {"4", 1}, {"5", 1}, {"6", 1}, {"7", 1}, {"8", 1}, {"9", 1}, {"0", 1}, {nullptr, 0}, {nullptr, 0}},
+    {{"-", 1}, {"/", 1}, {":", 1}, {";", 1}, {"(", 1}, {")", 1}, {"&", 1}, {"@", 1}, {"\"", 1}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}},
+    {{"#", 1}, {"+", 1}, {"=", 1}, {"_", 1}, {"'", 1}, {"?", 1}, {"!", 1}, {"№", 1}, {"⌫", 1.5f}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}},
+    {{"ABC", 1.5f}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}, {nullptr, 0}}};
 } // namespace
 
 void NavigationView::build_keyboard()
@@ -734,10 +746,11 @@ void NavigationView::build_keyboard()
     const int inner = width - 16;
     for (int row = 0; row < 4; ++row) {
         const Key* keys = keyboard_numeric_ ? numbers[row]
-            : (keyboard_shift_ && row < 3 ? upper[row] : letters[row]);
+            : keyboard_ukrainian_ ? (keyboard_shift_ ? ukrainian_upper[row] : ukrainian[row])
+            : (keyboard_shift_ ? latin_upper[row] : latin[row]);
         int count = 0;
         float weights = 0.0f;
-        while (count < 10 && keys[count].label) weights += keys[count++].weight;
+        while (count < 12 && keys[count].label) weights += keys[count++].weight;
         // CSS flex with basis 0: only the space beyond each button's 2x6 px
         // padding is shared by weight.
         constexpr float padding = 12.0f;
@@ -778,6 +791,12 @@ void NavigationView::press_key(const char* key)
     std::string query = model_.query();
     if (std::strcmp(key, "⇧") == 0) {
         keyboard_shift_ = !keyboard_shift_;
+        build_keyboard();
+        return;
+    }
+    if (std::strcmp(key, "УКР") == 0 || std::strcmp(key, "ENG") == 0) {
+        keyboard_ukrainian_ = !keyboard_ukrainian_;
+        keyboard_shift_ = false;
         build_keyboard();
         return;
     }

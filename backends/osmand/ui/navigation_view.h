@@ -147,6 +147,7 @@ private:
     lv_obj_t* keyboard_ = nullptr;
     bool keyboard_shift_ = false;
     bool keyboard_numeric_ = false;
+    bool keyboard_ukrainian_ = false;
     lv_obj_t* arrival_countdown_ = nullptr;
     uint32_t arrival_started_ = 0;
     int arrival_seconds_shown_ = -1;

@@ -303,6 +303,39 @@ void test_place_card_and_back()
     assert(model.screen() == Screen::Search);
     assert(model.routes().empty() && !model.destination());
 }
+
+// Key centres of the design keyboard (keyboard at x 16, y 268; 8 px
+// padding; rows 70 px apart; flex widths after 12 px button padding).
+int key_x(int count, float weights, const float* before, int index)
+{
+    const float unit = (976.0f - 6.0f * (count - 1) - 12.0f * count) / weights;
+    float x = 8.0f;
+    for (int i = 0; i < index; ++i)
+        x += unit * before[i] + 12.0f + 6.0f;
+    return 16 + static_cast<int>(x + (unit * before[index] + 12.0f) / 2.0f);
+}
+
+void test_keyboard()
+{
+    NavigationModel model;
+    NavigationView view(model, 1024, 574);
+    settle(view, 31);
+    view.open_search();
+    settle(view, 2);
+    const int row0 = 268 + 8 + 32, row3 = 268 + 8 + 3 * 70 + 32;
+    const float latin_top[10] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    const float bottom[6] = {1.5f, 1, 1, 4, 1, 1.5f};
+    const float ukrainian_top[12] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    tap(view, key_x(10, 10.0f, latin_top, 2), row0);          // e
+    assert(model.query() == "e");
+    tap(view, key_x(6, 10.0f, bottom, 1), row3);              // УКР
+    tap(view, key_x(12, 12.0f, ukrainian_top, 3), row0);      // к
+    assert(model.query() == "e\u043a");
+    // Backspace removes the whole two-byte letter.
+    const float ukrainian_third[11] = {1.5f, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.5f};
+    tap(view, key_x(11, 12.0f, ukrainian_third, 10), 268 + 8 + 2 * 70 + 32);
+    assert(model.query() == "e");
+}
 } // namespace
 
 void test_recents_store()
@@ -338,6 +371,7 @@ int main()
     test_recents_store();
     test_car_controls();
     test_place_card_and_back();
+    test_keyboard();
 
     assert(compact_font_text(u8"Січневого Повстання") ==
            "Sichnevoho Povstannya");
