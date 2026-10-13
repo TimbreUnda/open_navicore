@@ -260,102 +260,43 @@ For a bounded performance run, set
 `OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS=1` before provider start or create
 `/datastore/navicore-backend/enable-performance-metrics`. The backend emits one
 `perf` aggregate per second with presented FPS, pending/fault counts,
-p50/p95/p99 frame time, stage p95 values, and UI upload bytes. This counter path
-does not enable OsmAnd's verbose per-tile logging. For a short diagnostic run,
-that separate instrumentation can be enabled with
-`OPEN_NAVICORE_OSMAND_DETAILED_TILE_METRICS=1` or the marker
-`/datastore/navicore-backend/enable-detailed-tile-metrics`; it perturbs timing
-and must not be used for qualification. The selected renderer direction and
-benchmark gates are in
+p50/p95/p99 frame time, stage p95 values, and UI upload bytes. The renderer
+direction and benchmark gates are in
 [`rendering-architecture.md`](../../docs/performance/rendering-architecture.md).
 
-For the controlled renderer isolation run, additionally set
-`OPEN_NAVICORE_OSMAND_RENDER_SHOOTOUT=1` or create
-`/datastore/navicore-backend/enable-render-shootout`. Once simulated guidance
-starts, the renderer runs 15 seconds of the full map, 15 seconds without the
-independent map-symbol provider, and 15 seconds with only the GPU route layer,
-resetting simulated progress at each boundary. It then restores the full map.
-Trace records identify every phase. This visibly removes layers and is a bench
-diagnostic, not a production fallback.
-
-For a sustained moving-basemap qualification, set
-`OPEN_NAVICORE_OSMAND_SUSTAINED_BASEMAP_BENCHMARK=1` or create
-`/datastore/navicore-backend/enable-sustained-basemap-benchmark`. This disables
-the phase cycling and leaves the real raster basemap, route, marker, camera and
-guidance UI active without OsmAnd's independent symbol provider.
-
-To run that benchmark without touch input, also set
+To drive a bench run without touch input, also set
 `OPEN_NAVICORE_OSMAND_BENCHMARK_AUTOSTART=1` or create
 `/datastore/navicore-backend/enable-benchmark-autostart` (requires route
 simulation). After the first frame the engine searches the seeded `kyiv`
 destinations, selects the first result, waits for the route worker, and starts
-guidance, tracing each `benchmark_autostart=` step.
+guidance, tracing each `benchmark_autostart=` step. The marker
+`simulate-detour` makes the simulation leave the route once by 150 m to
+exercise off-route recalculation.
 
-### Car product defaults and the production profile
+### Renderer and configuration
 
-The car map style (OsmAnd `appMode=car` plus hidden house numbers, transit
-stops, admin boundaries, underground, military areas, street lighting and
-proposed objects) is on by default; `disable-car-style` opts out.
+The map is always the GPU vector map (`vector/`): OsmAnd provides the camera
+(projection and unprojection), routing and search, and renders an empty frame;
+`VectorMap` draws areas, roads, the route, labels and POIs on top. Built tiles
+are cached under `/datastore/navicore-backend/vectorcache/` per map file
+(writes stop below 200 MB free; delete the directory to clear it).
 
-`enable-production-profile` turns on, together, everything built for
-production that still needs one live qualification pass:
+There are no feature switches. The earlier OsmAnd raster renderer and its
+experiments (tile cache and precache, RGB565 tiles, GPU upload worker, baked,
+bounded and retained label paths, the render shootout, the production profile
+and the vector/raster crash guards) were removed; they remain in the git
+history. The only markers in `/datastore/navicore-backend/` are the bench
+tools above: `enable-route-simulation`, `enable-benchmark-autostart`,
+`simulate-detour` and `enable-performance-metrics`.
 
-| Feature | Individual marker / setting |
-|---|---|
-| RGB565 raster tiles | `enable-rgb565-tiles` |
-| OsmAnd GPU upload worker on a shared pbuffer context | `enable-gpu-upload-worker` |
-| Persistent tile pack cache | `enable-tile-cache`, `OPEN_NAVICORE_OSMAND_TILE_CACHE_MB` (default 8192), `OPEN_NAVICORE_OSMAND_TILE_CACHE_DIR`, `OPEN_NAVICORE_OSMAND_TILE_CACHE_BASE` |
-| Labels and icons (retained atlas, private provider graph) | `enable-retained-map-symbols` |
-
-All markers live in `/datastore/navicore-backend/`.
-
-The tile cache writes 16x16-tile pack files under
-`tilecache/<namespace>/z<zoom>/` and reads a shipped read-only base under
-`tilecache-base/<namespace>/`. The namespace hashes the map file (path, size,
-mtime), style, car/night and pixel format, so map or style updates start a
-fresh cache. To pre-render a region into the base, place a manifest at
-`/datastore/navicore-backend/precache.manifest`
-(`<min_zoom> <max_zoom> <min_lat> <min_lon> <max_lat> <max_lon>` per line);
-progress is written to `precache.manifest.progress`. Size a region and write
-its manifest with `tools/tile_cache_estimate.py`.
-
-Map UI: a 64 px control column on the map side (zoom in/out, heading-up vs
-north-up, 2D/3D tilt, day/night), a recenter button that appears after the
-map is dragged, Overview in guidance, one-tap recent destinations persisted
-to `recents.tsv`, and text entry paused while the vehicle moves. The camera
-keeps the vehicle in the lower third in heading-up mode, zooms out with
-speed, extrapolates between 1 Hz GPS fixes and returns to following ten
-seconds after the last touch.
-
-The rejected baked-symbol experiment can be reproduced by setting
-`OPEN_NAVICORE_OSMAND_BAKED_MAP_SYMBOLS=1` or creating
-`/datastore/navicore-backend/enable-baked-map-symbols`. A bounded set of
-priority-sorted OsmAnd glyph/icon images is then composited into each basemap
-tile once. The renderer retains the resulting tile as one texture, so moving
-frames do not perform dynamic symbol placement or upload one resource per
-label. Live movement reached only 18.67 weighted FPS after its first route
-window, so this is diagnostic code rather than a candidate production path.
-
-The retained-GPU symbol experiment is enabled with
-`OPEN_NAVICORE_OSMAND_BOUNDED_MAP_SYMBOLS=1` or
-`/datastore/navicore-backend/enable-bounded-map-symbols`. It publishes at most
-12 priority-sorted symbol groups per tile through OsmAnd's normal retained
-GLES2 resource path. This is retained as diagnostic code, not a production
-candidate. On the live sustained route, the post-warmup sample delivered 17.99
-weighted FPS and every rolling five-second window was below 30 FPS
-(13.91--19.38 FPS), compared with 32.06 FPS for the symbol-free control. The
-provider filters groups only after OsmAnd has performed its upstream symbol
-rasterization, and the live output also exposed malformed oversized imagery.
-
-The custom retained-atlas candidate is enabled with
-`OPEN_NAVICORE_OSMAND_RETAINED_MAP_SYMBOLS=1` or
-`/datastore/navicore-backend/enable-retained-map-symbols`. OsmAnd rasterizes a
-bounded visible-tile symbol set on a background worker only when the visible
-tile set changes. The renderer thread retains one 512x512 atlas, projects up to
-32 map anchors, performs a small priority/collision pass, and emits one GLES2
-batch. Camera movement does not rerasterize or re-upload glyphs. This mode is a
-candidate pending equal-route live qualification; 30 FPS is its acceptance
-floor, not a limiter.
+Map UI: the Uconnect navigation design (`docs/design/navigation-ux-flow.md`):
+floating cards over a full-width map in free drive and guidance, a 64 px
+control column (zoom, heading-up vs north-up, 2D/3D tilt, day/night palette),
+recenter after a drag, Overview in guidance, recent destinations persisted to
+`recents.tsv`, place cards for tapped POIs, and text entry paused while the
+vehicle moves. The camera keeps the vehicle low in the map in heading-up mode,
+zooms out with speed, extrapolates between 1 Hz GPS fixes and returns to
+following ten seconds after the last touch.
 
 ## Stationary bench qualification checklist
 

@@ -5,58 +5,22 @@
 namespace navicore_osmand {
 
 // An owned snapshot taken at start; environment storage is never retained.
+// The production build has no feature switches: the vector map, car camera
+// and design UI are always on. Only the paths and bench tools below remain.
 struct Config {
-    std::string resources;
-    std::string map;
-    std::string fonts;
-    bool simulate_route = false;
-    bool performance_metrics = false;
-    bool detailed_tile_metrics = false;
-    bool render_shootout = false;
-    bool sustained_basemap_benchmark = false;
-    bool baked_map_symbols = false;
-    bool bounded_map_symbols = false;
-    bool retained_map_symbols = false;
-    bool gpu_upload_worker = false;
-    bool benchmark_autostart = false;
-    bool car_style = false;      // from_environment() defaults it on
-    bool rgb565_tiles = false;
-    double simulation_speed_metres_per_second = 20.0;
+    std::string resources = "/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so";
+    std::string map = "/datastore/navicore-backend/maps/kyiv.obf";
+    std::string fonts = "/datastore/navicore-backend/fonts";
     std::string recents = "/datastore/navicore-backend/recents.tsv";
-    bool tile_cache = false;
-    // /datastore is only 1 GB; /navi_map (18 GB, stock NNG maps) has room.
-    std::string tile_cache_runtime = "/navi_map/open-navicore/tilecache";
-    std::string tile_cache_base = "/navi_map/open-navicore/tilecache-base";
-    unsigned long tile_cache_megabytes = 4096;
-    // Presence starts the pre-cache worker into the base store.
-    std::string precache_manifest =
-        "/datastore/navicore-backend/precache.manifest";
-    // Set after the positional fields above; see from_environment().
-    bool production_profile = false;
-    // Set when the previous production-profile run never reached a stable
-    // frame (crash guard); the features stay off for this launch.
-    bool production_profile_suppressed = false;
-    std::string production_attempt =
-        "/datastore/navicore-backend/.production-profile-attempt";
-    // GPU vector map instead of OsmAnd's raster tiles and labels (default;
-    // disable-vector-map turns it off).
-    bool vector_map = false;
-    // Bench: start with the tilted camera / night palette (markers
-    // start-tilted, start-night) so they can be tested without a tap.
-    bool start_tilted = false;
-    bool start_night = false;
-    // Bench: the route simulation leaves the route once, 150 m to the side,
-    // to exercise off-route recalculation (marker simulate-detour).
-    bool simulate_detour = false;
-    // Vector map: z14 tiles at full detail for every deeper zoom (marker
-    // vector-overzoom), instead of z15/z16 tiles.
-    bool vector_overzoom = false;
     // Built vector tiles, per map file; empty disables the disk cache.
     std::string vector_cache = "/datastore/navicore-backend/vectorcache";
-    // Crash guard, as for the production profile.
-    bool vector_map_suppressed = false;
-    std::string vector_map_attempt =
-        "/datastore/navicore-backend/.vector-map-attempt";
+
+    // Bench tools (markers in /datastore/navicore-backend, see README).
+    bool simulate_route = false;       // enable-route-simulation
+    bool benchmark_autostart = false;  // enable-benchmark-autostart
+    bool simulate_detour = false;      // simulate-detour
+    bool performance_metrics = false;  // enable-performance-metrics
+    double simulation_speed_metres_per_second = 20.0;
 
     static Config from_environment();
 };

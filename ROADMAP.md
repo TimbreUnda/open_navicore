@@ -4,19 +4,18 @@ This document tracks demonstrated project readiness, not intent. A checked box
 means that the listed acceptance evidence exists. It does not imply that a
 larger milestone containing it is complete.
 
-## Paused bench state (2026-10-11)
+## Current state (2026-10-13)
 
-- Branch: `perf/gpu-render-architecture`
-- Installed backend source revision: `bdf98b1`
-- Active mode: symbol-free OsmAnd raster renderer; all symbol experiment markers
-  are disabled.
-- Live state at pause: one supervised `nv_navigation` process, Kyiv frame
-  presented, zero reported faults, and no process restart after cold startup.
-- Stable moving-route reference: 32.06 weighted FPS and 30.77 minimum across
-  174 rolling five-second windows over 188 seconds.
-- Retained-atlas status: not enabled. Correcting construction order allowed the
-  worker to start after the first presented frame, but concurrent symbol
-  extraction still restarted the process before any atlas was published.
+- Branch: `feat/production-offline`.
+- Renderer: the GPU vector map is the only map renderer. OsmAnd provides the
+  camera, routing and search; the OsmAnd raster path, its experiments and the
+  vector/raster crash guards were removed (see `backends/osmand/README.md`).
+- UI: Uconnect navigation design (free drive, search, route preview,
+  guidance, place and arrival cards, lanes, speed limit, off-route
+  recalculation).
+- Install: `deploy/navigation-ifs/` builds `navigation.ifs`, which makes Open
+  NaviCore the default navigation provider at boot with no fallback to the
+  native NaviCore.
 
 ## Performance policy
 
@@ -110,20 +109,11 @@ larger milestone containing it is complete.
   when the UI is transparent (implemented; needs live frame-time evidence).
 - [ ] Replace per-frame `glGet*` save/restore at the OsmAnd/overlay boundary
   with an explicit state contract once OsmAnd's VAO emulation is accounted for.
-- [ ] Decouple tile-texture arrival from frame submission. OsmAnd uploads at
-  most one resource per render-thread frame; `enable-gpu-upload-worker` runs
-  its GPU worker on a shared pbuffer context. With RGB565 tiles it cut frames
-  over 50 ms from 78 to 62 per ~200 s run without faults; qualify release and
-  context-loss lifecycle before making it the default.
-- [ ] Visually qualify `enable-rgb565-tiles` and `enable-car-style` and make
-  them defaults if acceptable.
-- [ ] Release OsmAnd raster-tile CPU bitmaps after GPU upload (Core patch).
-- [ ] Measure whether a GPU-native vector path beats retained raster tiles on the
-  PowerVR driver with equal content; select from evidence rather than design
-  preference. Run this after the presentation ceiling is raised: below it, both
-  paths are capped at the same composition-bound rate.
-- [ ] Keep a pre-rendered raster control in that comparison to separate CPU
-  rasterization cost from presentation cost.
+- [x] Select the map renderer from evidence: the GPU vector map replaced the
+  OsmAnd raster path (tile fetch 1.5-2.3 s -> ~0.33 s per tile, 1% worst
+  frames roughly halved on the bench drive). The raster-path items (GPU upload
+  worker, RGB565 tiles, tile-bitmap release, raster control) are superseded
+  and their code removed.
 - [ ] Qualify warm and cold tile-boundary movement at the uncapped maximum rate.
 
 ## Milestone 3 — guidance product

@@ -1,18 +1,11 @@
 #include "engine.h"
-#include "baked_symbols_raster_provider.h"
 #include "camera_controller.h"
 #include "crash_reporter.h"
-#include "caching_raster_provider.h"
-#include "precache_worker.h"
-#include "tile_cache.h"
-#include "bounded_symbols_provider.h"
 #include "session.h"
 #include "diagnostics.h"
 #include "frame_metrics.h"
-#include "gpu_upload_context.h"
 #include "guidance_tracker.h"
 #include "navigation_worker.h"
-#include "retained_symbol_layer.h"
 #include "ui/gl_overlay_compositor.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
@@ -26,18 +19,8 @@
 #include <OsmAndCore/Utilities.h>
 #include <OsmAndCore/Map/AtlasMapRendererConfiguration.h>
 #include <OsmAndCore/Map/IMapRenderer.h>
-#include <OsmAndCore/Map/MapObjectsSymbolsProvider.h>
-#include <OsmAndCore/Map/MapPresentationEnvironment.h>
-#include <OsmAndCore/Map/MapPrimitivesProvider.h>
-#include <OsmAndCore/Map/MapPrimitiviser.h>
-#include <OsmAndCore/Map/MapRasterLayerProvider_Software.h>
-#include <OsmAndCore/Map/MapStylesCollection.h>
-#include <OsmAndCore/Map/ObfMapObjectsProvider.h>
-#include <OsmAndCore/Map/VectorLineBuilder.h>
-#include <OsmAndCore/Map/VectorLinesCollection.h>
 
 #include <QByteArray>
-#include <QHash>
 #include <QString>
 
 #include <algorithm>
@@ -73,13 +56,8 @@ private:
     // position stays off the route.
     void check_off_route(const ui::GuidanceState& state, const ui::GeoPoint& position);
     bool update_guidance();
-    void update_render_shootout();
     bool ensure_navigation_worker();
     void advance_benchmark_autostart();
-    void apply_style_settings();
-    QHash<QString, QString> style_settings() const;
-    std::shared_ptr<TileCache> make_tile_cache() const;
-    void start_precache(const Config& config);
     // Drains UI map commands, advances the car camera and applies the pose to
     // the renderer. Returns true while the camera still needs frames.
     bool apply_camera();
@@ -87,100 +65,18 @@ private:
     uint32_t width_ = 0;
     uint32_t height_ = 0;
     std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources_;
-    std::shared_ptr<OsmAnd::MapStylesCollection> styles_;
     std::shared_ptr<OsmAnd::ObfsCollection> obfs_;
-    std::shared_ptr<OsmAnd::MapPresentationEnvironment> presentation_;
-    std::shared_ptr<OsmAnd::MapPrimitiviser> primitiviser_;
-    std::shared_ptr<OsmAnd::ObfMapObjectsProvider> map_objects_;
-    std::shared_ptr<OsmAnd::MapPrimitivesProvider> primitives_;
-    std::shared_ptr<OsmAnd::MapObjectsSymbolsProvider> symbols_;
-    std::shared_ptr<OsmAnd::MapRasterLayerProvider_Software> raster_;
+    // OsmAnd's renderer only provides the camera (projection, unprojection)
+    // and an empty frame; VectorMap draws the map, route and labels.
     std::shared_ptr<OsmAnd::IMapRenderer> renderer_;
-    std::shared_ptr<OsmAnd::VectorLinesCollection> route_lines_;
-    // Outlives OsmAnd's GPU worker thread; destroyed after releaseRendering().
-    std::shared_ptr<GpuUploadContext> upload_context_;
-    std::unique_ptr<RetainedSymbolLayer> retained_symbols_;
-    // Vector mode: OsmAnd keeps camera, routing and guidance; the map,
-    // route and labels are drawn by VectorMap after OsmAnd's (empty) frame.
-    bool vector_mode_ = false;
     std::unique_ptr<navicore_vector::VectorMap> vector_map_;
     navicore_vector::MapView vector_view_;
-    std::string vector_attempt_;
     std::string vector_cache_dir_;
     std::string vector_cache_identity_;
-    bool vector_overzoom_ = false;
     void sync_vector_guidance(const ui::GuidanceState* state);
     std::chrono::steady_clock::time_point vector_last_frame_{};
     std::chrono::steady_clock::time_point vector_reported_at_{};
     bool render_vector_map(const MockNavBackendRenderTargetV1& target);
-    // Tile backlog as the screen sees it: OsmAnd's outstanding resource
-    // requests sampled each frame. "settle" is how long the map stayed
-    // incomplete after new tiles were first needed.
-    struct TileBacklog {
-        std::chrono::steady_clock::time_point window_start{};
-        std::chrono::steady_clock::time_point busy_since{};
-        bool busy = false;
-        unsigned int max_requests = 0;
-        std::int64_t busy_us = 0;
-        unsigned int settles = 0;
-        std::int64_t settle_max_ms = 0;
-        std::int64_t settle_sum_ms = 0;
-    } tile_backlog_;
-    void sample_tile_backlog()
-    {
-        const auto now = std::chrono::steady_clock::now();
-        auto& b = tile_backlog_;
-        if (b.window_start == std::chrono::steady_clock::time_point{})
-            b.window_start = now;
-        const unsigned int requests =
-            renderer_->getActiveResourceRequestsCount();
-        b.max_requests = std::max(b.max_requests, requests);
-        if (requests > 0 && !b.busy) {
-            b.busy = true;
-            b.busy_since = now;
-        } else if (requests == 0 && b.busy) {
-            b.busy = false;
-            const auto ms = std::chrono::duration_cast<
-                std::chrono::milliseconds>(now - b.busy_since).count();
-            b.busy_us += ms * 1000;
-            ++b.settles;
-            b.settle_sum_ms += ms;
-            b.settle_max_ms = std::max<std::int64_t>(b.settle_max_ms, ms);
-        }
-        if (now - b.window_start < std::chrono::seconds(5))
-            return;
-        std::int64_t busy_us = b.busy_us;
-        if (b.busy)
-            busy_us += std::chrono::duration_cast<std::chrono::microseconds>(
-                now - std::max(b.busy_since, b.window_start)).count();
-        const auto window_ms = std::chrono::duration_cast<
-            std::chrono::milliseconds>(now - b.window_start).count();
-        char message[200];
-        std::snprintf(message, sizeof(message),
-                      "tile_backlog window_ms=%lld busy_pct=%lld "
-                      "max_requests=%u settles=%u settle_avg_ms=%lld "
-                      "settle_max_ms=%lld still_busy_ms=%lld",
-                      static_cast<long long>(window_ms),
-                      static_cast<long long>(
-                          window_ms ? busy_us / 10 / window_ms : 0),
-                      b.max_requests, b.settles,
-                      static_cast<long long>(
-                          b.settles ? b.settle_sum_ms / b.settles : 0),
-                      static_cast<long long>(b.settle_max_ms),
-                      static_cast<long long>(
-                          b.busy ? std::chrono::duration_cast<
-                                       std::chrono::milliseconds>(
-                                       now - b.busy_since).count()
-                                 : 0));
-        trace(message);
-        const bool busy = b.busy;
-        const auto since = b.busy_since;
-        b = TileBacklog{};
-        b.window_start = now;
-        b.busy = busy;
-        b.busy_since = since;
-    }
-    bool retained_symbols_creation_attempted_ = false;
     std::unique_ptr<ui::NavigationModel> navigation_;
     std::unique_ptr<ui::NavigationView> view_;
     std::unique_ptr<NavigationWorker> navigation_worker_;
@@ -213,19 +109,8 @@ private:
         std::chrono::steady_clock::now();
     CameraController::Pose applied_pose_{};
     bool pose_applied_ = false;
-    bool car_style_ = false;
     bool night_ = false;
     bool overview_pending_ = false;
-    std::string production_attempt_;
-    std::chrono::steady_clock::time_point production_started_at_{};
-    std::shared_ptr<CachingRasterProvider> caching_raster_;
-    std::shared_ptr<const OsmAnd::ResolvedMapStyle> style_;
-    std::unique_ptr<PrecacheWorker> precache_;
-    std::string cache_identity_;
-    std::string tile_cache_runtime_;
-    std::string tile_cache_base_;
-    std::uint64_t tile_cache_budget_ = 0;
-    bool rgb565_tiles_ = false;
     double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
     MockNavBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
@@ -248,18 +133,9 @@ private:
     double simulation_geometry_length_metres_ = 0.0;
     double simulation_speed_metres_per_second_ = 20.0;
     std::chrono::steady_clock::time_point simulation_updated_at_{};
-    bool render_shootout_enabled_ = false;
-    bool sustained_basemap_benchmark_ = false;
-    bool baked_map_symbols_ = false;
-    bool bounded_map_symbols_ = false;
-    bool retained_map_symbols_ = false;
-    bool render_shootout_active_ = false;
     // Bench-only: drive search -> route -> guidance without touch input.
     enum class Autostart { Off, Search, Select, Start, Done };
     Autostart autostart_ = Autostart::Off;
-    bool render_shootout_complete_ = false;
-    unsigned int render_shootout_phase_ = 0u;
-    std::chrono::steady_clock::time_point render_shootout_started_at_{};
     ui::GlOverlayCompositor compositor_;
     ui::OverlayOccupancy overlay_occupancy_;
     std::vector<ui::UploadRect> upload_rects_;
@@ -348,37 +224,11 @@ bool OsmAndEngine::initialize(const Config& config,
     simulate_detour_ = config.simulate_detour;
     if (simulate_detour_)
         trace("simulation=detour_enabled");
-    if (config.start_tilted) {
-        camera_.set_tilt(true);
-        trace("camera=start_tilted");
-    }
-    if (config.start_night) {
-        night_ = true;
-        trace("style=start_night");
-    }
     autostart_ = config.benchmark_autostart && config.simulate_route
                      ? Autostart::Search : Autostart::Off;
     if (autostart_ != Autostart::Off)
         trace("benchmark_autostart=enabled");
-    sustained_basemap_benchmark_ = config.sustained_basemap_benchmark;
-    baked_map_symbols_ = config.baked_map_symbols;
-    bounded_map_symbols_ = config.bounded_map_symbols;
-    retained_map_symbols_ = config.retained_map_symbols;
-    vector_mode_ = config.vector_map;
-    if (vector_mode_) {
-        // The vector map draws its own labels; nothing rasterizes tiles.
-        retained_map_symbols_ = false;
-        baked_map_symbols_ = false;
-        bounded_map_symbols_ = false;
-        trace("vector_map=enabled");
-    }
-    if (config.vector_map_suppressed)
-        trace("vector_map=suppressed_after_unstable_run");
-    vector_attempt_ = vector_mode_ ? config.vector_map_attempt : std::string();
-    vector_overzoom_ = config.vector_overzoom;
-    if (vector_mode_ && vector_overzoom_)
-        trace("vector_map=overzoom");
-    if (vector_mode_ && !config.vector_cache.empty()) {
+    if (!config.vector_cache.empty()) {
         struct stat map_info {};
         const bool map_known = ::stat(config.map.c_str(), &map_info) == 0;
         // Anything that changes built geometry or labels must change this.
@@ -387,36 +237,13 @@ bool OsmAndEngine::initialize(const Config& config,
             std::to_string(map_known ? map_info.st_size : 0) + "|" +
             std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-2";
     }
-    // The shootout swaps OsmAnd layers; meaningless with the vector map.
-    render_shootout_enabled_ = config.render_shootout &&
-                               !sustained_basemap_benchmark_ && !vector_mode_;
     frame_metrics_ = FrameMetrics(config.performance_metrics);
-    OsmAnd::enablePerformanceMetrics(config.detailed_tile_metrics);
     if (config.performance_metrics)
         trace("performance_metrics=enabled");
-    if (config.detailed_tile_metrics)
-        trace("detailed_tile_metrics=enabled");
     simulation_speed_metres_per_second_ =
         config.simulation_speed_metres_per_second;
     if (simulation_enabled_)
         trace("simulation=enabled");
-    if (config.production_profile)
-        trace("production_profile=enabled");
-    if (config.production_profile_suppressed)
-        trace("production_profile=suppressed_after_unstable_run");
-    production_attempt_ = config.production_profile
-        ? config.production_attempt : std::string();
-    production_started_at_ = std::chrono::steady_clock::now();
-    if (render_shootout_enabled_)
-        trace("render_shootout=enabled");
-    if (sustained_basemap_benchmark_)
-        trace("sustained_basemap_benchmark=enabled");
-    if (baked_map_symbols_)
-        trace("baked_map_symbols=enabled");
-    if (bounded_map_symbols_)
-        trace("bounded_map_symbols=enabled groups_per_tile=12");
-    if (retained_map_symbols_)
-        trace("retained_map_symbols=enabled atlas=512 symbols=32");
     resources_ = OsmAnd::CoreResourcesEmbeddedBundle::loadFromLibrary(
         QString::fromLocal8Bit(config.resources.c_str()));
     if (!resources_)
@@ -452,103 +279,19 @@ bool OsmAndEngine::initialize(const Config& config,
     }
 
     bool resource_ok = false;
-    const QByteArray default_style = resources_->getResource(
-        QStringLiteral("map/styles/default.render.xml"), &resource_ok);
-    styles_ = std::make_shared<OsmAnd::MapStylesCollection>();
-    if (!resource_ok || default_style.isEmpty() ||
-        !styles_->addStyleFromByteArray(default_style,
-                                       QStringLiteral("default.render.xml")))
-        return failure("error=default_style");
-    const auto style = styles_->getResolvedStyleByName(QStringLiteral("default"));
-    if (!style)
-        return failure("error=resolve_style");
-    trace("init=style");
-    style_ = style;
-
     obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
     obfs_->addFile(QString::fromLocal8Bit(config.map.c_str()));
     if (obfs_->getObfFiles().isEmpty())
         return failure("error=map");
     trace("init=map");
 
-    presentation_ = std::make_shared<OsmAnd::MapPresentationEnvironment>(
-        style, 1.0f, 1.0f, 1.0f);
-    presentation_->setLocaleLanguageId(QStringLiteral("uk"));
-    car_style_ = config.car_style;
-    apply_style_settings();
-    if (car_style_)
-        trace("car_style=enabled");
-    primitiviser_ = std::make_shared<OsmAnd::MapPrimitiviser>(presentation_);
-    map_objects_ = std::make_shared<OsmAnd::ObfMapObjectsProvider>(obfs_);
-    primitives_ = std::make_shared<OsmAnd::MapPrimitivesProvider>(
-        map_objects_, primitiviser_, 256u);
-    if (bounded_map_symbols_)
-        symbols_ = std::make_shared<BoundedSymbolsProvider>(primitives_, 12u);
-    else
-        symbols_ = std::make_shared<OsmAnd::MapObjectsSymbolsProvider>(
-            primitives_, 256u);
-
     renderer_ = OsmAnd::createMapRenderer(
         OsmAnd::MapRendererClass::AtlasMapRenderer_OpenGLES2plus);
     if (!renderer_)
         return failure("error=create_renderer");
-    if (baked_map_symbols_) {
-        raster_ = std::make_shared<BakedSymbolsRasterProvider>(
-            primitives_, symbols_, [this]() {
-                return renderer_->getMapState();
-            });
-    } else if (config.tile_cache) {
-        rgb565_tiles_ = config.rgb565_tiles;
-        tile_cache_runtime_ = config.tile_cache_runtime;
-        tile_cache_base_ = config.tile_cache_base;
-        tile_cache_budget_ =
-            static_cast<std::uint64_t>(config.tile_cache_megabytes) << 20;
-        struct stat map_info {};
-        const bool map_known = ::stat(config.map.c_str(), &map_info) == 0;
-        // Anything that changes rasterized pixels must change this string.
-        cache_identity_ = config.map + "|" +
-            std::to_string(map_known ? map_info.st_size : 0) + "|" +
-            std::to_string(map_known ? map_info.st_mtime : 0) +
-            "|default|uk|256|1.0|cache-v1";
-        caching_raster_ = std::make_shared<CachingRasterProvider>(primitives_);
-        caching_raster_->set_cache(make_tile_cache());
-        raster_ = caching_raster_;
-        trace("tile_cache=enabled");
-    } else {
-        raster_ = std::make_shared<OsmAnd::MapRasterLayerProvider_Software>(
-            primitives_);
-    }
 
     OsmAnd::MapRendererSetupOptions setup;
     setup.gpuWorkerThreadEnabled = false;
-    // Without a worker OsmAnd uploads at most one resource per frame on the
-    // render thread, which delays cold tiles. The worker needs its own context
-    // sharing objects with the provider's; fall back if one cannot be bound.
-    if (config.gpu_upload_worker) {
-        auto upload = std::make_shared<GpuUploadContext>();
-        if (upload->create(
-                reinterpret_cast<EGLDisplay>(target.native_egl_display),
-                reinterpret_cast<EGLContext>(target.native_egl_context))) {
-            upload_context_ = upload;
-            setup.gpuWorkerThreadEnabled = true;
-            setup.gpuWorkerThreadPrologue =
-                [upload](const OsmAnd::IMapRenderer*) noexcept {
-                    if (!upload->make_current())
-                        trace("error=gpu_upload_context_bind");
-                };
-            setup.gpuWorkerThreadEpilogue =
-                [upload](const OsmAnd::IMapRenderer*) noexcept {
-                    upload->release_current();
-                };
-            trace("gpu_upload_worker=enabled");
-        } else {
-            char message[64] = {};
-            (void)std::snprintf(message, sizeof(message),
-                                "gpu_upload_worker=fallback egl_error=0x%04x",
-                                static_cast<unsigned int>(upload->error()));
-            trace(message);
-        }
-    }
     setup.frameUpdateRequestCallback = [wakeup](const OsmAnd::IMapRenderer*) noexcept {
         (void)wakeup->request();
     };
@@ -560,10 +303,6 @@ bool OsmAndEngine::initialize(const Config& config,
         std::static_pointer_cast<OsmAnd::AtlasMapRendererConfiguration>(
             renderer_->getConfiguration());
     configuration->referenceTileSizeOnScreenInPixels = 256u;
-    // RGB565 halves tile upload size and texture bandwidth on the shared bus.
-    configuration->limitTextureColorDepthBy16bits = config.rgb565_tiles;
-    if (config.rgb565_tiles)
-        trace("rgb565_tiles=enabled");
     // Keep the proven setup order: providers and camera precede GL init.
     renderer_->setConfiguration(configuration);
     resize(target);
@@ -572,15 +311,6 @@ bool OsmAndEngine::initialize(const Config& config,
     renderer_->setZoom(13.5f);
     renderer_->setAzimuth(0.0f);
     renderer_->setElevationAngle(90.0f);
-    route_lines_ = std::make_shared<OsmAnd::VectorLinesCollection>();
-    if (!vector_mode_) {
-        if ((!sustained_basemap_benchmark_ || bounded_map_symbols_) &&
-            !retained_map_symbols_ &&
-            !baked_map_symbols_)
-            renderer_->addSymbolsProvider(symbols_);
-        renderer_->addSymbolsProvider(route_lines_);
-        renderer_->setMapLayerProvider(0, raster_);
-    }
 
     // GPU API/resources/stages may initialize before _isRenderingInitialized
     // becomes true. releaseRendering refuses to clean that partial state.
@@ -591,28 +321,21 @@ bool OsmAndEngine::initialize(const Config& config,
     // below so an LVGL construction exception can still release OsmAnd.
     phase_ = Phase::Ready;
     trace("init=rendering");
-    if (vector_mode_) {
-        try {
-            vector_map_.reset(new navicore_vector::VectorMap(
-                obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); }));
-            if (!vector_map_->init_gl())
-                throw std::runtime_error("vector_map gl");
-            if (!vector_cache_dir_.empty())
-                vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
-                                            200ull << 20);
-            vector_map_->set_night(night_);
-            vector_map_->set_overzoom(vector_overzoom_);
-            trace("init=vector_map");
-        } catch (...) {
-            // Fall back to OsmAnd's own map for this run.
-            if (vector_map_)
-                vector_map_->release_gl(false);
-            vector_map_.reset();
-            vector_mode_ = false;
-            renderer_->addSymbolsProvider(route_lines_);
-            renderer_->setMapLayerProvider(0, raster_);
-            trace("error=vector_map_init_fallback_raster");
-        }
+    try {
+        vector_map_.reset(new navicore_vector::VectorMap(
+            obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); }));
+        if (!vector_map_->init_gl())
+            throw std::runtime_error("vector_map gl");
+        if (!vector_cache_dir_.empty())
+            vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
+                                        200ull << 20);
+        vector_map_->set_night(night_);
+        trace("init=vector_map");
+    } catch (...) {
+        if (vector_map_)
+            vector_map_->release_gl(false);
+        vector_map_.reset();
+        return failure("error=vector_map_init");
     }
     navigation_ = std::unique_ptr<ui::NavigationModel>(new ui::NavigationModel());
     recents_store_.reset(new ui::RecentsStore(config.recents));
@@ -627,8 +350,6 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=routing_xml");
     trace("init=routing_resource");
     navigation_wakeup_ = std::move(wakeup);
-    if (!vector_mode_)
-        start_precache(config);
     navigation_map_ = config.map;
     navigation_routing_xml_.assign(
         routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
@@ -648,17 +369,17 @@ void OsmAndEngine::resize(const MockNavBackendRenderTargetV1& target)
 
 void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
 {
-    route_lines_->removeAllLines();
-    QVector<OsmAnd::PointI> points;
-    points.reserve(static_cast<int>(route.geometry.size()));
+    std::vector<std::pair<std::int32_t, std::int32_t>> route31;
+    route31.reserve(route.geometry.size());
     double min_latitude = 90.0;
     double max_latitude = -90.0;
     double min_longitude = 180.0;
     double max_longitude = -180.0;
     simulation_geometry_length_metres_ = 0.0;
     for (const auto& point : route.geometry) {
-        points.push_back(OsmAnd::Utilities::convertLatLonTo31(
-            OsmAnd::LatLon(point.latitude, point.longitude)));
+        const auto point31 = OsmAnd::Utilities::convertLatLonTo31(
+            OsmAnd::LatLon(point.latitude, point.longitude));
+        route31.emplace_back(point31.x, point31.y);
         min_latitude = std::min(min_latitude, point.latitude);
         max_latitude = std::max(max_latitude, point.latitude);
         min_longitude = std::min(min_longitude, point.longitude);
@@ -668,23 +389,8 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
         simulation_geometry_length_metres_ += geometry_distance(
             route.geometry[index - 1], route.geometry[index]);
     }
-    if (vector_map_) {
-        std::vector<std::pair<std::int32_t, std::int32_t>> route31;
-        route31.reserve(static_cast<std::size_t>(points.size()));
-        for (const auto& point : points)
-            route31.emplace_back(point.x, point.y);
+    if (vector_map_)
         vector_map_->set_route(route31);
-    }
-    if (points.size() < 2) return;
-    OsmAnd::VectorLineBuilder()
-        .setLineId(1)
-        .setBaseOrder(-100000)
-        .setLineWidth(10.0)
-        .setOutlineWidth(3.0)
-        .setOutlineColor(OsmAnd::FColorARGB(1.0f, 0.04f, 0.10f, 0.18f))
-        .setFillColor(OsmAnd::FColorARGB(1.0f, 0.10f, 0.55f, 1.0f))
-        .setPoints(points)
-        .buildAndAddToCollection(route_lines_);
     overview_box_[0] = min_latitude;
     overview_box_[1] = min_longitude;
     overview_box_[2] = max_latitude;
@@ -696,56 +402,6 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
     simulation_running_ = false;
     simulation_progress_metres_ = 0.0;
     simulation_arrival_reported_ = false;
-    render_shootout_active_ = false;
-    render_shootout_complete_ = false;
-    render_shootout_phase_ = 0u;
-}
-
-void OsmAndEngine::update_render_shootout()
-{
-    if (!render_shootout_enabled_ || render_shootout_complete_ ||
-        !simulation_running_)
-        return;
-    const auto now = std::chrono::steady_clock::now();
-    if (!render_shootout_active_) {
-        render_shootout_active_ = true;
-        render_shootout_started_at_ = now;
-        render_shootout_phase_ = 0u;
-        trace("render_shootout=full_map");
-        return;
-    }
-    constexpr auto phase_duration = std::chrono::seconds(15);
-    const auto desired = static_cast<unsigned int>(
-        (now - render_shootout_started_at_) / phase_duration);
-    if (desired <= render_shootout_phase_)
-        return;
-
-    if (desired == 1u) {
-        if (!renderer_->removeSymbolsProvider(symbols_, true))
-            trace("error=render_shootout_remove_symbols");
-        trace("render_shootout=raster_without_symbols");
-    } else if (desired == 2u) {
-        if (!renderer_->resetMapLayerProvider(0, true))
-            trace("error=render_shootout_remove_raster");
-        trace("render_shootout=route_only_gpu_floor");
-    } else {
-        if (!renderer_->setMapLayerProvider(0, raster_, true))
-            trace("error=render_shootout_restore_raster");
-        if (!renderer_->addSymbolsProvider(symbols_, true))
-            trace("error=render_shootout_restore_symbols");
-        trace("render_shootout=complete_full_map_restored");
-        render_shootout_complete_ = true;
-        render_shootout_active_ = false;
-        render_shootout_phase_ = 3u;
-        return;
-    }
-
-    render_shootout_phase_ = desired;
-    simulation_progress_metres_ = 0.0;
-    simulation_updated_at_ = now;
-    simulation_arrival_reported_ = false;
-    guidance_tracker_.reset();
-    gps_dirty_ = true;
 }
 
 bool OsmAndEngine::update_guidance()
@@ -857,99 +513,6 @@ void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
     navigation_worker_->submit_route(revision, *navigation_->destination(), position);
 }
 
-void OsmAndEngine::apply_style_settings()
-{
-    presentation_->setSettings(style_settings());
-}
-
-QHash<QString, QString> OsmAndEngine::style_settings() const
-{
-    QHash<QString, QString> settings;
-    if (car_style_) {
-        // OsmAnd's own car profile plus switches for detail a driver does not
-        // use; fewer primitives means less rasterization and fewer symbols.
-        settings = {
-            {QStringLiteral("appMode"), QStringLiteral("car")},
-            {QStringLiteral("baseAppMode"), QStringLiteral("car")},
-            {QStringLiteral("hideHouseNumbers"), QStringLiteral("true")},
-            {QStringLiteral("hideUnderground"), QStringLiteral("true")},
-            {QStringLiteral("hideMilitaryAreas"), QStringLiteral("true")},
-            {QStringLiteral("noAdminboundaries"), QStringLiteral("true")},
-            {QStringLiteral("transportStops"), QStringLiteral("false")},
-            {QStringLiteral("streetLighting"), QStringLiteral("false")},
-            {QStringLiteral("natureReserves"), QStringLiteral("false")},
-            {QStringLiteral("showProposed"), QStringLiteral("false")},
-            // POI captions (churches, libraries, shops) are noise while
-            // driving; icons stay so fuel/charging/parking remain visible.
-            {QStringLiteral("hidePOILabels"), QStringLiteral("true")},
-        };
-    }
-    settings.insert(QStringLiteral("nightMode"),
-                    night_ ? QStringLiteral("true") : QStringLiteral("false"));
-    return settings;
-}
-
-std::shared_ptr<TileCache> OsmAndEngine::make_tile_cache() const
-{
-    if (cache_identity_.empty())
-        return nullptr;
-    const auto format = rgb565_tiles_ ? TileFormat::Rgb565
-                                      : TileFormat::Rgba8888;
-    std::string description = cache_identity_;
-    description += car_style_ ? "|car" : "|default";
-    description += night_ ? "|night" : "|day";
-    description += rgb565_tiles_ ? "|565" : "|8888";
-    return std::make_shared<TileCache>(
-        tile_cache_base_, tile_cache_runtime_,
-        TileCache::namespace_hash(description), format, 256u,
-        tile_cache_budget_);
-}
-
-void OsmAndEngine::start_precache(const Config& config)
-{
-    if (cache_identity_.empty())
-        return;
-    std::FILE* file = std::fopen(config.precache_manifest.c_str(), "r");
-    if (!file)
-        return;
-    std::string text;
-    char buffer[4096];
-    std::size_t got = 0;
-    while ((got = std::fread(buffer, 1, sizeof(buffer), file)) > 0)
-        text.append(buffer, got);
-    std::fclose(file);
-    std::size_t errors = 0;
-    auto ranges = parse_precache_manifest(text, &errors);
-    if (errors)
-        trace_result("precache=manifest_errors", errors, ranges.size());
-    if (ranges.empty())
-        return;
-    // The shipped base is written for the default (day) style namespace.
-    std::string description = cache_identity_;
-    description += car_style_ ? "|car|day" : "|default|day";
-    description += rgb565_tiles_ ? "|565" : "|8888";
-    PrecacheWorker::Job job;
-    job.manifest_path = config.precache_manifest;
-    job.ranges = std::move(ranges);
-    job.obfs = obfs_;
-    job.style = style_;
-    job.locale = QStringLiteral("uk");
-    // Called from initialize(), before any night toggle: day settings.
-    job.style_settings = style_settings();
-    job.store.root = tile_cache_base_ + "/" +
-                     TileCache::namespace_hash(description);
-    job.store.writable = true;
-    job.store.format = rgb565_tiles_ ? TileFormat::Rgb565 : TileFormat::Rgba8888;
-    job.store.tile_size = 256u;
-    job.store.compression_level = 9;
-    try {
-        precache_.reset(new PrecacheWorker(std::move(job)));
-        trace("precache=worker_started");
-    } catch (...) {
-        trace("error=precache_thread_start");
-    }
-}
-
 bool OsmAndEngine::apply_camera()
 {
     using Clock = std::chrono::steady_clock;
@@ -995,17 +558,6 @@ bool OsmAndEngine::apply_camera()
             night_ = !night_;
             if (vector_map_)
                 vector_map_->set_night(night_);
-            apply_style_settings();
-            if (caching_raster_)
-                caching_raster_->set_cache(make_tile_cache());
-            if (retained_symbols_) {
-                retained_symbols_->stop();
-                retained_symbols_->release(false);
-                retained_symbols_.reset();
-                retained_symbols_creation_attempted_ = false;
-            }
-            // Every cached tile was rasterized for the old palette.
-            renderer_->reloadEverything();
             trace(night_ ? "style=night" : "style=day");
             break;
         case ui::MapCommand::Overview: {
@@ -1096,8 +648,6 @@ bool OsmAndEngine::apply_camera()
         ? vehicle.valid && vehicle.speed_mps > 1.0
         : vehicle.valid && vehicle.speed_mps > 2.5;
     (void)view_->set_moving(moving);
-    if (precache_)
-        precache_->set_throttled(moving);
 
     return changed || dragging || (vehicle.valid && vehicle.speed_mps > 0.3);
 }
@@ -1287,7 +837,6 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     }
     if (target.width != width_ || target.height != height_)
         resize(target);
-    update_render_shootout();
     if (overlay_enabled_) {
         const auto input_now = std::chrono::steady_clock::now();
         const auto elapsed_ms = input_at_ == std::chrono::steady_clock::time_point{} ? 16 :
@@ -1306,7 +855,6 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     stage_started = Clock::now();
     const bool prepared = renderer_->prepareFrame();
     measurement.prepare_us = elapsed_us(stage_started);
-    sample_tile_backlog();
     if (!prepared)
         return finish(
             {FrameOutcome::Pending, PendingStage::Prepare, !renderer_->isIdle()},
@@ -1324,14 +872,6 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         stage_started = Clock::now();
         vector_wants_frames = render_vector_map(target);
         measurement.map_render_us += elapsed_us(stage_started);
-    }
-    if (retained_symbols_) {
-        retained_symbols_->request(renderer_->getMapState());
-        if (!retained_symbols_->present(*renderer_, target.width, target.height)) {
-            trace("error=retained_symbols");
-            retained_symbols_->release(false);
-            retained_symbols_.reset();
-        }
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
@@ -1422,51 +962,13 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
                                               *navigation_->destination(), origin);
         }
     }
-    // OsmAnd's worker graph is still settling after initializeRendering().
-    // Start our independent symbol worker only after an entire map/UI frame
-    // has rendered successfully. The atlas will first appear on a later frame.
-    if (retained_map_symbols_ && !retained_symbols_ &&
-        !retained_symbols_creation_attempted_) {
-        retained_symbols_creation_attempted_ = true;
-        try {
-            SymbolSource source;
-            source.obfs = obfs_;
-            source.style = style_;
-            source.style_settings = style_settings();
-            source.locale = QStringLiteral("uk");
-            // Warm provider: same primitives cache as the raster tiles.
-            // In retained mode the renderer itself never uses symbols_.
-            source.shared_provider = symbols_;
-            retained_symbols_ = std::make_unique<RetainedSymbolLayer>(
-                std::move(source), navigation_wakeup_);
-            trace("init=retained_symbols_after_first_frame");
-        } catch (...) {
-            retained_map_symbols_ = false;
-            trace("error=retained_symbols_thread_start");
-        }
-    }
     advance_benchmark_autostart();
-    // Crash guard: two minutes of presented frames clears the attempt.
-    if (!production_attempt_.empty() &&
-        std::chrono::steady_clock::now() - production_started_at_ >=
-            std::chrono::minutes(2)) {
-        std::remove(production_attempt_.c_str());
-        production_attempt_.clear();
-        trace("production_profile=stable");
-    }
     // Recents change only on guidance start; save outside the hot path.
     if (recents_store_ &&
         navigation_->recents_revision() != saved_recents_revision_) {
         saved_recents_revision_ = navigation_->recents_revision();
         if (!recents_store_->save(navigation_->recents()))
             trace("error=recents_save");
-    }
-    if (!vector_attempt_.empty() &&
-        std::chrono::steady_clock::now() - production_started_at_ >=
-            std::chrono::minutes(2)) {
-        std::remove(vector_attempt_.c_str());
-        vector_attempt_.clear();
-        trace("vector_map=stable");
     }
     return finish({FrameOutcome::Presented, PendingStage::None,
                    guidance_changed || camera_animating || vector_wants_frames ||
@@ -1665,15 +1167,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         // or fail after tearing down only part of the resource graph.
         phase_ = Phase::Quarantined;
         if (navigation_worker_) navigation_worker_->stop();
-        if (precache_) precache_->stop();
-        precache_.reset();
         navigation_worker_.reset();
-        if (retained_symbols_) {
-            retained_symbols_->stop();
-            retained_symbols_->release(mode == ReleaseMode::ContextLost);
-            retained_symbols_.reset();
-        }
-        retained_symbols_creation_attempted_ = false;
         if (vector_map_) {
             vector_map_->release_gl(mode == ReleaseMode::ContextLost);
             vector_map_.reset();
@@ -1692,11 +1186,6 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         simulation_running_ = false;
         simulation_progress_metres_ = 0.0;
         simulation_geometry_length_metres_ = 0.0;
-        render_shootout_enabled_ = false;
-        sustained_basemap_benchmark_ = false;
-        render_shootout_active_ = false;
-        render_shootout_complete_ = false;
-        render_shootout_phase_ = 0u;
         autostart_ = Autostart::Off;
         simulation_arrival_reported_ = false;
         guidance_tracker_.reset();
@@ -1718,23 +1207,10 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         search_revision_observed_ = false;
         if (!renderer_->releaseRendering(mode == ReleaseMode::ContextLost))
             return ReleaseResult::Quarantined;
-        // releaseRendering() joined the GPU worker, so nothing binds it now.
-        if (upload_context_) upload_context_->destroy();
-        upload_context_.reset();
         phase_ = Phase::CoreReady;
     }
     renderer_.reset();
-    raster_.reset();
-    caching_raster_.reset();
-    style_.reset();
-    symbols_.reset();
-    route_lines_.reset();
-    primitives_.reset();
-    map_objects_.reset();
-    primitiviser_.reset();
-    presentation_.reset();
     obfs_.reset();
-    styles_.reset();
     if (phase_ == Phase::CoreReady) {
         phase_ = Phase::Quarantined;
         OsmAnd::ReleaseCore();
