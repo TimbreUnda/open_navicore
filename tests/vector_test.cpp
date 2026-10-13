@@ -122,6 +122,19 @@ int main()
     check(!treat_as_area(tags({{"barrier", "fence"}}), false, true), "fence stays a line");
     check(!treat_as_area(tags({{"building", "yes"}}), false, false), "open line");
 
+    // POIs: car services shown early, food only close in, churches never.
+    check(classify_poi(tags({{"amenity", "fuel"}}), 14).show, "fuel at z14");
+    check(!classify_poi(tags({{"amenity", "cafe"}}), 16).show, "cafe hidden at z16");
+    check(classify_poi(tags({{"amenity", "cafe"}}), 17).show, "cafe at z17");
+    check(!classify_poi(tags({{"amenity", "place_of_worship"}}), 18).show, "no churches");
+    check(!classify_poi(tags({{"amenity", "library"}}), 18).show, "no libraries");
+    check(classify_poi(tags({{"amenity", "fuel"}}), 15).rank <
+              classify_poi(tags({{"amenity", "restaurant"}}), 17).rank, "fuel outranks food");
+    check(street_label_rank("primary") < street_label_rank("residential"), "street rank");
+    check(street_label_rank("footway") < 0, "no footway names");
+    check(place_label_rank("suburb", 13) >= 0 && place_label_rank("suburb", 17) < 0,
+          "suburb names zoomed out only");
+
     if (failures == 0)
         std::puts("vector-test: ok");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -72,6 +72,26 @@ bool treat_as_area(const Tags& tags, bool is_area_flag, bool closed);
 // for features the vector map does not draw at this zoom.
 FeatureStyle classify(const Tags& tags, bool is_area, int zoom);
 
+// Point of interest, Google style: a coloured disc with a white pictogram
+// and the name in the category colour. Lower rank = more important; car
+// services come first. Churches, libraries, benches etc. are not shown.
+struct PoiStyle {
+    bool show = false;
+    int rank = 0;
+    Rgba colour;
+    const char* icon = "";  // OsmAnd map icon name, e.g. "amenity_fuel"
+    int min_zoom = 15;
+};
+PoiStyle classify_poi(const Tags& tags, int zoom);
+
+// Street-name priority by highway class (lower = more important); -1 for
+// roads whose names are not shown (paths, service roads).
+int street_label_rank(const std::string& highway);
+
+// Place names (suburb, neighbourhood, ...): rank and minimum zoom; rank -1
+// when not shown.
+int place_label_rank(const std::string& place, int zoom);
+
 // Background (land) colour.
 Rgba land_colour();
 

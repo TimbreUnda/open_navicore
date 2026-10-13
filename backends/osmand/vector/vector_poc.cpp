@@ -9,12 +9,19 @@
 // with zoom changes, and a rotating overview. Prints timing every 5 s and a
 // summary; writes screenshots as BMP.
 //
+// Labels: street names laid along roads (fixed pins on the map, rotated to
+// the road, kept upright), Google-style POI discs with names, place names.
+// Text and icons are rasterized once on the tile workers (OsmAnd's text
+// rasterizer and embedded SVG icons), packed into one atlas and drawn in a
+// single textured call.
+//
 // usage: vector-poc [--seconds N] [--zorder Z] [--shots DIR]
 //                   [--resources SO] [--map OBF] [--fonts DIR]
 #include <OsmAndCore/QtExtensions.h>
 
 #include "vector_style.h"
 #include "vector_tessellator.h"
+#include "backends/osmand/label_geometry.h"
 
 #include <OsmAndCore.h>
 #include <OsmAndCore/CoreResourcesEmbeddedBundle.h>
@@ -23,6 +30,13 @@
 #include <OsmAndCore/Data/MapObject.h>
 #include <OsmAndCore/Map/IMapObjectsProvider.h>
 #include <OsmAndCore/Map/ObfMapObjectsProvider.h>
+#include <OsmAndCore/SkiaUtilities.h>
+#include <OsmAndCore/TextRasterizer.h>
+
+#include <OsmAndCore/ignore_warnings_on_external_includes.h>
+#include <SkImage.h>
+#include <SkImageInfo.h>
+#include <OsmAndCore/restore_internal_warnings.h>
 
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
@@ -38,6 +52,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -47,6 +62,8 @@
 #include <vector>
 
 using namespace navicore_vector;
+using navicore_osmand::OrientedBox;
+using navicore_osmand::ScreenPoint;
 using Clock = std::chrono::steady_clock;
 
 namespace {
@@ -73,11 +90,143 @@ struct TileKey {
     bool operator==(const TileKey& o) const { return z == o.z && x == o.x && y == o.y; }
 };
 
+// Premultiplied RGBA bitmap of a label or icon.
+struct LabelImage {
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint8_t> rgba;
+};
+using LabelImagePtr = std::shared_ptr<const LabelImage>;
+
+LabelImagePtr image_from_skia(const sk_sp<SkImage>& image)
+{
+    if (!image || image->width() <= 0 || image->height() <= 0)
+        return nullptr;
+    auto out = std::make_shared<LabelImage>();
+    out->width = image->width();
+    out->height = image->height();
+    out->rgba.resize(static_cast<std::size_t>(out->width) * out->height * 4u);
+    const auto info = SkImageInfo::Make(out->width, out->height,
+                                        SkColorType::kRGBA_8888_SkColorType,
+                                        SkAlphaType::kPremul_SkAlphaType);
+    if (!image->readPixels(nullptr, info, out->rgba.data(),
+                           static_cast<std::size_t>(out->width) * 4u, 0, 0,
+                           SkImage::kDisallow_CachingHint))
+        return nullptr;
+    return out;
+}
+
+// Shared by the tile workers: each distinct text/icon is rasterized once.
+class ImageCache {
+public:
+    LabelImagePtr get(const std::string& key, const std::function<LabelImagePtr()>& make)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto it = images_.find(key);
+            if (it != images_.end())
+                return it->second;
+        }
+        LabelImagePtr image = make();
+        std::lock_guard<std::mutex> lock(mutex_);
+        return images_.emplace(key, image).first->second;
+    }
+
+private:
+    std::mutex mutex_;
+    std::unordered_map<std::string, LabelImagePtr> images_;
+};
+
+LabelImagePtr rasterize_text(const QString& text, float size, bool bold, std::uint32_t argb)
+{
+    OsmAnd::TextRasterizer::Style style;
+    style.setSize(size)
+        .setBold(bold)
+        .setColor(OsmAnd::ColorARGB(argb))
+        .setHaloColor(OsmAnd::ColorARGB(0xFFFFFFFFu))
+        .setHaloRadius(3);
+    return image_from_skia(OsmAnd::TextRasterizer::getDefault()->rasterize(text, style));
+}
+
+// Google-style POI marker: a category-coloured disc with a white rim and
+// OsmAnd's white SVG pictogram in the middle.
+LabelImagePtr make_poi_icon(const OsmAnd::CoreResourcesEmbeddedBundle& resources,
+                            const char* icon, Rgba colour)
+{
+    constexpr int kSize = 30;
+    auto out = std::make_shared<LabelImage>();
+    out->width = out->height = kSize;
+    out->rgba.assign(kSize * kSize * 4, 0);
+    const float centre = (kSize - 1) / 2.0f;
+    for (int y = 0; y < kSize; ++y)
+        for (int x = 0; x < kSize; ++x) {
+            const float d = std::hypot(x - centre, y - centre);
+            const float outer = std::clamp(14.5f - d, 0.0f, 1.0f);   // rim edge
+            const float inner = std::clamp(12.8f - d, 0.0f, 1.0f);   // disc edge
+            const float r = 255.0f + (colour.r - 255.0f) * inner;
+            const float g = 255.0f + (colour.g - 255.0f) * inner;
+            const float b = 255.0f + (colour.b - 255.0f) * inner;
+            auto* px = &out->rgba[(y * kSize + x) * 4];
+            px[0] = static_cast<std::uint8_t>(r * outer);
+            px[1] = static_cast<std::uint8_t>(g * outer);
+            px[2] = static_cast<std::uint8_t>(b * outer);
+            px[3] = static_cast<std::uint8_t>(255.0f * outer);
+        }
+    bool ok = false;
+    const QByteArray svg = resources.getResource(
+        QStringLiteral("map/icons/%1.svg").arg(QString::fromLatin1(icon)), &ok);
+    if (ok && !svg.isEmpty()) {
+        constexpr int kIcon = 16;
+        const auto glyph = image_from_skia(
+            OsmAnd::SkiaUtilities::createImageFromVectorData(svg, kIcon, kIcon));
+        if (glyph) {
+            const int ox = (kSize - glyph->width) / 2, oy = (kSize - glyph->height) / 2;
+            for (int y = 0; y < glyph->height; ++y)
+                for (int x = 0; x < glyph->width; ++x) {
+                    const auto* src = &glyph->rgba[(y * glyph->width + x) * 4];
+                    auto* dst = &out->rgba[((y + oy) * kSize + x + ox) * 4];
+                    const int inv = 255 - src[3];
+                    for (int c = 0; c < 4; ++c)
+                        dst[c] = static_cast<std::uint8_t>(src[c] + dst[c] * inv / 255);
+                }
+        }
+    }
+    return out;
+}
+
+struct StreetLabel {
+    std::string key;     // atlas key (text + style)
+    std::string id;      // one map object: name + first point
+    std::string name;
+    LabelImagePtr image;
+    int rank = 0;
+    Ring path;           // tile-local, not clipped
+};
+struct PoiLabel {
+    std::string text_key, icon_key, name, id;
+    LabelImagePtr text, icon;
+    int rank = 0;
+    int min_zoom = 15;
+    Point pos;
+};
+struct PlaceLabel {
+    std::string key, place;
+    LabelImagePtr image;
+    Point pos;
+};
+struct TileLabels {
+    std::vector<StreetLabel> streets;
+    std::vector<PoiLabel> pois;
+    std::vector<PlaceLabel> places;
+};
+
 struct BuiltTile {
     TileKey key;
     TileMesh mesh;
+    TileLabels labels;
     double fetch_ms = 0.0;
     double tessellate_ms = 0.0;
+    double labels_ms = 0.0;
     std::size_t objects = 0;
     std::size_t drawn = 0;
 };
@@ -96,8 +245,10 @@ struct TagKeyHash {
 
 class TileBuilder {
 public:
-    TileBuilder(std::shared_ptr<OsmAnd::ObfMapObjectsProvider> provider, int threads)
-        : provider_(std::move(provider))
+    TileBuilder(std::shared_ptr<OsmAnd::ObfMapObjectsProvider> provider,
+                std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources,
+                int threads)
+        : provider_(std::move(provider)), resources_(std::move(resources))
     {
         for (int i = 0; i < threads; ++i)
             threads_.emplace_back([this] { run(); });
@@ -120,6 +271,12 @@ public:
             wanted_ = std::move(keys);
         }
         wake_.notify_all();
+    }
+    // An evicted tile may be wanted again later.
+    void forget(const TileKey& key)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        done_.erase(key);
     }
     std::vector<BuiltTile> take()
     {
@@ -210,8 +367,9 @@ private:
         Ring outer;
         std::vector<Ring> holes;
         out.objects = static_cast<std::size_t>(data->mapObjects.size());
+        double labels_ms = 0.0;
         for (const auto& object : data->mapObjects) {
-            if (!object || object->isCoastline || object->points31.size() < 2)
+            if (!object || object->isCoastline || object->points31.isEmpty())
                 continue;
             tags.clear();
             for (int i = 0; i < object->attributeIds.size(); ++i)
@@ -222,6 +380,13 @@ private:
                 tags, object->isArea,
                 object->points31.size() > 3 &&
                     object->points31.first() == object->points31.last());
+            {
+                const auto label_started = Clock::now();
+                collect_labels(*object, tags, area, origin_x, origin_y, to_local, out.labels);
+                labels_ms += ms_since(label_started);
+            }
+            if (object->points31.size() < 2)
+                continue;
             const FeatureStyle style = classify(tags, area, key.z);
             if (!style.has_area && !style.has_line)
                 continue;
@@ -240,11 +405,127 @@ private:
             }
         }
         out.mesh = tessellator.finish();
-        out.tessellate_ms = ms_since(tess_started);
+        out.labels_ms = labels_ms;
+        out.tessellate_ms = ms_since(tess_started) - labels_ms;
         return out;
     }
 
+    static const std::string* tag_value(const Tags& tags, const char* name)
+    {
+        for (const auto& entry : tags)
+            if (entry.first == name)
+                return &entry.second;
+        return nullptr;
+    }
+
+    // Street names (with the road's whole path), POIs and place names.
+    // Point-like labels are kept only by the tile that contains them.
+    void collect_labels(const OsmAnd::MapObject& object, const Tags& tags, bool area,
+                        double origin_x, double origin_y, double to_local,
+                        TileLabels& out)
+    {
+        const QString caption = object.getCaptionInNativeLanguage();
+        if (caption.isEmpty())
+            return;
+        const std::string name = caption.toStdString();
+        const auto anchor = [&]() {
+            double x, y;
+            if (object.points31.size() == 1) {
+                x = object.points31[0].x;
+                y = object.points31[0].y;
+            } else if (object.isLabelCoordinatesSpecified()) {
+                x = object.getLabelCoordinateX();
+                y = object.getLabelCoordinateY();
+            } else {
+                double sx = 0, sy = 0;
+                for (const auto& p : object.points31) {
+                    sx += p.x;
+                    sy += p.y;
+                }
+                x = sx / object.points31.size();
+                y = sy / object.points31.size();
+            }
+            return Point{static_cast<float>((x - origin_x) * to_local),
+                         static_cast<float>((y - origin_y) * to_local)};
+        };
+        const auto inside = [](const Point& p) {
+            return p[0] >= 0.0f && p[0] < kTileExtent && p[1] >= 0.0f && p[1] < kTileExtent;
+        };
+
+        const PoiStyle poi = classify_poi(tags, 99);
+        if (poi.show) {
+            const Point pos = anchor();
+            if (!inside(pos))
+                return;
+            PoiLabel label;
+            label.name = name;
+            label.rank = poi.rank;
+            label.min_zoom = poi.min_zoom;
+            label.pos = pos;
+            const std::uint32_t argb = 0xFF000000u | (poi.colour.r << 16) |
+                                       (poi.colour.g << 8) | poi.colour.b;
+            label.text_key = "p|" + std::to_string(argb) + "|" + name;
+            label.id = label.text_key + "@" + std::to_string(static_cast<long long>(label.pos[0])) +
+                       "," + std::to_string(static_cast<long long>(label.pos[1])) + "/" +
+                       std::to_string(static_cast<long long>(origin_x)) + "," +
+                       std::to_string(static_cast<long long>(origin_y));
+            label.text = images_.get(label.text_key, [&] {
+                return rasterize_text(caption, 17.0f, true, argb);
+            });
+            label.icon_key = std::string("i|") + poi.icon + "|" + std::to_string(argb);
+            label.icon = images_.get(label.icon_key, [&] {
+                return make_poi_icon(*resources_, poi.icon, poi.colour);
+            });
+            if (label.text && label.icon)
+                out.pois.push_back(std::move(label));
+            return;
+        }
+        if (const auto* place = tag_value(tags, "place")) {
+            bool shown = false;
+            for (int z = 10; z <= 18 && !shown; ++z)
+                shown = place_label_rank(*place, z) >= 0;
+            const Point pos = anchor();
+            if (!shown || !inside(pos))
+                return;
+            PlaceLabel label;
+            label.place = *place;
+            label.pos = pos;
+            label.key = "c|" + name;
+            label.image = images_.get(label.key, [&] {
+                return rasterize_text(caption, 20.0f, true, 0xFF70757Au);
+            });
+            if (label.image)
+                out.places.push_back(std::move(label));
+            return;
+        }
+        const auto* highway = tag_value(tags, "highway");
+        if (!highway || area || object.points31.size() < 2)
+            return;
+        const int rank = street_label_rank(*highway);
+        if (rank < 0)
+            return;
+        StreetLabel label;
+        label.name = name;
+        label.rank = rank;
+        const std::uint32_t argb = rank <= 3 ? 0xFF3C4043u : 0xFF5F6368u;
+        label.key = "s|" + std::to_string(argb) + "|" + name;
+        label.id = name + "@" + std::to_string(object.points31[0].x) + "," +
+                   std::to_string(object.points31[0].y);
+        label.image = images_.get(label.key, [&] {
+            return rasterize_text(caption, 17.0f, false, argb);
+        });
+        if (!label.image)
+            return;
+        label.path.reserve(static_cast<std::size_t>(object.points31.size()));
+        for (const auto& p : object.points31)
+            label.path.push_back({static_cast<float>((p.x - origin_x) * to_local),
+                                  static_cast<float>((p.y - origin_y) * to_local)});
+        out.streets.push_back(std::move(label));
+    }
+
     std::shared_ptr<OsmAnd::ObfMapObjectsProvider> provider_;
+    std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources_;
+    ImageCache images_;
     std::shared_ptr<OsmAnd::FunctorQueryController> controller_ =
         std::make_shared<OsmAnd::FunctorQueryController>(
             [](const OsmAnd::FunctorQueryController*) { return false; });
@@ -376,6 +657,82 @@ const char* kLineFs =
     "varying mediump float v_dist; varying mediump float v_half; varying lowp vec4 v_color;"
     "void main(){ float a = clamp(v_half - abs(v_dist), 0.0, 1.0);"
     "  gl_FragColor = vec4(v_color.rgb, v_color.a * a); }";
+
+const char* kLabelVs =
+    "attribute vec2 a_pos; attribute vec2 a_uv; attribute float a_alpha;"
+    "varying mediump vec2 v_uv; varying lowp float v_alpha;"
+    "void main(){ v_uv = a_uv; v_alpha = a_alpha; gl_Position = vec4(a_pos, 0.0, 1.0); }";
+const char* kLabelFs =
+    "precision mediump float; uniform sampler2D u_tex;"
+    "varying mediump vec2 v_uv; varying lowp float v_alpha;"
+    "void main(){ gl_FragColor = texture2D(u_tex, v_uv) * v_alpha; }";
+
+// One RGBA texture with a shelf packer. When it fills up it is cleared and
+// the visible labels are packed again on the following frames.
+class LabelAtlas {
+public:
+    static constexpr int kSize = 2048;
+    struct Slot {
+        float u0, v0, u1, v1;
+    };
+    void init()
+    {
+        glGenTextures(1, &texture_);
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    GLuint texture() const { return texture_; }
+    std::size_t resets() const { return resets_; }
+    std::size_t uploads() const { return uploads_; }
+    // False when the atlas had to be cleared; the label waits a frame.
+    bool slot(const std::string& key, const LabelImage& image, Slot& out)
+    {
+        const auto it = slots_.find(key);
+        if (it != slots_.end()) {
+            out = it->second;
+            return true;
+        }
+        if (image.width + 2 > kSize || image.height + 2 > kSize)
+            return false;
+        if (x_ + image.width + 2 > kSize) {
+            x_ = 0;
+            y_ += row_ + 2;
+            row_ = 0;
+        }
+        if (y_ + image.height + 2 > kSize) {
+            slots_.clear();
+            x_ = y_ = row_ = 0;
+            ++resets_;
+            return false;
+        }
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, x_ + 1, y_ + 1, image.width, image.height,
+                        GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
+        ++uploads_;
+        const float k = 1.0f / kSize;
+        out = {(x_ + 1) * k, (y_ + 1) * k, (x_ + 1 + image.width) * k,
+               (y_ + 1 + image.height) * k};
+        slots_[key] = out;
+        x_ += image.width + 2;
+        row_ = std::max(row_, image.height);
+        return true;
+    }
+
+private:
+    GLuint texture_ = 0;
+    int x_ = 0, y_ = 0, row_ = 0;
+    std::size_t resets_ = 0, uploads_ = 0;
+    std::unordered_map<std::string, Slot> slots_;
+};
+
+struct LabelVertex {
+    float x, y, u, v, alpha;
+};
 
 struct GpuTile {
     GLuint buffers[4] = {};  // area vbo, area ibo, line vbo, line ibo
@@ -645,8 +1002,49 @@ int main(int argc, char** argv)
     const GLint line_nrm = glGetUniformLocation(line_prog, "u_nrm");
     const GLint line_wscale = glGetUniformLocation(line_prog, "u_wscale");
     const GLint line_casing = glGetUniformLocation(line_prog, "u_casing");
+    const GLuint label_prog = program(kLabelVs, kLabelFs, {"a_pos", "a_uv", "a_alpha"});
+    const GLint label_tex = glGetUniformLocation(label_prog, "u_tex");
+    LabelAtlas atlas;
+    atlas.init();
+    // Google-style location dot: soft blue halo, white rim, blue centre.
+    LabelImagePtr location_dot = [] {
+        constexpr int kSize = 44;
+        auto out = std::make_shared<LabelImage>();
+        out->width = out->height = kSize;
+        out->rgba.assign(kSize * kSize * 4, 0);
+        const float c = (kSize - 1) / 2.0f;
+        for (int y = 0; y < kSize; ++y)
+            for (int x = 0; x < kSize; ++x) {
+                const float d = std::hypot(x - c, y - c);
+                const float halo = std::clamp(21.5f - d, 0.0f, 1.0f) * 0.22f;
+                const float rim = std::clamp(10.5f - d, 0.0f, 1.0f);
+                const float core = std::clamp(8.0f - d, 0.0f, 1.0f);
+                // blue #1A73E8 halo, then white rim, then blue core (premultiplied)
+                float r = 26 * halo, g = 115 * halo, b = 232 * halo, a = halo;
+                r = r * (1 - rim) + 255 * rim; g = g * (1 - rim) + 255 * rim;
+                b = b * (1 - rim) + 255 * rim; a = a * (1 - rim) + rim;
+                r = r * (1 - core) + 26 * core; g = g * (1 - core) + 115 * core;
+                b = b * (1 - core) + 232 * core; a = a * (1 - core) + core;
+                auto* px = &out->rgba[(y * kSize + x) * 4];
+                px[0] = static_cast<std::uint8_t>(r);
+                px[1] = static_cast<std::uint8_t>(g);
+                px[2] = static_cast<std::uint8_t>(b);
+                px[3] = static_cast<std::uint8_t>(a * 255.0f);
+            }
+        return LabelImagePtr(out);
+    }();
+    GLuint label_vbo = 0, label_ibo = 0;
+    glGenBuffers(1, &label_vbo);
+    glGenBuffers(1, &label_ibo);
+    std::map<TileKey, TileLabels> tile_labels;
+    std::unordered_map<std::string, float> fade, next_fade;
+    std::vector<LabelVertex> label_vertices;
+    std::vector<std::uint16_t> label_indices;
+    std::vector<double> label_ms;
+    std::size_t labels_drawn_total = 0, streets_drawn_total = 0, pois_drawn_total = 0;
+    std::vector<double> tile_labels_ms;
 
-    TileBuilder builder(provider, 2);
+    TileBuilder builder(provider, resources, 2);
     std::map<TileKey, GpuTile> gpu;
     std::size_t gpu_bytes = 0;
     std::uint64_t frame = 0;
@@ -666,6 +1064,7 @@ int main(int argc, char** argv)
     const Rgba land = land_colour();
     const auto start = Clock::now();
     auto last_frame = start;
+    double last_interval_ms = 16.7;
     for (;;) {
         const double t = ms_since(start) / 1000.0;
         if (t > duration)
@@ -678,6 +1077,8 @@ int main(int argc, char** argv)
             ++built;
             fetch_ms.push_back(tile.fetch_ms);
             tess_ms.push_back(tile.tessellate_ms);
+            tile_labels_ms.push_back(tile.labels_ms);
+            tile_labels[tile.key] = std::move(tile.labels);
             vertices_total += tile.mesh.area_vertices.size() + tile.mesh.line_vertices.size();
             const auto upload_started = Clock::now();
             GpuTile g = upload(tile.mesh);
@@ -832,17 +1233,214 @@ int main(int argc, char** argv)
         for (GLuint a = 0; a < 7; ++a)
             glDisableVertexAttribArray(a);
 
-        // Vehicle marker: a blue dot with a white ring, drawn as a fat
-        // zero-length line would need caps; use a scissored clear instead.
-        glEnable(GL_SCISSOR_TEST);
-        const int mx = W / 2, my = static_cast<int>(H * (1.0 - anchor_y));
-        glScissor(mx - 9, my - 9, 18, 18);
-        glClearColor(1, 1, 1, 1);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glScissor(mx - 6, my - 6, 12, 12);
-        glClearColor(0.10f, 0.45f, 0.91f, 1);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glDisable(GL_SCISSOR_TEST);
+        // ---- Labels: place on screen, then one textured draw.
+        const auto label_started = Clock::now();
+        const auto to_screen = [&](const TileKey& key, const Point& p) {
+            const double tile31 = std::ldexp(1.0, 31 - key.z);
+            const double wx = key.x * tile31 + p[0] * tile31 / kTileExtent - cam.x31;
+            const double wy = key.y * tile31 + p[1] * tile31 / kTileExtent - cam.y31;
+            return ScreenPoint{static_cast<float>(W / 2.0 + (cs * wx - sn * wy) * scale),
+                               static_cast<float>(H * anchor_y + (sn * wx + cs * wy) * scale)};
+        };
+        std::vector<OrientedBox> accepted;
+        const float marker_y = static_cast<float>(H * anchor_y);
+        accepted.push_back({W / 2.0f, marker_y, 14.0f, 14.0f, 0.0f});
+        label_vertices.clear();
+        label_indices.clear();
+        next_fade.clear();
+        const double dt = std::min(last_interval_ms, 100.0) / 1000.0;
+        const auto on_screen = [&](const OrientedBox& box) {
+            ScreenPoint c[4];
+            navicore_osmand::box_corners(box, c);
+            for (const auto& q : c)
+                if (q.x < 2 || q.y < 2 || q.x > W - 2 || q.y > H - 2)
+                    return false;
+            return true;
+        };
+        const auto free_of = [&](const OrientedBox& box) {
+            for (const auto& other : accepted)
+                if (navicore_osmand::boxes_overlap(box, other, 3.0f))
+                    return false;
+            return true;
+        };
+        const auto emit_label = [&](const std::string& id, const std::string& key,
+                              const LabelImage& image, OrientedBox box) {
+            LabelAtlas::Slot slot;
+            if (!atlas.slot(key, image, slot))
+                return;
+            if (box.angle == 0.0f) {  // crisp: snap unrotated quads to pixels
+                box.cx = std::floor(box.cx - box.half_width) + box.half_width;
+                box.cy = std::floor(box.cy - box.half_height) + box.half_height;
+            }
+            const auto previous = fade.find(id);
+            const float alpha = std::min(
+                1.0f, (previous == fade.end() ? 0.0f : previous->second) + static_cast<float>(dt) * 5.0f);
+            next_fade[id] = alpha;
+            ScreenPoint c[4];
+            navicore_osmand::box_corners(box, c);
+            const float uv[4][2] = {{slot.u0, slot.v0}, {slot.u1, slot.v0},
+                                    {slot.u1, slot.v1}, {slot.u0, slot.v1}};
+            const auto base = static_cast<std::uint16_t>(label_vertices.size());
+            for (int i = 0; i < 4; ++i)
+                label_vertices.push_back({c[i].x * 2.0f / W - 1.0f, 1.0f - c[i].y * 2.0f / H,
+                                          uv[i][0], uv[i][1], alpha});
+            label_indices.insert(label_indices.end(),
+                                 {base, static_cast<std::uint16_t>(base + 1),
+                                  static_cast<std::uint16_t>(base + 2), base,
+                                  static_cast<std::uint16_t>(base + 2),
+                                  static_cast<std::uint16_t>(base + 3)});
+        };
+
+        // Candidates in priority order: major streets, places, POIs, other
+        // streets; labels shown last frame go first within each group.
+        struct Candidate {
+            int group, shown, rank;
+            int kind;  // 0 street, 1 poi, 2 place
+            const TileKey* key;
+            const void* label;
+        };
+        std::vector<Candidate> candidates;
+        std::unordered_map<std::string, bool> seen_streets;
+        const int view_zoom = static_cast<int>(std::floor(cam.zoom));
+        for (const auto& key : draw) {
+            const auto it = tile_labels.find(key);
+            if (it == tile_labels.end())
+                continue;
+            for (const auto& street : it->second.streets)
+                if (seen_streets.emplace(street.id, true).second)
+                    candidates.push_back({street.rank <= 3 ? 0 : 3, fade.count(street.name) ? 0 : 1,
+                                          street.rank, 0, &key, &street});
+            for (const auto& place : it->second.places) {
+                const int rank = place_label_rank(place.place, view_zoom);
+                if (rank >= 0)
+                    candidates.push_back({1, fade.count(place.key) ? 0 : 1, rank, 2, &key, &place});
+            }
+            for (const auto& poi : it->second.pois)
+                if (cam.zoom >= poi.min_zoom)
+                    candidates.push_back({2, fade.count(poi.id) ? 0 : 1, poi.rank, 1, &key, &poi});
+        }
+        std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+            if (a.group != b.group) return a.group < b.group;
+            if (a.shown != b.shown) return a.shown < b.shown;
+            return a.rank < b.rank;
+        });
+        std::unordered_map<std::string, std::vector<ScreenPoint>> placed_streets;
+        std::size_t streets = 0, pois = 0, places = 0;
+        std::vector<ScreenPoint> screen_path;
+        std::vector<float> lengths;
+        for (const auto& c : candidates) {
+            if (c.kind == 0) {
+                if (streets >= 16) continue;
+                const auto& street = *static_cast<const StreetLabel*>(c.label);
+                const auto& image = *street.image;
+                // Fixed pins along the road (fractions of its length) keep a
+                // label in place on the map while the car moves.
+                lengths.assign(1, 0.0f);
+                for (std::size_t i = 1; i < street.path.size(); ++i)
+                    lengths.push_back(lengths.back() + std::hypot(street.path[i][0] - street.path[i - 1][0],
+                                                                  street.path[i][1] - street.path[i - 1][1]));
+                bool projected = false;
+                for (const float fraction : {0.5f, 0.3f, 0.7f, 0.15f, 0.85f}) {
+                    const float target = fraction * lengths.back();
+                    std::size_t seg = 0;
+                    while (seg + 2 < lengths.size() && lengths[seg + 1] < target)
+                        ++seg;
+                    const float span = lengths[seg + 1] - lengths[seg];
+                    const float t = span > 0.0f ? (target - lengths[seg]) / span : 0.0f;
+                    const Point pin{street.path[seg][0] + t * (street.path[seg + 1][0] - street.path[seg][0]),
+                                    street.path[seg][1] + t * (street.path[seg + 1][1] - street.path[seg][1])};
+                    const ScreenPoint pin_screen = to_screen(*c.key, pin);
+                    if (pin_screen.x < 0 || pin_screen.y < 0 || pin_screen.x > W || pin_screen.y > H)
+                        continue;
+                    bool repeat = false;
+                    for (const auto& other : placed_streets[street.name])
+                        if (std::hypot(other.x - pin_screen.x, other.y - pin_screen.y) < 380.0f)
+                            repeat = true;
+                    if (repeat) break;
+                    if (!projected) {
+                        screen_path.clear();
+                        for (const auto& p : street.path)
+                            screen_path.push_back(to_screen(*c.key, p));
+                        projected = true;
+                    }
+                    OrientedBox box;
+                    if (!navicore_osmand::place_along_path(screen_path, static_cast<int>(seg), t,
+                                                           static_cast<float>(image.width),
+                                                           static_cast<float>(image.height), box, 0.5f))
+                        continue;
+                    if (!on_screen(box) || !free_of(box))
+                        continue;
+                    accepted.push_back(box);
+                    placed_streets[street.name].push_back(pin_screen);
+                    emit_label(street.name, street.key, image, box);
+                    ++streets;
+                    break;
+                }
+            } else if (c.kind == 1) {
+                if (pois >= 18) continue;
+                const auto& poi = *static_cast<const PoiLabel*>(c.label);
+                const ScreenPoint at = to_screen(*c.key, poi.pos);
+                const OrientedBox icon{at.x, at.y, poi.icon->width / 2.0f, poi.icon->height / 2.0f, 0.0f};
+                if (!on_screen(icon) || !free_of(icon))
+                    continue;
+                const OrientedBox text{at.x + poi.icon->width / 2.0f + 3.0f + poi.text->width / 2.0f, at.y,
+                                       poi.text->width / 2.0f, poi.text->height / 2.0f, 0.0f};
+                const bool with_text = on_screen(text) && free_of(text);
+                accepted.push_back(icon);
+                emit_label(poi.id, poi.icon_key, *poi.icon, icon);
+                if (with_text) {
+                    accepted.push_back(text);
+                    emit_label(poi.id + "|t", poi.text_key, *poi.text, text);
+                }
+                ++pois;
+            } else {
+                if (places >= 6) continue;
+                const auto& place = *static_cast<const PlaceLabel*>(c.label);
+                const ScreenPoint at = to_screen(*c.key, place.pos);
+                const OrientedBox box{at.x, at.y, place.image->width / 2.0f, place.image->height / 2.0f, 0.0f};
+                if (!on_screen(box) || !free_of(box))
+                    continue;
+                accepted.push_back(box);
+                emit_label(place.key, place.key, *place.image, box);
+                ++places;
+            }
+        }
+        {
+            const OrientedBox dot{W / 2.0f, marker_y, location_dot->width / 2.0f,
+                                  location_dot->height / 2.0f, 0.0f};
+            next_fade["@location"] = 1.0f;
+            fade["@location"] = 1.0f;
+            emit_label("@location", "@location", *location_dot, dot);
+        }
+        fade.swap(next_fade);
+        if (!label_indices.empty()) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            glUseProgram(label_prog);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, atlas.texture());
+            glUniform1i(label_tex, 0);
+            glBindBuffer(GL_ARRAY_BUFFER, label_vbo);
+            glBufferData(GL_ARRAY_BUFFER, label_vertices.size() * sizeof(LabelVertex),
+                         label_vertices.data(), GL_STREAM_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, label_ibo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, label_indices.size() * 2,
+                         label_indices.data(), GL_STREAM_DRAW);
+            for (GLuint a = 0; a < 3; ++a)
+                glEnableVertexAttribArray(a);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), nullptr);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), reinterpret_cast<void*>(8));
+            glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), reinterpret_cast<void*>(16));
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(label_indices.size()), GL_UNSIGNED_SHORT, nullptr);
+            for (GLuint a = 0; a < 3; ++a)
+                glDisableVertexAttribArray(a);
+            ++calls;
+        }
+        label_ms.push_back(ms_since(label_started));
+        labels_drawn_total += label_indices.size() / 6;
+        streets_drawn_total += streets;
+        pois_drawn_total += pois;
+
 
         if (next_shot < 4 && t >= shot_times[next_shot]) {
             glFinish();
@@ -862,6 +1460,7 @@ int main(int argc, char** argv)
         const double swap = ms_since(swap_started);
         const double interval = ms_since(last_frame);
         last_frame = Clock::now();
+        last_interval_ms = interval;
         if (frame > 0) {
             cpu_ms.push_back(cpu);
             swap_ms.push_back(swap);
@@ -891,6 +1490,8 @@ int main(int argc, char** argv)
                 break;
             glDeleteBuffers(4, oldest->second.buffers);
             gpu_bytes -= oldest->second.bytes;
+            tile_labels.erase(oldest->first);
+            builder.forget(oldest->first);
             gpu.erase(oldest);
         }
 
@@ -935,6 +1536,15 @@ int main(int argc, char** argv)
                 mean(upload_ms), percentile(upload_ms, 1.0),
                 built ? static_cast<double>(vertices_total) / built : 0.0, gpu.size(),
                 gpu_bytes / 1048576.0);
+    std::printf("labels place_p50=%.1f place_p95=%.1f place_max=%.1f quads_avg=%.1f "
+                "streets_avg=%.1f pois_avg=%.1f atlas_uploads=%zu atlas_resets=%zu "
+                "tile_label_build_avg=%.1f tile_label_build_max=%.1f\n",
+                percentile(label_ms, 0.5), percentile(label_ms, 0.95), percentile(label_ms, 1.0),
+                frame ? static_cast<double>(labels_drawn_total) / frame : 0.0,
+                frame ? static_cast<double>(streets_drawn_total) / frame : 0.0,
+                frame ? static_cast<double>(pois_drawn_total) / frame : 0.0,
+                atlas.uploads(), atlas.resets(), mean(tile_labels_ms),
+                percentile(tile_labels_ms, 1.0));
     std::fflush(stdout);
 
     for (auto& entry : gpu)

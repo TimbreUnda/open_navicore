@@ -80,7 +80,8 @@ osmand-plugin-smoke: $(OSMAND_PLUGIN_SMOKE_TARGET) | $(DIST_DIR)
 
 # GPU vector map proof of concept (standalone, see vector/vector_poc.cpp).
 OSMAND_VECTOR_POC_TARGET := $(OSMAND_BUILD_DIR)/vector-poc
-OSMAND_VECTOR_POC_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/vector/,vector_poc.o \
+OSMAND_VECTOR_POC_OBJECTS := $(OSMAND_BUILD_DIR)/label_geometry.o \
+	$(addprefix $(OSMAND_BUILD_DIR)/vector/,vector_poc.o \
 	vector_style.o vector_tessellator.o)
 
 vector-poc: $(OSMAND_VECTOR_POC_TARGET) | $(DIST_DIR)

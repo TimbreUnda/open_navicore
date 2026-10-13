@@ -120,6 +120,79 @@ bool treat_as_area(const Tags& tags, bool is_area_flag, bool closed)
     return true;
 }
 
+PoiStyle classify_poi(const Tags& tags, int zoom)
+{
+    struct Rule {
+        const char* tag;
+        const char* value;
+        int rank;
+        std::uint32_t colour;
+        const char* icon;
+        int min_zoom;
+    };
+    // Google-like category colours: car services blue, food orange,
+    // shopping indigo, health red, lodging pink, sights teal, transit blue.
+    static const Rule rules[] = {
+        {"amenity", "fuel", 0, 0x1A73E8, "amenity_fuel", 14},
+        {"amenity", "charging_station", 1, 0x1A73E8, "charging_station", 14},
+        {"amenity", "hospital", 2, 0xD93025, "amenity_hospital", 14},
+        {"amenity", "parking", 3, 0x5B6FD0, "amenity_parking", 16},
+        {"railway", "station", 4, 0x1967D2, "railway_station", 14},
+        {"railway", "subway_entrance", 6, 0x1967D2, "subway_entrance", 16},
+        {"amenity", "police", 5, 0x3C4043, "amenity_police", 15},
+        {"amenity", "pharmacy", 7, 0xD93025, "amenity_pharmacy", 16},
+        {"amenity", "clinic", 7, 0xD93025, "clinic", 16},
+        {"tourism", "museum", 8, 0x0F9D98, "tourism_museum", 15},
+        {"tourism", "attraction", 8, 0x0F9D98, "attraction", 15},
+        {"amenity", "theatre", 9, 0x0F9D98, "amenity_theatre", 16},
+        {"amenity", "cinema", 9, 0x0F9D98, "amenity_cinema", 16},
+        {"tourism", "hotel", 10, 0xC2185B, "tourism_hotel", 16},
+        {"shop", "mall", 10, 0x3949AB, "shop_mall", 15},
+        {"shop", "supermarket", 11, 0x3949AB, "shop_supermarket", 16},
+        {"amenity", "marketplace", 11, 0x3949AB, "amenity_marketplace", 16},
+        {"amenity", "restaurant", 12, 0xE8710A, "amenity_restaurant", 17},
+        {"amenity", "cafe", 13, 0xE8710A, "amenity_cafe", 17},
+        {"amenity", "fast_food", 13, 0xE8710A, "amenity_fast_food", 17},
+        {"amenity", "bank", 14, 0x5F6368, "amenity_bank", 17},
+    };
+    PoiStyle style;
+    for (const auto& rule : rules) {
+        if (!is(find(tags, rule.tag), rule.value))
+            continue;
+        if (zoom < rule.min_zoom)
+            return style;
+        style.show = true;
+        style.rank = rule.rank;
+        style.colour = rgb(rule.colour);
+        style.icon = rule.icon;
+        style.min_zoom = rule.min_zoom;
+        return style;
+    }
+    return style;
+}
+
+int street_label_rank(const std::string& highway)
+{
+    static const char* const order[] = {"motorway", "trunk", "primary",
+                                        "secondary", "tertiary", "residential",
+                                        "unclassified", "living_street",
+                                        "pedestrian", "road"};
+    for (int i = 0; i < static_cast<int>(sizeof(order) / sizeof(order[0])); ++i)
+        if (highway == order[i])
+            return i;
+    return -1;
+}
+
+int place_label_rank(const std::string& place, int zoom)
+{
+    if (place == "city" && zoom <= 13) return 0;
+    if (place == "borough" && zoom <= 14) return 1;
+    if (place == "suburb" && zoom >= 12 && zoom <= 15) return 2;
+    if (place == "quarter" && zoom >= 14 && zoom <= 16) return 3;
+    if (place == "neighbourhood" && zoom >= 15) return 4;
+    return -1;
+}
+
 Rgba land_colour()
 {
     return kLand;
