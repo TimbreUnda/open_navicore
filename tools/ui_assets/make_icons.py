@@ -102,6 +102,20 @@ BADGES = {
 }
 for key, d in BADGES.items():
     ICONS['badge_%s_26' % key] = (26, stroked(path(d), 2), True, 0)
+# Lane arrows (design G9: 40 px, stroke 4.4, 48 viewBox). Left, straight,
+# right and straight+right are the mockup's; the rest follow the glyphs.
+LANES = {
+    'straight': 'M24 42V10M13 21 24 10l11 11',
+    'left': 'M24 42V25a7 7 0 0 0-7-7H8M15 11l-7 7 7 7',
+    'right': 'M18 42V25a7 7 0 0 1 7-7h12M30 11l7 7-7 7',
+    'straight_right': 'M20 42V10M9 21 20 10l11 11M20 32a8 8 0 0 1 8-8h10M33 19l5 5-5 5',
+    'straight_left': 'M28 42V10M17 21 28 10l11 11M28 32a8 8 0 0 0-8-8H10M15 19l-5 5 5 5',
+    'slight_left': GLYPH['slight_left'], 'slight_right': GLYPH['slight_right'],
+    'sharp_left': GLYPH['sharp_left'], 'sharp_right': GLYPH['sharp_right'],
+    'uturn': GLYPH['uturn'],
+}
+for key, d in LANES.items():
+    ICONS['lane_%s_40' % key] = (40, stroked(path(d), 4.4, 48), True, 0)
 ICONS['recalc_38'] = (38, stroked(path('M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5') +
                                   path('M12 8v4l2.5 1.5'), 2.2), True, 0)
 ICONS['flag_38'] = (38, stroked(path('M6 21V4M6 4h11l-3 4 3 4H6'), 2.2), True, 0)

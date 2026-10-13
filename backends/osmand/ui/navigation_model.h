@@ -38,12 +38,29 @@ struct GeoPoint {
     double longitude = 0.0;
 };
 
+// One lane at a manoeuvre: its main direction, an optional second one
+// (e.g. straight or right), and whether the route uses it.
+struct Lane {
+    ManeuverKind kind = ManeuverKind::Straight;
+    ManeuverKind also = ManeuverKind::Straight;
+    bool combined = false;  // `also` is valid
+    bool recommended = false;
+};
+
 struct Maneuver {
     ManeuverKind kind = ManeuverKind::Straight;
     std::string road;
     double distance_from_start_metres = 0.0;
     std::size_t geometry_index = 0;
     int roundabout_exit = 0;
+    std::vector<Lane> lanes;  // left to right; empty when unknown
+};
+
+// A stretch of the route on one road: from start_metres until the next.
+struct RoadStretch {
+    double start_metres = 0.0;
+    std::string name;
+    int speed_limit_kmh = 0;  // 0 when unknown
 };
 
 struct RouteAlternative {
@@ -56,6 +73,7 @@ struct RouteAlternative {
     double distance_metres = 0.0;
     std::vector<GeoPoint> geometry;
     std::vector<Maneuver> maneuvers;
+    std::vector<RoadStretch> roads;
 };
 
 struct GuidanceState {
@@ -74,6 +92,9 @@ struct GuidanceState {
     // whether a new route from here is being calculated.
     double off_route_metres = 0.0;
     bool recalculating = false;
+    // The road at the current position and its speed limit (0: unknown).
+    std::string road;
+    int speed_limit_kmh = 0;
 };
 
 // Map interactions the UI requests; the engine applies them to the camera.

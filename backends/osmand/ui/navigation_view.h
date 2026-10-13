@@ -103,6 +103,9 @@ private:
     // Places the guidance card contents for the current text (simulation tag,
     // one- or two-line action, countdown bar) without rebuilding the screen.
     void layout_guidance_card();
+    // Lane strip under the manoeuvre card, the speed-limit sign and the
+    // street-name pill (design G9, G10).
+    void refresh_road_widgets();
     int rail_width() const noexcept;
     void handle_map_gesture(const PointerSample& sample);
     void clear_object_references() noexcept;
@@ -151,6 +154,12 @@ private:
     lv_obj_t* arrival_countdown_ = nullptr;
     uint32_t arrival_started_ = 0;
     int arrival_seconds_shown_ = -1;
+    lv_obj_t* lane_strip_ = nullptr;
+    std::string lane_signature_;
+    lv_obj_t* speed_sign_ = nullptr;
+    lv_obj_t* speed_sign_label_ = nullptr;
+    lv_obj_t* street_pill_ = nullptr;
+    lv_obj_t* street_pill_label_ = nullptr;
     lv_obj_t* guidance_card_ = nullptr;
     lv_obj_t* guidance_glyph_ = nullptr;
     lv_obj_t* guidance_exit_ = nullptr;

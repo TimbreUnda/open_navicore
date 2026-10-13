@@ -273,6 +273,28 @@ const lv_image_dsc_t* glyph(ManeuverKind kind, bool large)
     }
     return large ? &nav_icon_glyph_straight_72 : &nav_icon_glyph_straight_32;
 }
+const lv_image_dsc_t* lane_icon(const Lane& lane)
+{
+    const auto straight = ManeuverKind::Straight;
+    if (lane.combined && lane.kind == straight) {
+        if (lane.also == ManeuverKind::Right || lane.also == ManeuverKind::SlightRight)
+            return &nav_icon_lane_straight_right_40;
+        if (lane.also == ManeuverKind::Left || lane.also == ManeuverKind::SlightLeft)
+            return &nav_icon_lane_straight_left_40;
+    }
+    switch (lane.kind) {
+    case ManeuverKind::Left: case ManeuverKind::KeepLeft: return &nav_icon_lane_left_40;
+    case ManeuverKind::Right: case ManeuverKind::KeepRight: return &nav_icon_lane_right_40;
+    case ManeuverKind::SlightLeft: return &nav_icon_lane_slight_left_40;
+    case ManeuverKind::SlightRight: return &nav_icon_lane_slight_right_40;
+    case ManeuverKind::SharpLeft: return &nav_icon_lane_sharp_left_40;
+    case ManeuverKind::SharpRight: return &nav_icon_lane_sharp_right_40;
+    case ManeuverKind::UTurn: return &nav_icon_lane_uturn_40;
+    default: break;
+    }
+    return &nav_icon_lane_straight_40;
+}
+
 // Guidance status card (No GPS fix, Recalculating): badge, title and a
 // wrapped explanation, centred; at least 168 px tall. Returns its height.
 int status_card(lv_obj_t* parent, int x, int y, uint32_t background, uint32_t colour,
@@ -1153,6 +1175,22 @@ void NavigationView::build_guidance()
         build_map_controls(true);
         return;
     }
+    {
+        // Speed limit (G10): white sign with a red ring at the map edge.
+        speed_sign_ = box(screen_, rail, top + margin, tile, tile, white, 32);
+        ring(speed_sign_, 6, 0xe0524a);
+        shadow(speed_sign_, 4, 14, 0.4f);
+        speed_sign_label_ = design::text(speed_sign_, "", &nav_font_24_800, base, 0, 17);
+        lv_obj_set_width(speed_sign_label_, tile);
+        lv_obj_set_style_text_align(speed_sign_label_, LV_TEXT_ALIGN_CENTER, 0);
+        // Current street: pill centred under the camera framing.
+        street_pill_ = box(screen_, 0, top + height - 20 - 44, 44, 44, surface, 22);
+        shadow(street_pill_, 2, 10, 0.35f);
+        street_pill_label_ = clipped_text(street_pill_, "", &nav_font_20_600, text1, 18, 10, 284);
+        lane_strip_ = box(screen_, margin, 0, column, tile, surface, 8, true);
+        ring(lane_strip_, 1, line);
+        lane_signature_.clear();
+    }
     if (guidance.position_available && guidance.recalculating) {
         // Off route (design G8): a new route from here is on its way.
         (void)status_card(screen_, margin, top + margin, 0x141d33, accent,
@@ -1270,6 +1308,7 @@ void NavigationView::refresh_guidance()
             lv_image_set_src(guidance_next_glyph_, design::glyph(guidance.maneuver.kind, false));
         set_label_text(guidance_time_, "--:--");
         set_label_text(guidance_remaining_, "ETA paused");
+        refresh_road_widgets();
         return;
     }
 
@@ -1296,6 +1335,75 @@ void NavigationView::refresh_guidance()
     set_label_text(guidance_time_, time.c_str());
     set_label_text(guidance_remaining_, distance_text(guidance.remaining_metres).c_str());
     layout_guidance_card();
+    refresh_road_widgets();
+}
+
+void NavigationView::refresh_road_widgets()
+{
+    using namespace design;
+    const auto& guidance = model_.guidance();
+    const bool live = guidance.position_available && !guidance.arrived;
+    if (speed_sign_) {
+        const bool shown = live && guidance.speed_limit_kmh > 0;
+        set_hidden(speed_sign_, !shown);
+        if (shown)
+            set_label_text(speed_sign_label_, std::to_string(guidance.speed_limit_kmh).c_str());
+    }
+    if (street_pill_) {
+        const bool shown = live && !guidance.road.empty();
+        set_hidden(street_pill_, !shown);
+        if (shown) {
+            set_label_text(street_pill_label_, guidance.road.c_str());
+            const int width = std::min(320, text_width(guidance.road.c_str(), &nav_font_20_600) + 36);
+            const MapArea area = map_area();
+            lv_obj_set_size(street_pill_label_, width - 36, 24);
+            lv_obj_set_width(street_pill_, width);
+            lv_obj_set_x(street_pill_, area.x + area.width / 2 - width / 2);
+        }
+    }
+    if (!lane_strip_)
+        return;
+    // Lanes for the coming turn, inside the countdown distance.
+    const auto& lanes = guidance.maneuver.lanes;
+    const bool shown = live && guidance_card_ && !lanes.empty() &&
+        guidance.distance_to_maneuver_metres <= countdown_metres;
+    set_hidden(lane_strip_, !shown);
+    if (!shown)
+        return;
+    // Style values: valid before LVGL's layout pass.
+    lv_obj_set_y(lane_strip_, lv_obj_get_style_y(guidance_card_, LV_PART_MAIN) +
+                                  lv_obj_get_style_height(guidance_card_, LV_PART_MAIN) + 8);
+    std::string signature;
+    for (const auto& lane : lanes) {
+        signature += static_cast<char>('a' + static_cast<int>(lane.kind));
+        signature += lane.combined ? static_cast<char>('a' + static_cast<int>(lane.also)) : '-';
+        signature += lane.recommended ? '1' : '0';
+    }
+    if (signature == lane_signature_)
+        return;
+    lane_signature_ = signature;
+    lv_obj_clean(lane_strip_);
+    const int count = static_cast<int>(lanes.size());
+    const float width = (column - 12.0f) / count - 4.0f;
+    static const lv_point_precise_t dash[2] = {{1, 0}, {1, 52}};
+    for (int index = 0; index < count; ++index) {
+        const Lane& lane = lanes[static_cast<std::size_t>(index)];
+        const int x = static_cast<int>(std::lround(6.0f + index * (width + 4.0f) + 2.0f));
+        const int w = static_cast<int>(std::lround(width));
+        lv_obj_t* cell = box(lane_strip_, x, 6, w, 52, maneuver, 6);
+        if (!lane.recommended)
+            lv_obj_set_style_bg_opa(cell, LV_OPA_TRANSP, 0);
+        // CSS border-left: 2px dashed line, inside the cell.
+        lv_obj_t* divider = lv_line_create(cell);
+        lv_obj_remove_style_all(divider);
+        lv_line_set_points(divider, dash, 2);
+        lv_obj_set_style_line_width(divider, 2, 0);
+        lv_obj_set_style_line_color(divider, lv_color_hex(line), 0);
+        lv_obj_set_style_line_dash_width(divider, 6, 0);
+        lv_obj_set_style_line_dash_gap(divider, 6, 0);
+        icon(cell, lane_icon(lane), lane.recommended ? white : text3,
+             2 + (w - 2 - 40) / 2, 6);
+    }
 }
 
 void NavigationView::clear_object_references() noexcept
@@ -1306,6 +1414,12 @@ void NavigationView::clear_object_references() noexcept
     query_placeholder_ = nullptr;
     keyboard_ = nullptr;
     arrival_countdown_ = nullptr;
+    lane_strip_ = nullptr;
+    lane_signature_.clear();
+    speed_sign_ = nullptr;
+    speed_sign_label_ = nullptr;
+    street_pill_ = nullptr;
+    street_pill_label_ = nullptr;
     guidance_card_ = nullptr;
     guidance_glyph_ = nullptr;
     guidance_exit_ = nullptr;

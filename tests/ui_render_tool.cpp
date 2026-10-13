@@ -191,11 +191,41 @@ int main(int argc, char** argv)
         GuidanceState state;
         state.position_available = true;
         state.recalculating = true;
+        state.road = "вулиця Антоновича";
+        state.speed_limit_kmh = 50;
         state.remaining_metres = 2400.0;
         state.remaining_seconds = 420.0;
         (void)view.apply_guidance(state);
         settle(view);
         ok = write(view, out + "/recalc.argb") && ok;
+    }
+    {
+        // Lane guidance at 250 m (G9): use the two right lanes.
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        to_preview(view);
+        (void)view.start_guidance(0);
+        MapViewState night;
+        night.night = true;
+        (void)model.set_map_view(night);
+        GuidanceState state;
+        state.position_available = true;
+        state.distance_to_maneuver_metres = 250.0;
+        state.remaining_metres = 2000.0;
+        state.remaining_seconds = 360.0;
+        state.maneuver.kind = ManeuverKind::Right;
+        state.maneuver.road = "бульвар Тараса Шевченка";
+        Lane left, straight, both, right;
+        left.kind = ManeuverKind::Left;
+        both.combined = true;
+        both.also = ManeuverKind::Right;
+        both.recommended = true;
+        right.kind = ManeuverKind::Right;
+        right.recommended = true;
+        state.maneuver.lanes = {left, straight, both, right};
+        (void)view.apply_guidance(state);
+        settle(view);
+        ok = write(view, out + "/lanes.argb") && ok;
     }
     std::puts(ok ? "ui-render-tool: ok" : "ui-render-tool: write failed");
     return ok ? 0 : 1;

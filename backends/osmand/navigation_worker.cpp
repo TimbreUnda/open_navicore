@@ -1,6 +1,5 @@
 #include "navigation_worker.h"
 
-#include "ui/compact_text.h"
 
 #include "diagnostics.h"
 #include "session.h"
@@ -184,6 +183,27 @@ ui::ManeuverKind maneuver_kind(int value)
     case TurnType::RNLB: return ui::ManeuverKind::Roundabout;
     default: return ui::ManeuverKind::Straight;
     }
+}
+
+// OsmAnd lane value: bit 0 = the route uses the lane, bits 1-4 its main
+// turn, bits 5-9 a second turn (TurnType::getPrimaryTurn/getSecondaryTurn).
+std::vector<ui::Lane> lanes_of(const SHARED_PTR<TurnType>& turn)
+{
+    std::vector<ui::Lane> lanes;
+    if (!turn)
+        return lanes;
+    for (const int value : turn->getLanes()) {
+        ui::Lane lane;
+        const int primary = TurnType::getPrimaryTurn(value);
+        const int secondary = TurnType::getSecondaryTurn(value);
+        lane.kind = maneuver_kind(primary ? primary : TurnType::C);
+        lane.combined = secondary != 0;
+        if (lane.combined)
+            lane.also = maneuver_kind(secondary);
+        lane.recommended = (value & 1) != 0;
+        lanes.push_back(lane);
+    }
+    return lanes;
 }
 
 } // namespace
@@ -387,17 +407,29 @@ private:
             if (!segment) continue;
             const double distance_at_start = alternative.distance_metres;
             const std::size_t geometry_at_start = alternative.geometry.size();
+            // Native road names (the design fonts include Cyrillic).
+            std::string road = segment->getStreetName(
+                "", false, segments, static_cast<int>(segment_index));
+            int limit = 0;
+            if (segment->object) {
+                const float metres_per_second =
+                    segment->object->getMaximumSpeed(segment->isForwardDirection());
+                if (metres_per_second > 0.0f)
+                    limit = static_cast<int>(std::lround(metres_per_second * 3.6f));
+            }
+            if (alternative.roads.empty() || alternative.roads.back().name != road ||
+                alternative.roads.back().speed_limit_kmh != limit)
+                alternative.roads.push_back({distance_at_start, road, limit});
             if (segment->turnType &&
                 segment->turnType->getValue() != TurnType::C) {
-                // The compact embedded LVGL font is Latin-only. Prefer an
-                // English OBF name and ask legacy OsmAnd to transliterate the
-                // default name when no localized value exists.
-                std::string road = ui::compact_font_text(segment->getStreetName(
-                    "en", true, segments, static_cast<int>(segment_index)));
-                alternative.maneuvers.push_back({
-                    maneuver_kind(segment->turnType->getValue()),
-                    std::move(road), distance_at_start, geometry_at_start,
-                    segment->turnType->getExitOut()});
+                ui::Maneuver maneuver;
+                maneuver.kind = maneuver_kind(segment->turnType->getValue());
+                maneuver.road = road;
+                maneuver.distance_from_start_metres = distance_at_start;
+                maneuver.geometry_index = geometry_at_start;
+                maneuver.roundabout_exit = segment->turnType->getExitOut();
+                maneuver.lanes = lanes_of(segment->turnType);
+                alternative.maneuvers.push_back(std::move(maneuver));
             }
             alternative.distance_metres += segment->distance;
             alternative.duration_seconds += segment->segmentTime;
@@ -418,7 +450,7 @@ private:
         if (alternative.geometry.size() < 2) return {};
         alternative.maneuvers.push_back({
             ui::ManeuverKind::Arrive, request.destination.title,
-            alternative.distance_metres, alternative.geometry.size() - 1u, 0});
+            alternative.distance_metres, alternative.geometry.size() - 1u, 0, {}});
         trace_result("worker=route_maneuvers", request.revision,
                      alternative.maneuvers.size());
         return {std::move(alternative)};

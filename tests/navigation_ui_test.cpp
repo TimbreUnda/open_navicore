@@ -482,7 +482,7 @@ int main()
     const auto stale_route_revision = route_revision - 1;
     assert(!view.apply_routes(stale_route_revision,
         {{"stale", "99 min", "99 km", "", "Must be rejected", 0.0, 0.0,
-          {}, {}}}));
+          {}, {}, {}}}));
     RouteAlternative fast;
     fast.id = "fast";
     fast.duration = "10 min";
@@ -493,8 +493,8 @@ int main()
     fast.distance_metres = 1828.0;
     fast.geometry = {{50.0, 30.0}, {50.0, 30.01}, {50.01, 30.01}};
     fast.maneuvers = {
-        {ManeuverKind::Right, "River Road", 716.0, 1, 0},
-        {ManeuverKind::Arrive, "Riverside Ave 12", 1828.0, 2, 0}};
+        {ManeuverKind::Right, "River Road", 716.0, 1, 0, {}},
+        {ManeuverKind::Arrive, "Riverside Ave 12", 1828.0, 2, 0, {}}};
     RouteAlternative quiet = fast;
     quiet.id = "quiet";
     quiet.duration = "12 min";

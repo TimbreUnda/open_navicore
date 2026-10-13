@@ -122,6 +122,12 @@ ui::GuidanceState GuidanceTracker::update(const ui::RouteAlternative& route,
     state.arrived = state.remaining_metres <= arrival_radius_metres ||
         distance(position, route.geometry.back()) <= arrival_radius_metres;
     choose_maneuvers(route, state);
+    for (const auto& road : route.roads) {
+        if (road.start_metres > progress_metres_ + 1.0)
+            break;
+        state.road = road.name;
+        state.speed_limit_kmh = road.speed_limit_kmh;
+    }
     if (state.arrived) {
         state.maneuver.kind = ui::ManeuverKind::Arrive;
         state.distance_to_maneuver_metres = 0.0;
