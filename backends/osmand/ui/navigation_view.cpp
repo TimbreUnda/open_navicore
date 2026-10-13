@@ -273,6 +273,28 @@ const lv_image_dsc_t* glyph(ManeuverKind kind, bool large)
     }
     return large ? &nav_icon_glyph_straight_72 : &nav_icon_glyph_straight_32;
 }
+// Guidance status card (No GPS fix, Recalculating): badge, title and a
+// wrapped explanation, centred; at least 168 px tall. Returns its height.
+int status_card(lv_obj_t* parent, int x, int y, uint32_t background, uint32_t colour,
+                const lv_image_dsc_t* image, uint32_t image_colour, const char* title,
+                const char* body)
+{
+    lv_obj_t* card = box(parent, x, y, column, 168, background, 8, true);
+    ring(card, 2, colour);
+    lv_obj_t* badge = box(card, (column - 64) / 2, 18, 64, 64, colour, 32);
+    icon(badge, image, image_colour, 13, 13);
+    text(card, title, &nav_font_24_800, colour,
+         (column - text_width(title, &nav_font_24_800)) / 2, 92);
+    lv_obj_t* label = text(card, body, &nav_font_20_400, text1, 16, 128);
+    lv_obj_set_width(label, column - 32);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_line_space(label, 2, 0);  // 26 px lines
+    const int lines = wrapped_lines(body, &nav_font_20_400, column - 32);
+    const int height = std::max(168, 127 + 26 * lines + 16);
+    lv_obj_set_height(card, height);
+    return height;
+}
 } // namespace design
 
 std::string maneuver_text(const Maneuver& maneuver)
@@ -1131,7 +1153,12 @@ void NavigationView::build_guidance()
         build_map_controls(true);
         return;
     }
-    if (guidance.position_available) {
+    if (guidance.position_available && guidance.recalculating) {
+        // Off route (design G8): a new route from here is on its way.
+        (void)status_card(screen_, margin, top + margin, 0x141d33, accent,
+                          &nav_icon_recalc_38, white, "Recalculating…",
+                          "Off route · new route in a moment");
+    } else if (guidance.position_available) {
         guidance_card_ = box(screen_, margin, top + margin, column, 112, maneuver, 8, true);
         card_shadow(guidance_card_);
         lv_obj_set_style_clip_corner(guidance_card_, true, 0);
@@ -1156,22 +1183,9 @@ void NavigationView::build_guidance()
         guidance_bar_fill_ = box(guidance_card_, 0, 0, 0, 6, white, 0);
     } else {
         // No GPS fix: warning card, then the next instruction.
-        lv_obj_t* card = box(screen_, margin, top + margin, column, 168, warning_bg, 8, true);
-        ring(card, 2, warning);
-        lv_obj_t* badge = box(card, (column - 64) / 2, 18, 64, 64, warning, 32);
-        icon(badge, &nav_icon_no_gps_38, base, 13, 13);
-        const char* title = "No GPS fix";
-        design::text(card, title, &nav_font_24_800, warning,
-                     (column - text_width(title, &nav_font_24_800)) / 2, 92);
-        lv_obj_t* body = design::text(card, "Guidance is paused until a position is available.",
-                                      &nav_font_20_400, text1, 16, 128);
-        lv_obj_set_width(body, column - 32);
-        lv_label_set_long_mode(body, LV_LABEL_LONG_MODE_WRAP);
-        lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_line_space(body, 2, 0);
-        const int lines = wrapped_lines(lv_label_get_text(body), &nav_font_20_400, column - 32);
-        const int card_height = std::max(168, 127 + 26 * lines + 16);
-        lv_obj_set_height(card, card_height);
+        const int card_height = status_card(
+            screen_, margin, top + margin, warning_bg, warning, &nav_icon_no_gps_38, base,
+            "No GPS fix", "Guidance is paused until a position is available.");
         const int next_y = top + margin + card_height + 16;
         lv_obj_t* next = design::text(screen_, "NEXT ON ROUTE", &nav_font_14_700, text3,
                                       margin, next_y);
@@ -1412,7 +1426,8 @@ bool NavigationView::apply_guidance(GuidanceState guidance)
 {
     const bool structure_changed = built_screen_ != model_.screen() ||
         model_.guidance().position_available != guidance.position_available ||
-        model_.guidance().arrived != guidance.arrived;
+        model_.guidance().arrived != guidance.arrived ||
+        model_.guidance().recalculating != guidance.recalculating;
     const bool accepted = model_.update_guidance(std::move(guidance));
     if (accepted) {
         if (structure_changed)

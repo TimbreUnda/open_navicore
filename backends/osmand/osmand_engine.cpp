@@ -66,7 +66,12 @@ public:
 
 private:
     void resize(const MockNavBackendRenderTargetV1&);
-    void show_route(const ui::RouteAlternative&);
+    // fit: frame the whole route (new route); false keeps the camera
+    // (a recalculated route during guidance).
+    void show_route(const ui::RouteAlternative&, bool fit = true);
+    // Off-route recalculation (G8): request a new route after the
+    // position stays off the route.
+    void check_off_route(const ui::GuidanceState& state, const ui::GeoPoint& position);
     bool update_guidance();
     void update_render_shootout();
     bool ensure_navigation_worker();
@@ -231,6 +236,14 @@ private:
     bool simulation_enabled_ = false;
     bool simulation_running_ = false;
     bool simulation_arrival_reported_ = false;
+    // Off-route recalculation.
+    bool off_route_ = false;
+    std::chrono::steady_clock::time_point off_route_since_{};
+    std::chrono::steady_clock::time_point reroute_retry_at_{};
+    // Bench detour (simulate-detour): 0 pending, 1 active, 2 done.
+    bool simulate_detour_ = false;
+    int detour_phase_ = 0;
+    std::chrono::steady_clock::time_point detour_started_{};
     double simulation_progress_metres_ = 0.0;
     double simulation_geometry_length_metres_ = 0.0;
     double simulation_speed_metres_per_second_ = 20.0;
@@ -332,6 +345,9 @@ bool OsmAndEngine::initialize(const Config& config,
                              std::shared_ptr<Wakeup> wakeup)
 {
     simulation_enabled_ = config.simulate_route;
+    simulate_detour_ = config.simulate_detour;
+    if (simulate_detour_)
+        trace("simulation=detour_enabled");
     if (config.start_tilted) {
         camera_.set_tilt(true);
         trace("camera=start_tilted");
@@ -630,7 +646,7 @@ void OsmAndEngine::resize(const MockNavBackendRenderTargetV1& target)
     height_ = target.height;
 }
 
-void OsmAndEngine::show_route(const ui::RouteAlternative& route)
+void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
 {
     route_lines_->removeAllLines();
     QVector<OsmAnd::PointI> points;
@@ -673,8 +689,9 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route)
     overview_box_[1] = min_longitude;
     overview_box_[2] = max_latitude;
     overview_box_[3] = max_longitude;
-    overview_pending_ = true;
+    overview_pending_ = fit;
     guidance_tracker_.reset();
+    off_route_ = false;
     guidance_active_ = false;
     simulation_running_ = false;
     simulation_progress_metres_ = 0.0;
@@ -748,7 +765,7 @@ bool OsmAndEngine::update_guidance()
         position_available = true;
         simulation_running_ = false;
     } else if (simulation_enabled_ && route.geometry.size() >= 2) {
-        const auto now = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();  // also times the detour
         if (!simulation_running_) {
             simulation_running_ = true;
             simulation_updated_at_ = now;
@@ -766,6 +783,22 @@ bool OsmAndEngine::update_guidance()
         }
         position = simulated_position(route, simulation_progress_metres_,
                                       simulation_geometry_length_metres_);
+        // Bench detour: once, past 35% of the route, drive 150 m beside it
+        // until a recalculated route arrives (or 30 s pass).
+        if (simulate_detour_ && detour_phase_ == 0 &&
+            simulation_progress_metres_ > 0.35 * route.distance_metres) {
+            detour_phase_ = 1;
+            detour_started_ = now;
+            trace("simulation=detour_started");
+        }
+        if (detour_phase_ == 1) {
+            if (now - detour_started_ > std::chrono::seconds(30)) {
+                detour_phase_ = 2;
+            } else {
+                position.longitude += 150.0 /
+                    (111320.0 * std::cos(position.latitude * 3.14159265358979323846 / 180.0));
+            }
+        }
         position_available = true;
         simulated = true;
     }
@@ -778,6 +811,7 @@ bool OsmAndEngine::update_guidance()
                         std::chrono::duration<double>(
                             std::chrono::steady_clock::now() - clock_origin_)
                             .count());
+        check_off_route(state, position);
         if (simulated && state.arrived && !simulation_arrival_reported_) {
             simulation_arrival_reported_ = true;
             trace("simulation=arrived");
@@ -785,10 +819,42 @@ bool OsmAndEngine::update_guidance()
     } else {
         state = guidance_tracker_.unavailable(route);
     }
+    state.recalculating = navigation_->rerouting();
     gps_dirty_ = false;
     guidance_active_ = true;
     sync_vector_guidance(&state);
     return view_->apply_guidance(std::move(state));
+}
+
+// More than 50 m from the route for 4 s (GPS noise and short parallel
+// stretches stay below that) asks for a new route from the position to the
+// same destination. One request at a time; a failed one waits 10 s.
+void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
+                                   const ui::GeoPoint& position)
+{
+    constexpr double off_route_metres = 50.0;
+    constexpr auto off_route_time = std::chrono::seconds(4);
+    const auto now = std::chrono::steady_clock::now();
+    if (state.arrived || state.off_route_metres <= off_route_metres) {
+        off_route_ = false;
+        return;
+    }
+    if (!off_route_) {
+        off_route_ = true;
+        off_route_since_ = now;
+        return;
+    }
+    if (now - off_route_since_ < off_route_time || navigation_->rerouting() ||
+        now < reroute_retry_at_ || !navigation_->destination() ||
+        !ensure_navigation_worker())
+        return;
+    const std::uint64_t revision = navigation_->request_reroute();
+    if (!revision)
+        return;
+    submitted_route_revision_ = revision;
+    trace_result("reroute=submit", revision,
+                 static_cast<std::size_t>(state.off_route_metres));
+    navigation_worker_->submit_route(revision, *navigation_->destination(), position);
 }
 
 void OsmAndEngine::apply_style_settings()
@@ -1181,10 +1247,28 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     if (navigation_worker_ && navigation_worker_->take_route_result(route_result)) {
         trace_result("engine=route_result", route_result.revision,
                      route_result.routes.size());
-        const bool accepted = view_->apply_routes(
-            route_result.revision, std::move(route_result.routes));
-        if (accepted && !navigation_->routes().empty())
-            show_route(navigation_->routes().front());
+        if (navigation_->screen() == ui::Screen::Guidance) {
+            const bool found = !route_result.routes.empty();
+            if (navigation_->apply_reroute(route_result.revision,
+                                           std::move(route_result.routes))) {
+                if (found) {
+                    trace("reroute=applied");
+                    show_route(navigation_->routes().front(), false);
+                    if (detour_phase_ == 1) detour_phase_ = 2;
+                } else {
+                    // Keep the old route; try again a little later.
+                    trace("reroute=failed");
+                    reroute_retry_at_ = std::chrono::steady_clock::now() +
+                                        std::chrono::seconds(10);
+                }
+                gps_dirty_ = true;
+            }
+        } else {
+            const bool accepted = view_->apply_routes(
+                route_result.revision, std::move(route_result.routes));
+            if (accepted && !navigation_->routes().empty())
+                show_route(navigation_->routes().front());
+        }
     }
     bool guidance_changed = false;
     if (navigation_->screen() == ui::Screen::Guidance &&

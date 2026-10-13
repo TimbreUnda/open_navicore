@@ -34,6 +34,7 @@ extern const lv_image_dsc_t nav_icon_badge_food_26;
 extern const lv_image_dsc_t nav_icon_badge_hotel_26;
 extern const lv_image_dsc_t nav_icon_badge_sight_26;
 extern const lv_image_dsc_t nav_icon_badge_place_26;
+extern const lv_image_dsc_t nav_icon_recalc_38;
 extern const lv_image_dsc_t nav_icon_flag_38;
 extern const lv_image_dsc_t nav_icon_message_search_32;
 extern const lv_image_dsc_t nav_icon_message_spin_32;

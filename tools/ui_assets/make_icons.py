@@ -102,6 +102,8 @@ BADGES = {
 }
 for key, d in BADGES.items():
     ICONS['badge_%s_26' % key] = (26, stroked(path(d), 2), True, 0)
+ICONS['recalc_38'] = (38, stroked(path('M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5') +
+                                  path('M12 8v4l2.5 1.5'), 2.2), True, 0)
 ICONS['flag_38'] = (38, stroked(path('M6 21V4M6 4h11l-3 4 3 4H6'), 2.2), True, 0)
 for key in ('search', 'spin', 'nores', 'route', 'alert'):
     ICONS['message_%s_32' % key] = (32, stroked(path(UI[key]), 1.8), True, 0)

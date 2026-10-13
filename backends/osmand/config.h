@@ -45,6 +45,9 @@ struct Config {
     // start-tilted, start-night) so they can be tested without a tap.
     bool start_tilted = false;
     bool start_night = false;
+    // Bench: the route simulation leaves the route once, 150 m to the side,
+    // to exercise off-route recalculation (marker simulate-detour).
+    bool simulate_detour = false;
     // Vector map: z14 tiles at full detail for every deeper zoom (marker
     // vector-overzoom), instead of z15/z16 tiles.
     bool vector_overzoom = false;

@@ -114,6 +114,7 @@ bool NavigationModel::end_guidance() noexcept
 {
     if (screen_ != Screen::Guidance)
         return false;
+    rerouting_ = false;
     screen_ = Screen::FreeDrive;
     query_.clear();
     results_.clear();
@@ -268,6 +269,27 @@ std::uint64_t NavigationModel::select_place(Destination place)
     return select_destination(0);
 }
 
+
+std::uint64_t NavigationModel::request_reroute() noexcept
+{
+    if (screen_ != Screen::Guidance || !has_destination_ || rerouting_)
+        return 0;
+    rerouting_ = true;
+    return ++route_revision_;
+}
+
+bool NavigationModel::apply_reroute(std::uint64_t revision,
+                                    std::vector<RouteAlternative> routes)
+{
+    if (screen_ != Screen::Guidance || !rerouting_ || revision != route_revision_)
+        return false;
+    rerouting_ = false;
+    if (!routes.empty()) {
+        routes_ = std::move(routes);
+        selected_route_ = 0;
+    }
+    return true;
+}
 
 bool NavigationModel::back_to_search() noexcept
 {

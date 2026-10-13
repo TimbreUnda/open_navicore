@@ -107,6 +107,7 @@ ui::GuidanceState GuidanceTracker::update(const ui::RouteAlternative& route,
     }
     if (geometry_length <= 0.0)
         return state;
+    state.off_route_metres = std::sqrt(nearest_squared);
 
     const double route_progress = nearest_along / geometry_length *
         route.distance_metres;

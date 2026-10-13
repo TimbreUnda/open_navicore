@@ -179,6 +179,24 @@ int main(int argc, char** argv)
         }
         ok = write(view, out + "/arrival.argb") && ok;
     }
+    {
+        // Off route, recalculating (G8).
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        to_preview(view);
+        (void)view.start_guidance(0);
+        MapViewState night;
+        night.night = true;
+        (void)model.set_map_view(night);
+        GuidanceState state;
+        state.position_available = true;
+        state.recalculating = true;
+        state.remaining_metres = 2400.0;
+        state.remaining_seconds = 420.0;
+        (void)view.apply_guidance(state);
+        settle(view);
+        ok = write(view, out + "/recalc.argb") && ok;
+    }
     std::puts(ok ? "ui-render-tool: ok" : "ui-render-tool: write failed");
     return ok ? 0 : 1;
 }

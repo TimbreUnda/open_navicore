@@ -336,6 +336,52 @@ void test_keyboard()
     tap(view, key_x(11, 12.0f, ukrainian_third, 10), 268 + 8 + 2 * 70 + 32);
     assert(model.query() == "e");
 }
+
+void test_reroute()
+{
+    NavigationModel model;
+    NavigationView view(model, 1024, 574);
+    settle(view, 31);
+    RouteAlternative route;
+    route.duration = "5 min";
+    route.distance_metres = 1100.0;
+    route.duration_seconds = 300.0;
+    route.geometry = {{50.0, 30.0}, {50.01, 30.0}};
+    assert(view.select_place({"poi:1", "Target", "", "", 50.01, 30.0}));
+    assert(view.apply_routes(model.route_revision(), {route}));
+    assert(view.start_guidance(0));
+    // 0.002 deg east of the route is ~143 m off; on the route is 0 m.
+    GuidanceTracker tracker;
+    assert(tracker.update(route, {50.005, 30.0}).off_route_metres < 1.0);
+    const auto off = tracker.update(route, {50.005, 30.002});
+    assert(off.off_route_metres > 100.0 && off.off_route_metres < 200.0);
+
+    // One recalculation at a time; stale and wrong-screen results are ignored.
+    const auto revision = model.request_reroute();
+    assert(revision != 0 && model.rerouting());
+    assert(model.request_reroute() == 0);
+    assert(!model.apply_reroute(revision - 1, {route}));
+    auto shown = off;
+    shown.recalculating = true;
+    assert(view.apply_guidance(shown));
+    settle(view, 2);
+    // An empty result keeps the old route and ends the attempt.
+    assert(model.apply_reroute(revision, {}));
+    assert(!model.rerouting() && model.routes().size() == 1);
+    // A new route replaces the old one in place; guidance continues.
+    const auto retry = model.request_reroute();
+    RouteAlternative detour = route;
+    detour.duration = "6 min";
+    detour.geometry = {{50.005, 30.002}, {50.01, 30.0}};
+    assert(model.apply_reroute(retry, {detour}));
+    assert(model.screen() == Screen::Guidance && model.routes().front().duration == "6 min");
+    shown.recalculating = false;
+    assert(view.apply_guidance(shown));
+    settle(view, 2);
+    // Ending guidance drops a pending recalculation.
+    assert(model.request_reroute() != 0);
+    assert(model.end_guidance() && !model.rerouting());
+}
 } // namespace
 
 void test_recents_store()
@@ -372,6 +418,7 @@ int main()
     test_car_controls();
     test_place_card_and_back();
     test_keyboard();
+    test_reroute();
 
     assert(compact_font_text(u8"Січневого Повстання") ==
            "Sichnevoho Povstannya");

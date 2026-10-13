@@ -70,6 +70,10 @@ struct GuidanceState {
     Maneuver maneuver;
     Maneuver following_maneuver;
     bool has_following_maneuver = false;
+    // Distance from the position to the nearest point of the route, and
+    // whether a new route from here is being calculated.
+    double off_route_metres = 0.0;
+    bool recalculating = false;
 };
 
 // Map interactions the UI requests; the engine applies them to the camera.
@@ -178,6 +182,14 @@ public:
     // Route preview Back: returns to the search results.
     bool back_to_search() noexcept;
 
+    // Off-route recalculation during guidance: request_reroute() opens a
+    // new route revision for the same destination (0 if not guiding or one
+    // is pending); apply_reroute() replaces the route in place. An empty
+    // result ends the attempt and keeps the old route.
+    std::uint64_t request_reroute() noexcept;
+    bool apply_reroute(std::uint64_t revision, std::vector<RouteAlternative> routes);
+    bool rerouting() const noexcept { return rerouting_; }
+
     // Place card over free drive for a tapped POI (design G2): the place
     // with its subtitle ("Fuel · 0.4 km") and the map icon of its category.
     const Destination* place_card() const noexcept;
@@ -213,6 +225,7 @@ private:
     Destination place_;
     std::string place_icon_;
     bool has_place_ = false;
+    bool rerouting_ = false;
 };
 
 } // namespace navicore_osmand::ui
