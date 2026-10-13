@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace navicore_osmand::ui;
 
@@ -92,6 +93,27 @@ int main(int argc, char** argv)
         (void)view.apply_guidance(state);
         settle(view);
         ok = write(view, out + "/guidance.argb") && ok;
+    }
+    const std::vector<Destination> results = {
+        {"s1", "Khreshchatyk St", "Street · Shevchenkivskyi, Kyiv", "1.9 km", 50.44, 30.52},
+        {"s2", "Khreshchatyk St 22", "House · Kyiv", "2.0 km", 50.44, 30.52},
+        {"s3", "Khreshchatyk St 15", "House · Kyiv", "2.1 km", 50.44, 30.52},
+        {"s4", "Khreshchatyk Park", "Park · Kyiv", "2.6 km", 50.44, 30.52}};
+    for (const bool lock : {false, true}) {
+        NavigationModel model;
+        model.set_recents({ocean,
+                           {"rail", "Kyiv-Pasazhyrskyi", "Railway station", "2.4 km", 50.44, 30.49},
+                           {"olena", "Home of Olena", "Saksahanskoho St 41", "1.2 km", 50.43, 30.51},
+                           {"arsenalna", "Arsenalna", "Metro station", "4.8 km", 50.44, 30.54},
+                           {"kbp", "Boryspil Airport (KBP)", "Airport · Boryspil", "34 km", 50.34, 30.89}});
+        NavigationView view(model, 1024, 574);
+        view.open_search();
+        const auto revision = view.set_query("Khreshchatyk");
+        (void)view.apply_search_results(revision, results);
+        if (lock)
+            (void)view.set_moving(true);
+        settle(view);
+        ok = write(view, out + (lock ? "/lock.argb" : "/search.argb")) && ok;
     }
     std::puts(ok ? "ui-render-tool: ok" : "ui-render-tool: write failed");
     return ok ? 0 : 1;

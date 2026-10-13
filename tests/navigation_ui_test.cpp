@@ -261,8 +261,9 @@ void test_car_controls()
         tap(view, 700, 400);          // where the keyboard would be
         assert(model.query() == query);
         assert(model.destination() == nullptr);
-        // Locked panel: 20 px pad, notice (24), label, then the recent row.
-        tap(view, 600, 80 + 20 + 24 + 10 + 17 + 10 + 32);
+        // Locked panel replaces the keyboard: recents in two columns, the
+        // first row at y 336..400 on the left.
+        tap(view, 200, 336 + 32);
         assert(model.destination() && model.destination()->id == "home");
         assert(view.set_moving(false));
     }

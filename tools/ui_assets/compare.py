@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compares rendered UI states with the navigation mockups.
 
-  compare.py RENDER_DIR DESIGN_DIR OUT_DIR
+  compare.py RENDER_DIR DESIGN_DIR OUT_DIR [STATE...]
 
 RENDER_DIR holds <state>.argb from ui-render-tool. DESIGN_DIR holds
 <state>_full.png (the mockup) and <state>_map.png (the mockup with the UI
@@ -21,7 +21,7 @@ W, H = 1024, 574
 def main():
     render, design, out = sys.argv[1:4]
     os.makedirs(out, exist_ok=True)
-    for state in ('free', 'preview', 'guidance'):
+    for state in sys.argv[4:] or ('free', 'preview', 'guidance', 'search', 'lock'):
         raw = np.fromfile(os.path.join(render, state + '.argb'), dtype=np.uint8)
         bgra = raw.reshape(H, W, 4).astype(np.float32)
         ui = bgra[..., [2, 1, 0]]

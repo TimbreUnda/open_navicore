@@ -30,6 +30,12 @@ UI = {
     'moon': 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z',
     'overview': 'M4 4h6v6H4zM14 14h6v6h-6zM10 7h4a3 3 0 0 1 3 3v4',
     'route': 'M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4M18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4M6 15V9a4 4 0 0 1 4-4h2M18 9v6a4 4 0 0 1-4 4h-2',
+    'lock': 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4',
+    'pin': 'M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12zM12 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6',
+    'fuel': 'M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M4 10h10M14 8l3 3v6a2 2 0 0 0 4 0V9l-3-3',
+    'nores': 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14M20 20l-4-4M8.5 8.5l5 5M13.5 8.5l-5 5',
+    'spin': 'M12 3a9 9 0 1 0 9 9',
+    'alert': 'M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01',
 }
 GLYPH = {
     'straight': 'M24 42V10M13 21 24 10l11 11',
@@ -75,7 +81,22 @@ ICONS = {
     'overview_26': (26, stroked(path(UI['overview']), 2), True, 0),
     'route_24': (24, stroked(path(UI['route']), 2.2), True, 0),
     'no_gps_38': (38, stroked(NO_GPS, 2), True, 0),
+    # Search screen.
+    'back_28': (28, stroked(path(UI['back']), 2.4), True, 0),
+    'search_24': (24, stroked(path(UI['search']), 2.2), True, 0),
+    'lock_24': (24, stroked(path(UI['lock']), 2), True, 0),
+    'lock_30': (30, stroked(path(UI['lock']), 2), True, 0),
+    'pin_24': (24, stroked(path(UI['pin']), 2), True, 0),
+    'fuel_24': (24, stroked(path(UI['fuel']), 2), True, 0),
 }
+for key in ('search', 'spin', 'nores', 'route', 'alert'):
+    ICONS['message_%s_32' % key] = (32, stroked(path(UI[key]), 1.8), True, 0)
+# Key labels Montserrat lacks; the design shows them in the browser's
+# fallback font, so they are rendered the same way (600 24px, 36 px cell).
+for key, char in (('shift', '\u21e7'), ('backspace', '\u232b')):
+    ICONS['key_%s_36' % key] = (36, '<div style="width:36px;text-align:center;color:#fff;'
+                                'font:600 24px/29px Montserrat,system-ui,sans-serif">%s</div>' % char,
+                                True, 0)
 for key, d in GLYPH.items():
     ghost = path(GHOST[key], ' opacity="0.35"') if key in GHOST else ''
     ICONS['glyph_%s_72' % key] = (72, stroked(ghost + path(d), 3.6, 48), True, 0)

@@ -475,28 +475,6 @@ void NavigationView::build_recent_card(int y)
     }
 }
 
-void NavigationView::build_recents(lv_obj_t* parent)
-{
-    const auto& recents = model_.recents();
-    if (recents.empty()) {
-        label(parent, "No recent destinations", secondary, 20);
-        return;
-    }
-    for (std::size_t index = 0; index < recents.size(); ++index) {
-        lv_obj_t* row = lv_button_create(parent);
-        panel(row, surface, 8);
-        lv_obj_set_width(row, LV_PCT(100));
-        lv_obj_set_height(row, map_button);
-        lv_obj_set_style_pad_left(row, 16, 0);
-        lv_obj_t* title = label(row, recents[index].title.c_str(), primary, 18);
-        lv_obj_set_width(title, LV_PCT(100));
-        lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-        lv_obj_align(title, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_add_event_cb(row, recent_cb, LV_EVENT_CLICKED, this);
-        lv_obj_set_user_data(row, reinterpret_cast<void*>(index + 1));
-    }
-}
-
 int NavigationView::rail_width() const noexcept
 {
     return width_ > 600u ? std::min<int>(336, static_cast<int>(width_)) : 0;
@@ -655,100 +633,259 @@ std::uint64_t NavigationView::select_recent(std::size_t index)
     return revision;
 }
 
+// Search (design: "Search · results", full-width keyboard): Back and the
+// query field on top, a 2x2 grid of the best results (or a status message)
+// below, and the design keyboard - or, while driving, recent destinations.
 void NavigationView::build_search()
 {
+    using namespace design;
     const int top = content_top(height_);
-    const int available_height = content_height(height_);
-    lv_obj_t* header = lv_obj_create(screen_);
-    panel(header, base);
-    lv_obj_set_pos(header, 0, top);
-    lv_obj_set_size(header, LV_PCT(100), 80);
-    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_all(header, 12, 0);
-    lv_obj_set_style_pad_column(header, 12, 0);
+    const bool locked = model_.moving();
 
-    lv_obj_t* back = button(header, "<");
-    lv_obj_set_size(back, 64, 56);
+    lv_obj_t* back = box(screen_, margin, top + 12, tile, tile, control, 8, true);
+    icon(back, &nav_icon_back_28, text1, 18, 18);
     lv_obj_add_event_cb(back, close_search_cb, LV_EVENT_CLICKED, this);
-    query_field_ = lv_textarea_create(header);
-    lv_obj_set_flex_grow(query_field_, 1);
-    lv_obj_set_height(query_field_, 56);
-    lv_textarea_set_one_line(query_field_, true);
-    lv_textarea_set_placeholder_text(query_field_, "Street, house or place");
-    lv_textarea_set_text(query_field_, model_.query().c_str());
-    lv_obj_set_style_bg_color(query_field_, color(surface), 0);
-    lv_obj_set_style_border_color(query_field_, color(accent), 0);
-    lv_obj_set_style_border_width(query_field_, 2, 0);
-    lv_obj_set_style_text_color(query_field_, color(primary), 0);
-    lv_obj_set_style_text_font(query_field_, &lv_font_montserrat_20, 0);
-    lv_obj_add_event_cb(query_field_, query_changed_cb, LV_EVENT_VALUE_CHANGED, this);
 
-    lv_obj_t* body = lv_obj_create(screen_);
-    panel(body, base);
-    lv_obj_set_pos(body, 0, top + 80);
-    lv_obj_set_size(body, width_, std::max(1, available_height - 80));
-    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
-    results_panel_ = lv_obj_create(body);
-    panel(results_panel_, base);
-    lv_obj_set_size(results_panel_, std::min<int>(420, width_), LV_PCT(100));
-    lv_obj_set_flex_flow(results_panel_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_t* field = box(screen_, 88, top + 12, static_cast<int>(width_) - 88 - margin,
+                          tile, surface, 8, true);
+    ring(field, 2, line);
+    icon(field, locked ? &nav_icon_lock_24 : &nav_icon_search_24, text3, 18, 20);
+    query_label_ = design::text(field, "", &nav_font_24_600,
+                                text1, 54, 18);
+    lv_label_set_long_mode(query_label_, LV_LABEL_LONG_MODE_CLIP);
+    query_placeholder_ = design::text(field, "Street, house or place", &nav_font_24_400, text3,
+                                      60, 18);
+    query_cursor_ = box(field, 54, 17, 2, 30, accent, 0);
+    set_hidden(query_cursor_, locked);
 
-    if (model_.moving()) {
-        // Typing while driving is limited: keep the field read-only and offer
-        // one-tap recent destinations in place of the keyboard.
-        lv_obj_set_disabled(query_field_, true);
-        lv_obj_t* locked = lv_obj_create(body);
-        panel(locked, base);
-        lv_obj_set_flex_grow(locked, 1);
-        lv_obj_set_height(locked, LV_PCT(100));
-        lv_obj_set_flex_flow(locked, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_style_pad_all(locked, 20, 0);
-        lv_obj_set_style_pad_row(locked, 10, 0);
-        label(locked, "Typing is paused while driving", 0xf6c86a, 20);
-        label(locked, "RECENT", tertiary, 14);
-        build_recents(locked);
-    } else if (width_ > 600) {
-        lv_obj_t* keyboard = lv_keyboard_create(body);
-        lv_obj_set_flex_grow(keyboard, 1);
-        lv_obj_set_height(keyboard, LV_PCT(100));
-        lv_keyboard_set_textarea(keyboard, query_field_);
-        lv_obj_set_style_bg_color(keyboard, color(base), 0);
-        lv_obj_set_style_text_font(keyboard, &lv_font_montserrat_20,
-                                   LV_PART_ITEMS);
+    results_panel_ = lv_obj_create(screen_);
+    lv_obj_remove_style_all(results_panel_);
+    lv_obj_set_pos(results_panel_, margin, top + 88);
+    lv_obj_set_size(results_panel_, static_cast<int>(width_) - 2 * margin, 172);
+    lv_obj_set_clickable(results_panel_, true);  // like the cards: absorbs presses
+    no_scroll(results_panel_);
+
+    if (!locked) {
+        build_keyboard();
+    } else {
+        // Typing is limited while moving: recent destinations replace the
+        // keyboard (two columns of 64 px rows).
+        lv_obj_t* panel_lock = box(screen_, margin, top + 268, static_cast<int>(width_) - 2 * margin,
+                                   290, surface, 8, true);
+        icon(panel_lock, &nav_icon_lock_30, warning, 16, 21);
+        const char* title = "Typing is paused while driving";
+        design::text(panel_lock, title, &nav_font_20_700, text1, 60, 24);
+        design::text(panel_lock, "Pick a recent destination, or stop to type.", &nav_font_14_400,
+                     text2, 60 + text_width(title, &nav_font_20_700) + 14, 27);
+        const auto& recents = model_.recents();
+        const int column_width = (static_cast<int>(width_) - 2 * margin - 32 - 16) / 2;
+        for (std::size_t index = 0; index < std::min<std::size_t>(6, recents.size()); ++index) {
+            const auto& item = recents[index];
+            const int x = 16 + static_cast<int>(index % 2) * (column_width + 16);
+            const int y = 68 + static_cast<int>(index / 2) * 64;
+            lv_obj_t* row = box(panel_lock, x, y, column_width, 64, surface, 0, true);
+            box(row, 0, 0, column_width, 1, line, 0);  // border-top
+            icon(row, &nav_icon_clock_22, text3, 4, 21);
+            int right = column_width - 4;
+            if (!item.distance.empty()) {
+                const int width = text_width(item.distance.c_str(), &nav_font_14_400);
+                design::text(row, item.distance.c_str(), &nav_font_14_400, text2, right - width, 24);
+                right -= width + 12;
+            }
+            clipped_text(row, item.title.c_str(), &nav_font_20_600, text1, 38, 21, right - 38);
+            lv_obj_add_event_cb(row, recent_cb, LV_EVENT_CLICKED, this);
+            lv_obj_set_user_data(row, reinterpret_cast<void*>(index + 1));
+        }
+        if (recents.empty())
+            design::text(panel_lock, "No recent destinations", &nav_font_20_600, text2, 16, 88);
     }
+    refresh_query();
     refresh_results();
+}
+
+namespace {
+// Design keyboard rows (full-width layout): label, flex weight.
+struct Key { const char* label; float weight; };
+constexpr Key letters[4][10] = {
+    {{"q", 1}, {"w", 1}, {"e", 1}, {"r", 1}, {"t", 1}, {"y", 1}, {"u", 1}, {"i", 1}, {"o", 1}, {"p", 1}},
+    {{"a", 1}, {"s", 1}, {"d", 1}, {"f", 1}, {"g", 1}, {"h", 1}, {"j", 1}, {"k", 1}, {"l", 1}, {nullptr, 0}},
+    {{"⇧", 1.5f}, {"z", 1}, {"x", 1}, {"c", 1}, {"v", 1}, {"b", 1}, {"n", 1}, {"m", 1}, {"⌫", 1.5f}, {nullptr, 0}},
+    {{"123", 1.5f}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}}};
+constexpr Key upper[3][10] = {
+    {{"Q", 1}, {"W", 1}, {"E", 1}, {"R", 1}, {"T", 1}, {"Y", 1}, {"U", 1}, {"I", 1}, {"O", 1}, {"P", 1}},
+    {{"A", 1}, {"S", 1}, {"D", 1}, {"F", 1}, {"G", 1}, {"H", 1}, {"J", 1}, {"K", 1}, {"L", 1}, {nullptr, 0}},
+    {{"⇧", 1.5f}, {"Z", 1}, {"X", 1}, {"C", 1}, {"V", 1}, {"B", 1}, {"N", 1}, {"M", 1}, {"⌫", 1.5f}, {nullptr, 0}}};
+constexpr Key numbers[4][10] = {
+    {{"1", 1}, {"2", 1}, {"3", 1}, {"4", 1}, {"5", 1}, {"6", 1}, {"7", 1}, {"8", 1}, {"9", 1}, {"0", 1}},
+    {{"-", 1}, {"/", 1}, {":", 1}, {";", 1}, {"(", 1}, {")", 1}, {"&", 1}, {"@", 1}, {"\"", 1}, {nullptr, 0}},
+    {{"#", 1}, {"+", 1}, {"=", 1}, {"_", 1}, {"'", 1}, {"?", 1}, {"!", 1}, {"№", 1}, {"⌫", 1.5f}, {nullptr, 0}},
+    {{"ABC", 1.5f}, {",", 1}, {"space", 4}, {".", 1}, {"OK", 1.5f}, {nullptr, 0}}};
+} // namespace
+
+void NavigationView::build_keyboard()
+{
+    using namespace design;
+    if (keyboard_)
+        lv_obj_delete(keyboard_);
+    const int top = content_top(height_);
+    const int width = static_cast<int>(width_) - 2 * margin;
+    keyboard_ = box(screen_, margin, top + 268, width, 290, surface, 8, true);
+    const int inner = width - 16;
+    for (int row = 0; row < 4; ++row) {
+        const Key* keys = keyboard_numeric_ ? numbers[row]
+            : (keyboard_shift_ && row < 3 ? upper[row] : letters[row]);
+        int count = 0;
+        float weights = 0.0f;
+        while (count < 10 && keys[count].label) weights += keys[count++].weight;
+        // CSS flex with basis 0: only the space beyond each button's 2x6 px
+        // padding is shared by weight.
+        constexpr float padding = 12.0f;
+        const float unit = (inner - 6.0f * (count - 1) - padding * count) / weights;
+        float x = 8.0f;
+        const int y = 8 + row * 70;
+        for (int index = 0; index < count; ++index) {
+            const Key& key = keys[index];
+            const float key_width = unit * key.weight + padding;
+            const int left = static_cast<int>(std::lround(x));
+            const int right = static_cast<int>(std::lround(x + key_width));
+            const bool ok = std::strcmp(key.label, "OK") == 0;
+            lv_obj_t* object = box(keyboard_, left, y, right - left, 64, ok ? accent : control, 6, true);
+            lv_obj_set_style_bg_color(object, lv_color_hex(ok ? 0x2f66e0 : line), LV_STATE_PRESSED);
+            const float centre = x + key_width / 2.0f - left;
+            if (std::strcmp(key.label, "⇧") == 0 || std::strcmp(key.label, "⌫") == 0) {
+                const bool shift = std::strcmp(key.label, "⇧") == 0;
+                icon(object, shift ? &nav_icon_key_shift_36 : &nav_icon_key_backspace_36,
+                     shift && keyboard_shift_ ? accent : text1,
+                     static_cast<int>(std::lround(centre - 18.0f)), 19);
+            } else {
+                const bool small = std::strlen(key.label) > 2;
+                const lv_font_t* font = small ? &nav_font_14_600 : &nav_font_24_600;
+                const char* shown = std::strcmp(key.label, "space") == 0 ? "space" : key.label;
+                design::text(object, shown, font, ok ? white : text1,
+                             static_cast<int>(std::lround(centre - text_width(shown, font) / 2.0f)),
+                             small ? 23 : 18);
+            }
+            lv_obj_add_event_cb(object, key_cb, LV_EVENT_CLICKED, this);
+            lv_obj_set_user_data(object, const_cast<char*>(key.label));
+            x += key_width + 6.0f;
+        }
+    }
+}
+
+void NavigationView::press_key(const char* key)
+{
+    std::string query = model_.query();
+    if (std::strcmp(key, "⇧") == 0) {
+        keyboard_shift_ = !keyboard_shift_;
+        build_keyboard();
+        return;
+    }
+    if (std::strcmp(key, "123") == 0 || std::strcmp(key, "ABC") == 0) {
+        keyboard_numeric_ = !keyboard_numeric_;
+        keyboard_shift_ = false;
+        build_keyboard();
+        return;
+    }
+    if (std::strcmp(key, "OK") == 0) {
+        // Routes to the highlighted (first) result.
+        if (!model_.results().empty() && model_.select_destination(0))
+            rebuild();
+        return;
+    }
+    if (std::strcmp(key, "⌫") == 0) {
+        if (query.empty())
+            return;
+        std::size_t end = query.size() - 1;
+        while (end > 0 && (static_cast<unsigned char>(query[end]) & 0xc0u) == 0x80u)
+            --end;  // whole UTF-8 sequence
+        query.erase(end);
+    } else {
+        query += std::strcmp(key, "space") == 0 ? " " : key;
+    }
+    trace_result("ui=query_changed", model_.search_revision() + 1u, query.size());
+    model_.set_query(std::move(query));
+    if (keyboard_shift_) {  // one-shot shift
+        keyboard_shift_ = false;
+        build_keyboard();
+    }
+    refresh_query();
+    refresh_results();
+}
+
+void NavigationView::refresh_query()
+{
+    if (!query_label_)
+        return;
+    const std::string& query = model_.query();
+    set_label_text(query_label_, query.c_str());
+    const bool empty = query.empty();
+    set_hidden(query_label_, empty);
+    set_hidden(query_placeholder_, !empty);
+    const int field_width = static_cast<int>(width_) - 88 - design::margin;
+    const int max_width = field_width - 54 - 24;
+    const int width = std::min(max_width, design::text_width(query.c_str(), &nav_font_24_600));
+    lv_obj_set_width(query_label_, width);
+    lv_obj_set_x(query_cursor_, empty ? 54 : 54 + width + 4);
 }
 
 void NavigationView::refresh_results()
 {
+    using namespace design;
     if (!results_panel_)
         return;
     lv_obj_clean(results_panel_);
     const auto& results = model_.results();
-    for (std::size_t index = 0; index < results.size(); ++index) {
-        const auto& item = results[index];
-        lv_obj_t* row = lv_button_create(results_panel_);
-        panel(row, index == 0 ? 0x16233f : base);
-        lv_obj_set_width(row, LV_PCT(100));
-        lv_obj_set_height(row, 82);
-        lv_obj_set_style_border_width(row, 1, 0);
-        lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
-        lv_obj_set_style_border_color(row, color(line), 0);
-        lv_obj_set_style_pad_left(row, 20, 0);
-        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
-        label(row, item.title.c_str(), primary, 20);
-        std::string detail = item.subtitle;
-        if (!item.distance.empty()) detail += "  " + item.distance;
-        label(row, detail.c_str(), secondary, 14);
-        lv_obj_add_event_cb(row, result_cb, LV_EVENT_CLICKED, this);
-        lv_obj_set_user_data(row, reinterpret_cast<void*>(index + 1));
+    const std::string& message = model_.message();
+    const int width = static_cast<int>(width_) - 2 * margin;  // before any layout pass
+    if (message.empty() && !results.empty()) {
+        // Best four results, two per row; the first is the OK target.
+        const int card_width = (width - 8) / 2;
+        for (std::size_t index = 0; index < std::min<std::size_t>(4, results.size()); ++index) {
+            const auto& item = results[index];
+            const bool first = index == 0;
+            lv_obj_t* card = box(results_panel_, static_cast<int>(index % 2) * (card_width + 8),
+                                 static_cast<int>(index / 2) * 90, card_width, 82,
+                                 first ? control : surface, 8, true);
+            if (first)
+                ring(card, 2, accent);
+            std::string lower = item.subtitle;
+            for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            icon(card, lower.find("fuel") != std::string::npos ? &nav_icon_fuel_24 : &nav_icon_pin_24,
+                 text2, 16, 29);
+            int right = card_width - 16;
+            if (!item.distance.empty()) {
+                const int text = text_width(item.distance.c_str(), &nav_font_14_400);
+                design::text(card, item.distance.c_str(), &nav_font_14_400, text2, right - text, 32);
+                right -= text + 14;
+            }
+            const bool sub = !item.subtitle.empty();
+            clipped_text(card, item.title.c_str(), &nav_font_20_600, text1, 54, sub ? 19 : 29,
+                         right - 54);
+            if (sub)
+                clipped_text(card, item.subtitle.c_str(), &nav_font_14_400, text2, 54, 45, right - 54);
+            lv_obj_add_event_cb(card, result_cb, LV_EVENT_CLICKED, this);
+            lv_obj_set_user_data(card, reinterpret_cast<void*>(index + 1));
+        }
+        return;
     }
-    if (results.empty()) {
-        const char* text = model_.query().empty() ?
-            "Type to search installed maps" : model_.message().c_str();
-        lv_obj_t* empty = label(results_panel_, text, tertiary, 14);
-        lv_obj_set_style_pad_all(empty, 20, 0);
-    }
+    // Status: icon and text centred in a 172 px panel.
+    const char* text = message.c_str();
+    const lv_image_dsc_t* image = &nav_icon_message_search_32;
+    if (model_.query().empty() && message.empty())
+        text = "Type to search installed maps";
+    else if (message.rfind("Searching", 0) == 0)
+        image = &nav_icon_message_spin_32;
+    else if (message.rfind("No offline", 0) == 0)
+        image = &nav_icon_message_nores_32;
+    else if (message.rfind("Calculating", 0) == 0)
+        image = &nav_icon_message_route_32;
+    else if (message.rfind("No route", 0) == 0)
+        image = &nav_icon_message_alert_32;
+    lv_obj_t* panel_status = box(results_panel_, 0, 0, width, 172, surface, 8);
+    const int text_w = text_width(text, &nav_font_20_600);
+    const int x = (width - (32 + 14 + text_w)) / 2;
+    icon(panel_status, image, text3, x, 70);
+    design::text(panel_status, text, &nav_font_20_600, text2, x + 46, 74);
 }
 
 // Route preview (design: "Route preview · one route (today)"): opaque rail
@@ -969,7 +1106,10 @@ void NavigationView::refresh_guidance()
 void NavigationView::clear_object_references() noexcept
 {
     results_panel_ = nullptr;
-    query_field_ = nullptr;
+    query_label_ = nullptr;
+    query_cursor_ = nullptr;
+    query_placeholder_ = nullptr;
+    keyboard_ = nullptr;
     guidance_card_ = nullptr;
     guidance_glyph_ = nullptr;
     guidance_exit_ = nullptr;
@@ -1270,14 +1410,13 @@ void NavigationView::close_search_cb(lv_event_t* event)
     auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
     self->model_.close_search(); self->rebuild();
 }
-void NavigationView::query_changed_cb(lv_event_t* event)
+void NavigationView::key_cb(lv_event_t* event)
 {
     auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
-    const char* query = lv_textarea_get_text(self->query_field_);
-    trace_result("ui=query_changed", self->model_.search_revision() + 1u,
-                 query ? std::strlen(query) : 0u);
-    self->model_.set_query(query ? query : "");
-    self->refresh_results();
+    const auto* key = static_cast<const char*>(lv_obj_get_user_data(
+        static_cast<lv_obj_t*>(lv_event_get_current_target(event))));
+    if (key)
+        self->press_key(key);
 }
 void NavigationView::result_cb(lv_event_t* event)
 {

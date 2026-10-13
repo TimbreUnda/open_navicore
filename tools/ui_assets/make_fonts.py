@@ -28,7 +28,7 @@ OUT = os.path.join(ROOT, 'backends', 'osmand', 'ui', 'assets')
 # (size px, CSS weight) pairs used by the design.
 STYLES = [(14, 400), (14, 600), (14, 700), (14, 800),
           (20, 400), (20, 600), (20, 700),
-          (24, 700), (24, 800),
+          (24, 400), (24, 600), (24, 700), (24, 800),
           (28, 700), (28, 800)]
 LATIN = '0x20-0x7E,0xA0-0xFF,0x2013-0x2014,0x2018-0x201E,0x2022,0x2026,0x2039-0x203A,0x20AC'
 CYRILLIC = '0x400-0x45F,0x490-0x491,0x2116'

@@ -89,7 +89,6 @@ private:
     void build_guidance();
     void build_map_controls(bool full);
     void build_vehicle_marker();
-    void build_recents(_lv_obj_t* parent);
     void build_recent_card(int y);
     void refresh_guidance();
     // Places the guidance card contents for the current text (simulation tag,
@@ -98,7 +97,12 @@ private:
     int rail_width() const noexcept;
     void handle_map_gesture(const PointerSample& sample);
     void clear_object_references() noexcept;
+    // Search: results grid or status message, and the query field text.
     void refresh_results();
+    void refresh_query();
+    // Design keyboard (full width): rebuilt when shift or 123 changes.
+    void build_keyboard();
+    void press_key(const char* key);
     _lv_obj_t* label(_lv_obj_t* parent, const char* text, uint32_t color,
                      int font_size = 14);
     _lv_obj_t* button(_lv_obj_t* parent, const char* text);
@@ -108,7 +112,7 @@ private:
     static void pointer_cb(lv_indev_t* indev, lv_indev_data_t* data);
     static void open_search_cb(lv_event_t* event);
     static void close_search_cb(lv_event_t* event);
-    static void query_changed_cb(lv_event_t* event);
+    static void key_cb(lv_event_t* event);
     static void result_cb(lv_event_t* event);
     static void route_cb(lv_event_t* event);
     static void start_cb(lv_event_t* event);
@@ -125,7 +129,12 @@ private:
     lv_indev_t* indev_ = nullptr;
     lv_obj_t* screen_ = nullptr;
     lv_obj_t* results_panel_ = nullptr;
-    lv_obj_t* query_field_ = nullptr;
+    lv_obj_t* query_label_ = nullptr;
+    lv_obj_t* query_cursor_ = nullptr;
+    lv_obj_t* query_placeholder_ = nullptr;
+    lv_obj_t* keyboard_ = nullptr;
+    bool keyboard_shift_ = false;
+    bool keyboard_numeric_ = false;
     lv_obj_t* guidance_card_ = nullptr;
     lv_obj_t* guidance_glyph_ = nullptr;
     lv_obj_t* guidance_exit_ = nullptr;

@@ -37,7 +37,7 @@ std::uint64_t NavigationModel::set_query(std::string query)
     has_destination_ = false;
     ++search_revision_;
     ++route_revision_;
-    message_ = query_.empty() ? std::string() : "Searching installed maps...";
+    message_ = query_.empty() ? std::string() : "Searching installed maps…";
     return search_revision_;
 }
 
@@ -61,7 +61,7 @@ std::uint64_t NavigationModel::select_destination(std::size_t index)
     routes_.clear();
     selected_route_ = 0;
     ++route_revision_;
-    message_ = "Calculating route...";
+    message_ = "Calculating route…";
     return route_revision_;
 }
 
