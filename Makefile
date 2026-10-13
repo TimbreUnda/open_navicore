@@ -261,7 +261,7 @@ verify-bench:
 	@echo "Bench verification is operator-run; see docs/development/validation-tiers.md"
 
 test-host: check-contracts osmand-session-test navigation-ui-test \
-	camera-controller-test tile-cache-test labels-test
+	camera-controller-test tile-cache-test labels-test vector-test
 	mkdir -p $(BUILD_DIR)
 	$(CC) -std=c99 -O2 -g -Wall -Wextra -Werror \
 		-pthread \

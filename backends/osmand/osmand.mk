@@ -78,6 +78,27 @@ osmand-route-smoke: $(OSMAND_ROUTE_SMOKE_TARGET) | $(DIST_DIR)
 osmand-plugin-smoke: $(OSMAND_PLUGIN_SMOKE_TARGET) | $(DIST_DIR)
 	cp $< $(DIST_DIR)/qnx-osmand-plugin-smoke
 
+# GPU vector map proof of concept (standalone, see vector/vector_poc.cpp).
+OSMAND_VECTOR_POC_TARGET := $(OSMAND_BUILD_DIR)/vector-poc
+OSMAND_VECTOR_POC_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/vector/,vector_poc.o \
+	vector_style.o vector_tessellator.o)
+
+vector-poc: $(OSMAND_VECTOR_POC_TARGET) | $(DIST_DIR)
+	cp $< $(DIST_DIR)/vector-poc
+
+$(OSMAND_BUILD_DIR)/vector/%.o: backends/osmand/vector/%.cpp \
+		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
+	mkdir -p $(dir $@)
+	$(OSMAND_COMPILE) -MMD -MP -c $< -o $@
+
+$(OSMAND_VECTOR_POC_TARGET): $(OSMAND_VECTOR_POC_OBJECTS) \
+		$(OSMAND_CORE_LIB_DIR)/libOsmAndCore_shared.so
+	$(OSMAND_ENV) $(OSMAND_CXX) --sysroot=$(QNX_TARGET) -B$(OSMAND_BINUTILS_DIR)/ \
+		-static-libstdc++ -static-libgcc -Wl,--allow-shlib-undefined \
+		-Wl,-rpath,/datastore/navicore-backend -o $@ $(OSMAND_VECTOR_POC_OBJECTS) \
+		-L$(OSMAND_CORE_LIB_DIR) -lOsmAndCore_shared \
+		-lscreen -lEGL -lGLESv2 -lsocket -lslog2 -lz -lpps -lm -lc
+
 $(OSMAND_BUILD_DIR):
 	mkdir -p $@
 
@@ -141,7 +162,8 @@ $(OSMAND_BUILD_DIR)/qnx_osmand_plugin_smoke.o: tests/qnx_osmand_plugin_smoke.c \
 $(OSMAND_PLUGIN_SMOKE_TARGET): $(OSMAND_BUILD_DIR)/qnx_osmand_plugin_smoke.o
 	$(OSMAND_ENV) $(QCC) -Vgcc_ntoarmv7le -o $@ $<
 
--include $(OSMAND_OBJECTS:.o=.d) $(OSMAND_BUILD_DIR)/qnx_osmand_obf_smoke.d \
+-include $(OSMAND_OBJECTS:.o=.d) $(OSMAND_VECTOR_POC_OBJECTS:.o=.d) \
+	$(OSMAND_BUILD_DIR)/qnx_osmand_obf_smoke.d \
 	$(OSMAND_BUILD_DIR)/qnx_osmand_route_smoke.d \
 	$(OSMAND_BUILD_DIR)/qnx_osmand_plugin_smoke.d
 
@@ -157,6 +179,21 @@ osmand-manifest: osmand-backend
 		--config-key "$(OSMAND_CONFIG_KEY)" \
 		--plugin "$(OSMAND_PLUGIN_TARGET)" \
 		--output "$(OSMAND_BUILD_DIR)/bundle-manifest.json"
+
+# earcut.hpp comes from the OsmAnd source tree; skipped without it.
+OSMAND_EARCUT_INCLUDE := $(OSMAND_QNX_ROOT)/source/core/include
+vector-test:
+ifneq ($(wildcard $(OSMAND_EARCUT_INCLUDE)/mapbox/earcut.hpp),)
+	mkdir -p $(BUILD_DIR)
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Werror \
+		-Ibackends/osmand -I$(OSMAND_EARCUT_INCLUDE) \
+		backends/osmand/vector/vector_style.cpp \
+		backends/osmand/vector/vector_tessellator.cpp tests/vector_test.cpp \
+		-o $(BUILD_DIR)/vector-test
+	$(BUILD_DIR)/vector-test
+else
+	@echo "vector-test: skipped (set OSMAND_QNX_ROOT for earcut.hpp)"
+endif
 
 labels-test:
 	mkdir -p $(BUILD_DIR)
