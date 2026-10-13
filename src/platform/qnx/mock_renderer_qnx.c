@@ -16,6 +16,10 @@
 
 #define MOCK_PRESENT_PACING_NANOSECONDS UINT64_C(0)
 #define MOCK_WINDOW_BUFFER_COUNT 3
+/* Bench experiment: "2" or "3" render buffers for NAV_main. A Screen sweep
+ * showed eglSwapBuffers blocking ~37 ms with 3 buffers under the HMI but
+ * ~4 ms with 2; whether more frames reach the display is what this tests. */
+#define MOCK_BUFFERS_MARKER "/datastore/navicore-backend/nav-buffers"
 #define MOCK_PRESENT_TRACE_PATH "/tmp/open-navicore-present.log"
 #define MOCK_CONTENT_X 0
 #define MOCK_CONTENT_Y 72
@@ -311,6 +315,7 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     int opaque_applied = 0;
     int transparency = -1;
     int usage = -1;
+    int requested_buffers = MOCK_WINDOW_BUFFER_COUNT;
     int identity_coordinates;
 
     memset(&g_qnx, 0, sizeof(g_qnx));
@@ -374,8 +379,12 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                                                     &class_pipeline);
         }
     }
-    if (screen_create_window_buffers(g_qnx.window,
-                                     MOCK_WINDOW_BUFFER_COUNT) != 0) {
+    {
+        const int marker_buffers = marker_integer(MOCK_BUFFERS_MARKER);
+        if (marker_buffers == 2 || marker_buffers == 3)
+            requested_buffers = marker_buffers;
+    }
+    if (screen_create_window_buffers(g_qnx.window, requested_buffers) != 0) {
         /* A rejected overlay request falls back to the class composition. */
         int fallback_usage = class_usage > 0 ? class_usage :
                                                SCREEN_USAGE_OPENGL_ES2;
@@ -387,7 +396,7 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                                            SCREEN_PROPERTY_PIPELINE,
                                            &class_pipeline) != 0) ||
             screen_create_window_buffers(g_qnx.window,
-                                         MOCK_WINDOW_BUFFER_COUNT) != 0) {
+                                         requested_buffers) != 0) {
             (void)screen_error(diagnostic, capacity, "NAV_main window buffers");
             goto fail;
         }
@@ -492,11 +501,11 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                       "usage=0x%x pipeline=%d overlay_requested=%d "
                       "overlay_pipeline=%d overlay_applied=%d "
                       "opaque_requested=%d opaque_applied=%d "
-                      "transparency=%d\n",
+                      "transparency=%d buffers=%d\n",
                       (unsigned int)class_usage, class_pipeline,
                       (unsigned int)usage, pipeline, overlay_requested,
                       overlay_pipeline, overlay_applied, opaque_requested,
-                      opaque_applied, transparency);
+                      opaque_applied, transparency, requested_buffers);
         (void)fflush(g_qnx.trace_file);
     }
     set_diagnostic(diagnostic, capacity,
@@ -507,7 +516,7 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
                    "buffer_count=%d render_buffers=%d pipeline=%d "
                    "pace_interval_us=0 acceptance_floor_fps=30 uncapped=1 "
                    "persistent_context=1",
-                   (unsigned int)config_id, MOCK_WINDOW_BUFFER_COUNT,
+                   (unsigned int)config_id, requested_buffers,
                    target->width, target->height,
                    identity_coordinates, sensitivity, min_swap_interval,
                    max_swap_interval, g_qnx.asynchronous_swap,

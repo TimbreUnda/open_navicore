@@ -34,6 +34,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -478,27 +479,57 @@ public:
         for (std::size_t i = 0; i < active_.symbols.size(); ++i)
             if (i >= visible_.size() || !visible_[i]) order_.push_back(i);
         visible_.assign(active_.symbols.size(), 0u);
+        PlacementStats frame_stats;
         for (const std::size_t index : order_) {
             const auto& symbol = active_.symbols[index];
             OrientedBox box;
             if (symbol.on_path && symbol.path31.size() >= 2) {
                 // Street name: follow the road on screen, upright, and only
                 // where the visible road is long and straight enough.
-                screen_path_.clear();
-                for (const auto& point : symbol.path31) {
+                // Project outward from the pin and keep the contiguous run
+                // of points that project: the label only needs the road near
+                // its pin, and one far point failing used to drop half of
+                // the street names (seen live: 5-7 of 12 per frame).
+                ++frame_stats.streets;
+                const int count = static_cast<int>(symbol.path31.size());
+                const int pin = std::clamp(symbol.pin_segment, 0, count - 2);
+                const auto project = [&](int index, ScreenPoint& out) {
                     OsmAnd::PointI projected;
                     if (!renderer.obtainScreenPointFromPosition(
-                            point, projected, false))
-                        break;
-                    screen_path_.push_back({static_cast<float>(projected.x),
-                                            static_cast<float>(projected.y)});
+                            symbol.path31[index], projected, false))
+                        return false;
+                    out = {static_cast<float>(projected.x),
+                           static_cast<float>(projected.y)};
+                    return true;
+                };
+                ScreenPoint first;
+                ScreenPoint second;
+                if (!project(pin, first) || !project(pin + 1, second)) {
+                    ++frame_stats.projection_failed;
+                    continue;
                 }
-                if (screen_path_.size() != symbol.path31.size() ||
-                    !place_along_path(screen_path_, symbol.pin_segment,
+                backward_.clear();
+                for (int i = pin - 1; i >= 0; --i) {
+                    ScreenPoint point;
+                    if (!project(i, point)) break;
+                    backward_.push_back(point);
+                }
+                screen_path_.assign(backward_.rbegin(), backward_.rend());
+                const int local_pin = static_cast<int>(screen_path_.size());
+                screen_path_.push_back(first);
+                screen_path_.push_back(second);
+                for (int i = pin + 2; i < count; ++i) {
+                    ScreenPoint point;
+                    if (!project(i, point)) break;
+                    screen_path_.push_back(point);
+                }
+                if (!place_along_path(screen_path_, local_pin,
                                       symbol.pin_t,
                                       static_cast<float>(symbol.width),
-                                      static_cast<float>(symbol.height), box))
+                                      static_cast<float>(symbol.height), box)) {
+                    ++frame_stats.fit_rejected;
                     continue;
+                }
             } else {
                 OsmAnd::PointI screen;
                 if (!renderer.obtainScreenPointFromPosition(
@@ -511,8 +542,10 @@ public:
             const float reach = std::max(box.half_width, box.half_height);
             if (box.cx + reach <= 0.0f || box.cy + reach <= 0.0f ||
                 box.cx - reach >= static_cast<float>(width) ||
-                box.cy - reach >= static_cast<float>(height))
+                box.cy - reach >= static_cast<float>(height)) {
+                ++frame_stats.offscreen;
                 continue;
+            }
             bool collision = false;
             for (const auto& placed : accepted_) {
                 if (boxes_overlap(box, placed)) {
@@ -520,8 +553,13 @@ public:
                     break;
                 }
             }
-            if (collision)
+            if (collision) {
+                ++frame_stats.collided;
                 continue;
+            }
+            if (symbol.on_path)
+                ++frame_stats.streets_drawn;
+            ++frame_stats.drawn;
             accepted_.push_back(box);
             visible_[index] = 1u;
             ScreenPoint corners[4];   // text top-left, top-right, bottom-right, bottom-left
@@ -538,6 +576,7 @@ public:
                 clip(corners[2], symbol.u1, symbol.v1),
                 clip(corners[1], symbol.u1, symbol.v0)});
         }
+        report_placement(frame_stats);
         if (vertices_.empty())
             return true;
         glUseProgram(program_);
@@ -667,6 +706,24 @@ private:
             }
             const auto build_started = std::chrono::steady_clock::now();
             Atlas result = build_atlas(work, *provider, stopping_);
+            {
+                std::size_t streets = 0, shields = 0, places = 0, pois = 0;
+                for (const auto& symbol : result.symbols) {
+                    switch (symbol.label_class) {
+                    case LabelClass::Street: ++streets; break;
+                    case LabelClass::Shield: ++shields; break;
+                    case LabelClass::Place: ++places; break;
+                    case LabelClass::DriverPoi: ++pois; break;
+                    case LabelClass::Drop: break;
+                    }
+                }
+                char message[160];
+                std::snprintf(message, sizeof(message),
+                              "retained_symbols=atlas streets=%zu shields=%zu "
+                              "places=%zu pois=%zu",
+                              streets, shields, places, pois);
+                trace(message);
+            }
             trace_result("retained_symbols=built_ms",
                          static_cast<std::uint64_t>(
                              std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -715,8 +772,37 @@ private:
     Atlas active_;
     bool atlas_dirty_ = false;
     std::vector<GlVertex> vertices_;
+    struct PlacementStats {
+        std::size_t streets = 0;
+        std::size_t projection_failed = 0;
+        std::size_t fit_rejected = 0;
+        std::size_t offscreen = 0;
+        std::size_t collided = 0;
+        std::size_t streets_drawn = 0;
+        std::size_t drawn = 0;
+    };
+    // Traces the last frame's placement outcome every 5 s.
+    void report_placement(const PlacementStats& stats)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - placement_reported_at_ < std::chrono::seconds(5))
+            return;
+        placement_reported_at_ = now;
+        char message[200];
+        std::snprintf(message, sizeof(message),
+                      "retained_symbols=placement symbols=%zu streets=%zu "
+                      "projection_failed=%zu fit_rejected=%zu offscreen=%zu "
+                      "collided=%zu streets_drawn=%zu drawn=%zu",
+                      active_.symbols.size(), stats.streets,
+                      stats.projection_failed, stats.fit_rejected,
+                      stats.offscreen, stats.collided, stats.streets_drawn,
+                      stats.drawn);
+        trace(message);
+    }
+    std::chrono::steady_clock::time_point placement_reported_at_{};
     std::vector<OrientedBox> accepted_;
     std::vector<ScreenPoint> screen_path_;
+    std::vector<ScreenPoint> backward_;
     std::vector<std::size_t> order_;
     std::vector<std::uint8_t> visible_;
     GLuint program_ = 0;

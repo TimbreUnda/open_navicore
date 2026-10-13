@@ -14,8 +14,8 @@ radio (see `docs/performance/rendering-architecture.md`). They do not touch
 Build on the host and copy to the radio's RAM-backed `/tmp`:
 
 ```sh
-make -C tools/qnx/screen_bench QNX_SDK=/mnt/d/qnx660-sdk \
-    QNX_HOST_LIBS=/mnt/d/tools/qnx-host-libs
+make -C tools/qnx/screen_bench QNX_SDK=/path/to/qnx660-sdk \
+    QNX_HOST_LIBS=/path/to/qnx-host-libs
 scp -p dist/screen_bench_tools/* tools/qnx/screen_bench/*.sh root@192.168.2.8:/tmp/
 ```
 

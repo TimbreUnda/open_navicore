@@ -654,7 +654,8 @@ void NavigationView::build_guidance()
         lv_obj_t* primary_card = lv_obj_create(rail);
         panel(primary_card, maneuver);
         lv_obj_set_width(primary_card, LV_PCT(100));
-        lv_obj_set_height(primary_card, 142);
+        // Four lines: simulation tag, distance (28), action (20), road (14).
+        lv_obj_set_height(primary_card, 168);
         lv_obj_set_style_pad_all(primary_card, 18, 0);
         lv_obj_set_style_pad_column(primary_card, 14, 0);
         lv_obj_set_flex_flow(primary_card, LV_FLEX_FLOW_ROW);
