@@ -79,6 +79,38 @@ typedef struct {
 
 static QnxRenderer g_qnx;
 
+/* Diagnostic: with the marker below, every raw Screen input event and the
+ * decoder's verdict go to INPUT_TRACE_PATH (bounded), to see what the
+ * provider receives during a touch drag. */
+#define INPUT_TRACE_MARKER "/datastore/navicore-backend/enable-input-trace"
+#define INPUT_TRACE_PATH "/tmp/open-navicore-input.log"
+#define INPUT_TRACE_LINES 4000u
+static FILE *g_input_trace;
+static unsigned int g_input_trace_lines;
+
+static void input_trace_open(void)
+{
+    if (g_input_trace != NULL || access(INPUT_TRACE_MARKER, F_OK) != 0) return;
+    g_input_trace = fopen(INPUT_TRACE_PATH, "w");
+    g_input_trace_lines = 0u;
+}
+
+static void input_trace(const char *format, ...)
+{
+    struct timespec now;
+    va_list args;
+    if (g_input_trace == NULL || g_input_trace_lines >= INPUT_TRACE_LINES) return;
+    (void)clock_gettime(CLOCK_MONOTONIC, &now);
+    (void)fprintf(g_input_trace, "%lld.%03ld ", (long long)now.tv_sec,
+                  now.tv_nsec / 1000000L);
+    va_start(args, format);
+    (void)vfprintf(g_input_trace, format, args);
+    va_end(args);
+    (void)fputc('\n', g_input_trace);
+    (void)fflush(g_input_trace);
+    ++g_input_trace_lines;
+}
+
 static uint64_t monotonic_nanoseconds(void)
 {
     struct timespec now;
@@ -494,6 +526,10 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     mock_screen_input_reset(&g_qnx.input, (uintptr_t)g_qnx.window,
                             identity_coordinates, target->width,
                             target->height);
+    input_trace_open();
+    input_trace("input_trace start window=%p size=%ux%u identity=%d",
+                (void *)g_qnx.window, target->width, target->height,
+                identity_coordinates);
     target->native_pointer_bytes = sizeof(void *);
     target->native_screen_window = (uintptr_t)g_qnx.window;
     target->native_egl_display = (uintptr_t)g_qnx.display;
@@ -680,6 +716,7 @@ int mock_renderer_platform_poll_pointer(MockNavBackendPointerV1 *pointer_out,
         raw.type = MOCK_SCREEN_RAW_RELEASE;
     else {
         increment_counter(&g_qnx.ignored_events);
+        input_trace("type=%d ignored_type", event_type);
         return 2;
     }
 
@@ -715,6 +752,19 @@ int mock_renderer_platform_poll_pointer(MockNavBackendPointerV1 *pointer_out,
         raw.touch_id = (uint32_t)value;
         raw.touch_id_valid = 1u;
     }
-    return mock_screen_input_platform_result(
-        mock_screen_input_decode(&g_qnx.input, &raw, pointer_out));
+    {
+        const int decoded = mock_screen_input_decode(&g_qnx.input, &raw, pointer_out);
+        input_trace("type=%d own=%d pos=%d,%d src=%d,%d btn=%u id=%u decoded=%d "
+                    "action=%u out=%d,%d acc=%u foreign=%u dup=%u sec=%u drop=%u oob=%u ign=%u",
+                    event_type, raw.window == (uintptr_t)g_qnx.window,
+                    raw.position_x, raw.position_y, raw.source_x, raw.source_y,
+                    raw.buttons, raw.touch_id, decoded,
+                    decoded == 1 ? pointer_out->action : 0u,
+                    decoded == 1 ? pointer_out->x : -1, decoded == 1 ? pointer_out->y : -1,
+                    g_qnx.input.accepted, g_qnx.input.foreign_window,
+                    g_qnx.input.duplicate_class, g_qnx.input.secondary_touch,
+                    g_qnx.input.coordinate_drops, g_qnx.input.out_of_bounds,
+                    g_qnx.input.ignored);
+        return mock_screen_input_platform_result(decoded);
+    }
 }

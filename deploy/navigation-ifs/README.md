@@ -29,6 +29,7 @@ or `open_navicore_disabled_by_marker`, `open_navicore_image_absent`,
 ## Build (host)
 
 ```sh
+export QNX_MKIFS_TOOLKIT=<path to the QNX 6.6 mkifs toolkit>
 make                                  # dist/libNaviCore.so (provider)
 make osmand-backend                   # dist/libMockNavBackendOsmAnd.so
 python3 deploy/navigation-ifs/build_navigation_ifs.py \

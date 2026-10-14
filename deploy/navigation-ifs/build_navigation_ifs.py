@@ -8,7 +8,7 @@ STOCK_CFG  the unit's factory /pas/scfg/nv_navigation.cfg (not committed;
            take it from the firmware dump or a read-only copy of the unit).
 OUT_DIR    new directory for navigation.ifs, its build inputs and
            SHA256SUMS.
-MKIFS      the QNX 6.6 mkifs wrapper (default: the local toolkit).
+MKIFS      the QNX 6.6 mkifs wrapper (default: $QNX_MKIFS_TOOLKIT/mkifs.sh).
 
 The image is mounted at / by the boot hook (patch_boot_overlay.py) and adds
 only paths under /open-navicore/:
@@ -43,7 +43,10 @@ def main():
     if len(sys.argv) < 4:
         raise SystemExit(__doc__)
     provider, stock_cfg, out = sys.argv[1:4]
-    mkifs = sys.argv[4] if len(sys.argv) > 4 else '/mnt/d/qnx660-mkifs-toolkit/mkifs.sh'
+    toolkit = os.environ.get('QNX_MKIFS_TOOLKIT', '')
+    mkifs = sys.argv[4] if len(sys.argv) > 4 else os.path.join(toolkit, 'mkifs.sh')
+    if not os.path.exists(mkifs):
+        raise SystemExit('set QNX_MKIFS_TOOLKIT to the mkifs toolkit (or pass MKIFS)')
     if os.path.exists(out):
         raise SystemExit('refusing to overwrite existing ' + out)
 

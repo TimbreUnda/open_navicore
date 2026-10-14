@@ -5,6 +5,7 @@
 
 LIVE_BOOT_OVERLAY_IFS  a copy of /datastore/ifs-overrides/boot_overlay.ifs.
 OUT_DIR                new directory for boot_overlay.ifs and evidence.
+TOOLKIT_DIR            mkifs toolkit (default: $QNX_MKIFS_TOOLKIT).
 
 Only bin/boot_overlay_main.sh changes. Its three one-shot navigation blocks
 (v12, v13, final: an arm marker is consumed, then the config is redirected
@@ -15,7 +16,7 @@ automatic return to the native provider. Manual rollback: create
 /datastore/navicore/disabled (or remove navigation.ifs) and reboot.
 
 Every other entry is extracted, rebuilt and checked byte-identical, with the
-original modes, as for the earlier Media Studio rebuild.
+modes listed in the input image, as for the earlier Media Studio rebuild.
 """
 import hashlib
 import os
@@ -50,18 +51,22 @@ fi
 VARIABLES = '''NAVI_ROOT=/datastore/navicore
 NAVI_IFS=$NAVI_ROOT/navigation.ifs
 '''
-ENTRIES = [  # path, mode (from the live image)
-    ('.ifs_boot_overlay_padding.txt', '0400'),
-    ('bin/boot_overlay_main.sh', '01555'),
-    ('bin/boot_overlay_post.sh', '01555'),
-    ('ssh/.ssh/sshd_config', '0600'),
-    ('etc/usblauncher/bsp_asix_Interface.sh', '01555'),
-    ('ssh/.ssh/authorized_keys.root', '0600'),
-    ('etc/usblauncher/bsp_stop_asix_Interface.sh', '01555'),
-    ('ssh/.ssh/banner', '0444'),
-    ('etc/passwd', '0444'),
-    ('etc/group', '0444'),
-]
+def list_entries(toolkit, image):
+    """(path, mode) of every file in the image, in image order."""
+    listing = subprocess.run([os.path.join(toolkit, 'dumpifs.sh'), '-vv', os.path.abspath(image)],
+                             check=True, capture_output=True, text=True).stdout.splitlines()
+    entries = []
+    for index, line in enumerate(listing):
+        match = re.match(r'^\s+[0-9a-f]+\s+[0-9a-f]+\s+(\S+)$', line)
+        if not match or match.group(1).startswith(('Image-', 'Root-')):
+            continue
+        mode = re.search(r'mode=(0[0-7]+)', listing[index + 1]) if index + 1 < len(listing) else None
+        if not mode:
+            raise SystemExit('no mode for entry ' + match.group(1))
+        entries.append((match.group(1), mode.group(1)))
+    if not any(path == 'bin/boot_overlay_main.sh' for path, _ in entries):
+        raise SystemExit('bin/boot_overlay_main.sh not in the image')
+    return entries
 
 
 def sha256(path):
@@ -69,12 +74,12 @@ def sha256(path):
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def extract(toolkit, image, into):
-    for path, _ in ENTRIES:
+def extract(toolkit, image, into, entries):
+    for path, _ in entries:
         os.makedirs(os.path.join(into, os.path.dirname(path)), exist_ok=True)
     subprocess.run([os.path.join(toolkit, 'dumpifs.sh'), '-x', os.path.abspath(image)],
                    cwd=into, check=True, stdout=subprocess.DEVNULL)
-    for path, _ in ENTRIES:
+    for path, _ in entries:
         if not os.path.isfile(os.path.join(into, path)):
             raise SystemExit('entry missing from the live image: ' + path)
 
@@ -98,17 +103,20 @@ def main():
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
     live, out = sys.argv[1:3]
-    toolkit = sys.argv[3] if len(sys.argv) > 3 else '/mnt/d/qnx660-mkifs-toolkit'
+    toolkit = sys.argv[3] if len(sys.argv) > 3 else os.environ.get('QNX_MKIFS_TOOLKIT', '')
+    if not os.path.exists(os.path.join(toolkit, 'mkifs.sh')):
+        raise SystemExit('set QNX_MKIFS_TOOLKIT to the mkifs toolkit (or pass TOOLKIT_DIR)')
     if os.path.exists(out):
         raise SystemExit('refusing to overwrite existing ' + out)
     os.makedirs(out)
     before = os.path.join(out, 'before')
     entries = os.path.join(out, 'entries')
     os.makedirs(before)
-    extract(toolkit, live, before)
+    entry_list = list_entries(toolkit, live)
+    extract(toolkit, live, before, entry_list)
 
     os.makedirs(entries)
-    for path, _ in ENTRIES:
+    for path, _ in entry_list:
         source = os.path.join(before, path)
         target = os.path.join(entries, path)
         os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -121,7 +129,7 @@ def main():
     build = os.path.join(out, 'boot_overlay.build')
     with open(build, 'w') as f:
         f.write('[-bigendian]\n')
-        for path, mode in ENTRIES:
+        for path, mode in entry_list:
             f.write('[uid=0 gid=0 perms=%s] %s = entries/%s\n' % (mode, path, path))
     subprocess.run([os.path.join(toolkit, 'mkifs.sh'), '-nn', 'boot_overlay.build',
                     'boot_overlay.ifs'], cwd=out, check=True)
@@ -129,9 +137,9 @@ def main():
     # Readback: every entry but the patched script is byte-identical.
     check = os.path.join(out, 'readback')
     os.makedirs(check)
-    extract(toolkit, os.path.join(out, 'boot_overlay.ifs'), check)
+    extract(toolkit, os.path.join(out, 'boot_overlay.ifs'), check, entry_list)
     report = []
-    for path, _ in ENTRIES:
+    for path, _ in entry_list:
         old, new = sha256(os.path.join(before, path)), sha256(os.path.join(check, path))
         expect_same = path != 'bin/boot_overlay_main.sh'
         if expect_same and old != new:

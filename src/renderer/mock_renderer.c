@@ -564,7 +564,11 @@ static int enqueue_pointer(const MockNavBackendPointerV1 *pointer)
         event = &g_runtime.pointer_queue[
             (g_runtime.pointer_head + g_runtime.pointer_count - 1u) %
             MOCK_POINTER_QUEUE_CAPACITY];
-        event->sequence = next_event_sequence_locked();
+        /* Keep the queued move's sequence: take_event() serves the oldest
+         * event first, and a move renumbered on every coalesce stays newer
+         * than the frame request the backend renews each frame, so during a
+         * drag it was only dispatched about once a second. Updating the
+         * position in place delivers the latest position every frame. */
         event->data.pointer = *pointer;
         increment_counter(&g_runtime.pointer_accepted);
         increment_counter(&g_runtime.pointer_move_coalesced);
