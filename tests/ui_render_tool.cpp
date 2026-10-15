@@ -227,6 +227,38 @@ int main(int argc, char** argv)
         settle(view);
         ok = write(view, out + "/lanes.argb") && ok;
     }
+    for (const bool following : {true, false}) {
+        // Long street name: the pill uses the free row, less recenter.
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        to_preview(view);
+        (void)view.start_guidance(0);
+        MapViewState night;
+        night.night = true;
+        night.following = following;
+        (void)model.set_map_view(night);
+        GuidanceState state;
+        state.position_available = true;
+        state.road = "проспект Степана Бандери · вулиця Велика Васильківська";
+        state.remaining_metres = 2400.0;
+        state.remaining_seconds = 420.0;
+        (void)view.apply_guidance(state);
+        settle(view);
+        ok = write(view, out + (following ? "/street_long.argb" : "/street_long_free.argb")) && ok;
+    }
+    for (const bool failed : {false, true}) {
+        // Navigate from a place card: calculating, then a failure.
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        settle(view);
+        (void)view.show_place_card({"poi:1,2", "WOG", "Fuel · 0.4 km · вулиця Саксаганського", "",
+                                    50.44, 30.52}, "amenity_fuel");
+        const auto revision = view.select_place(*model.place_card());
+        if (failed)
+            (void)view.apply_routes(revision, {});
+        settle(view);
+        ok = write(view, out + (failed ? "/place_failed.argb" : "/place_calculating.argb")) && ok;
+    }
     std::puts(ok ? "ui-render-tool: ok" : "ui-render-tool: write failed");
     return ok ? 0 : 1;
 }

@@ -230,9 +230,13 @@ void test_car_controls()
         settle(view, 31);
         // Recent rows follow "Where to?" (16 + 64 + 8) and the card's
         // RECENT heading (12 + 22): the first row spans y 122..186.
+        // A recent destination routes directly: free drive stays, the card
+        // shows the calculation, no search screen.
         const auto revision = model.route_revision();
         tap(view, 160, 122 + 32);
-        assert(model.screen() == Screen::Search);
+        assert(model.screen() == Screen::FreeDrive);
+        assert(model.direct_routing() && model.calculating_route());
+        assert(model.place_card() && model.place_card()->id == "home");
         assert(model.destination() && model.destination()->id == "home");
         assert(model.route_revision() > revision);
 
@@ -281,21 +285,62 @@ void test_place_card_and_back()
     assert(model.place_card() && model.place_card()->title == "WOG");
     tap(view, 16 + 16 + 71, 574 - 16 - 160 + 80 + 32);
     assert(!model.place_card() && model.screen() == Screen::FreeDrive);
-    // Navigate (right button) routes to the place.
+    // Navigate (right button) routes to the place from free drive: no
+    // search screen, the card says it is calculating.
     assert(view.show_place_card(wog, "amenity_fuel"));
     settle(view, 2);
-    tap(view, 16 + 166 + 99, 574 - 16 - 160 + 80 + 32);
-    assert(model.screen() == Screen::Search);
+    const int navigate_x = 16 + 166 + 99, navigate_y = 574 - 16 - 160 + 80 + 32;
+    tap(view, navigate_x, navigate_y);
+    assert(model.screen() == Screen::FreeDrive);
     assert(model.destination() && model.destination()->id == "poi:1,2");
-    assert(!model.place_card());
-    // Place cards only open over free drive.
-    assert(!view.show_place_card(wog, "amenity_fuel"));
+    assert(model.place_card() && model.place_card_icon() == "amenity_fuel");
+    assert(model.calculating_route());
+    const auto calculating = model.route_revision();
+    settle(view, 2);
+    tap(view, navigate_x, navigate_y);  // disabled while calculating
+    assert(model.route_revision() == calculating);
 
-    // Route preview Back returns to the search screen.
+    // A failure stays on the card; Navigate tries again.
+    assert(view.apply_routes(calculating, {}));
+    assert(model.screen() == Screen::FreeDrive && model.place_card());
+    assert(!model.calculating_route() && !model.message().empty());
+    settle(view, 2);
+    tap(view, navigate_x, navigate_y);
+    assert(model.calculating_route() && model.route_revision() > calculating);
+
+    // The route opens Route preview; a stale result does not.
     RouteAlternative route;
     route.duration = "5 min";
     route.distance = "1.0 km";
     route.geometry = {{50.0, 30.0}, {50.01, 30.0}};
+    assert(!view.apply_routes(calculating, {route}));
+    assert(view.apply_routes(model.route_revision(), {route}));
+    assert(model.screen() == Screen::RoutePreview);
+    // Place cards only open over free drive.
+    assert(!view.show_place_card(wog, "amenity_fuel"));
+
+    // Route preview Back returns to free drive with the place card.
+    settle(view, 2);
+    tap(view, 16 + 40, 16 + 32);
+    assert(model.screen() == Screen::FreeDrive);
+    assert(model.routes().empty() && !model.destination());
+    assert(model.place_card() && model.place_card()->id == "poi:1,2");
+    assert(!model.direct_routing());
+
+    // Close while calculating cancels the route.
+    settle(view, 2);
+    tap(view, navigate_x, navigate_y);
+    const auto cancelled = model.route_revision();
+    assert(view.close_place_card());
+    assert(!model.destination() && model.route_revision() > cancelled);
+    assert(!view.apply_routes(cancelled, {route}));
+    assert(model.screen() == Screen::FreeDrive);
+
+    // From Search the old flow stays: preview Back returns to the results.
+    view.open_search();
+    (void)model.set_query("WOG");
+    assert(view.apply_search_results(model.search_revision(), {wog}));
+    assert(view.select_result(0));
     assert(view.apply_routes(model.route_revision(), {route}));
     assert(model.screen() == Screen::RoutePreview);
     settle(view, 2);

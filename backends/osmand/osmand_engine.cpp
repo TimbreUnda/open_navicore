@@ -52,6 +52,7 @@ private:
     // fit: frame the whole route (new route); false keeps the camera
     // (a recalculated route during guidance).
     void show_route(const ui::RouteAlternative&, bool fit = true);
+    bool clear_route();
     // Off-route recalculation (G8): request a new route after the
     // position stays off the route.
     void check_off_route(const ui::GuidanceState& state, const ui::GeoPoint& position);
@@ -111,6 +112,7 @@ private:
     bool pose_applied_ = false;
     bool night_ = false;
     bool overview_pending_ = false;
+    bool route_shown_ = false;  // the vector map draws a route
     double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
     MockNavBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
@@ -391,6 +393,7 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
     }
     if (vector_map_)
         vector_map_->set_route(route31);
+    route_shown_ = true;
     overview_box_[0] = min_latitude;
     overview_box_[1] = min_longitude;
     overview_box_[2] = max_latitude;
@@ -402,6 +405,23 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
     simulation_running_ = false;
     simulation_progress_metres_ = 0.0;
     simulation_arrival_reported_ = false;
+}
+
+bool OsmAndEngine::clear_route()
+{
+    if (!route_shown_)
+        return false;
+    route_shown_ = false;
+    overview_pending_ = false;
+    if (vector_map_) {
+        vector_map_->set_route({});
+        sync_vector_guidance(nullptr);
+    }
+    // The route overview ends with its route.
+    if (camera_.mode() == CameraController::Mode::Overview)
+        camera_.recenter();
+    trace("route=cleared");
+    return true;
 }
 
 bool OsmAndEngine::update_guidance()
@@ -523,8 +543,10 @@ bool OsmAndEngine::apply_camera()
     const double now_s =
         std::chrono::duration<double>(now - clock_origin_).count();
     const auto screen = navigation_->screen();
-    if (screen == ui::Screen::Search)
+    if (screen == ui::Screen::Search) {
+        vector_view_.tile_zoom_limit = -1.0;
         return false;
+    }
 
     const auto area = view_->map_area();
     camera_.set_viewport({area.x, area.y, area.width, area.height});
@@ -591,6 +613,7 @@ bool OsmAndEngine::apply_camera()
 
     const auto vehicle = motion_.predict(now_s);
     const auto pose = camera_.update(vehicle, dt);
+    vector_view_.tile_zoom_limit = pose.tile_zoom;
     const bool changed = !pose_applied_ ||
         std::fabs(pose.latitude - applied_pose_.latitude) > 1e-8 ||
         std::fabs(pose.longitude - applied_pose_.longitude) > 1e-8 ||
@@ -916,6 +939,11 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         pose_applied_ = false;
         guidance_changed = true;
     }
+    // The route is drawn in Route preview and Guidance only: End, arrival,
+    // preview Back and closing Search clear it.
+    if (route_shown_ && navigation_->screen() != ui::Screen::RoutePreview &&
+        navigation_->screen() != ui::Screen::Guidance)
+        guidance_changed = clear_route() || guidance_changed;
     if (navigation_->screen() == ui::Screen::Search) {
         const auto revision = navigation_->search_revision();
         const auto now = std::chrono::steady_clock::now();
@@ -945,8 +973,11 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     } else {
         search_revision_observed_ = false;
     }
-    if (navigation_->screen() == ui::Screen::Search &&
-        navigation_->destination() &&
+    // A destination picked in Search, or directly from free drive (place
+    // card, recent destination).
+    if ((navigation_->screen() == ui::Screen::Search ||
+         navigation_->direct_routing()) &&
+        navigation_->calculating_route() &&
         navigation_->route_revision() != submitted_route_revision_) {
         submitted_route_revision_ = navigation_->route_revision();
         trace_result("engine=route_submit", submitted_route_revision_, 1u);

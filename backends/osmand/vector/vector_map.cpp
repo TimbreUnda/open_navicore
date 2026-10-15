@@ -1497,6 +1497,9 @@ struct VectorMap::Impl {
     std::map<TileKey, TileLabels> labels;
     std::size_t gpu_bytes = 0;
     std::uint64_t frame = 0;
+    // Previous frame's camera: labels snap to pixels only while it is still.
+    double last_origin[2] = {0.0, 0.0};
+    double last_h[9] = {};
     LabelImagePtr location_dot = make_location_dot();
     const std::uint64_t location_key = fnv1a("@location");
     // Fade state by label id: this frame's table is filled, then swapped.
@@ -2175,7 +2178,10 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
     apply_night();
     const double zoom = VectorMap::zoom_of(view);
     const int max_tile_zoom = builder.overzoom() ? kOverzoomTileZoom : kMaxTileZoom;
-    const int tz = std::clamp(static_cast<int>(std::floor(zoom)), kMinTileZoom, max_tile_zoom);
+    const double tile_zoom = view.tile_zoom_limit >= 0.0
+        ? std::min(zoom, view.tile_zoom_limit) : zoom;
+    const int tz = std::clamp(static_cast<int>(std::floor(tile_zoom)), kMinTileZoom,
+                              max_tile_zoom);
     const std::uint64_t generation = builder.generation();
 
     take_tiles(generation);
@@ -2457,6 +2463,18 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
                                    double zoom, double dt, std::size_t& calls, bool& fading)
 {
     const int W = view.width, H = view.height;
+    // The map is drawn at sub-pixel positions; a label snapped to whole
+    // pixels while the camera moves steps against it (jitter). Snap only
+    // when the camera is still; linear filtering keeps moving labels smooth.
+    bool camera_still = view.origin_x31 == last_origin[0] &&
+                        view.origin_y31 == last_origin[1];
+    for (int i = 0; i < 9 && camera_still; ++i)
+        camera_still = view.h[i] == last_h[i];
+    last_origin[0] = view.origin_x31;
+    last_origin[1] = view.origin_y31;
+    std::copy(std::begin(view.h), std::end(view.h), std::begin(last_h));
+    if (!camera_still)
+        fading = true;  // one more frame once it stops, to snap
     const auto to_world = [](const TileKey& key, const Point& p) {
         const Placement pl = tile_placement(key);
         return std::pair<double, double>{pl.ox + p[0] * pl.k, pl.oy + p[1] * pl.k};
@@ -2499,9 +2517,9 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
         LabelAtlas::Slot slot;
         if (!atlas.slot(atlas_key, image, slot))
             return;
-        if (box.angle == 0.0f) {  // crisp: snap unrotated quads to pixels
-            box.cx = std::floor(box.cx - box.half_width) + box.half_width;
-            box.cy = std::floor(box.cy - box.half_height) + box.half_height;
+        if (camera_still && box.angle == 0.0f) {  // crisp: snap to pixels
+            box.cx = std::round(box.cx - box.half_width) + box.half_width;
+            box.cy = std::round(box.cy - box.half_height) + box.half_height;
         }
         ScreenPoint c[4];
         navicore_osmand::box_corners(box, c);

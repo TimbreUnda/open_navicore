@@ -39,6 +39,9 @@ struct MapView {
     // Screen rectangles covered by UI (x, y, width, height); no label is
     // placed under them.
     std::vector<std::array<float, 4>> blocked;
+    // Camera zoom transition: the deepest tile zoom to use until it ends
+    // (one level instead of every level crossed). Negative: none.
+    double tile_zoom_limit = -1.0;
 };
 
 struct VectorMapStats {

@@ -12,7 +12,8 @@ namespace navicore_osmand {
 // centres it. A manual pan switches to Free; following resumes after an idle
 // timeout or an explicit recenter. Zoom and azimuth approach their targets
 // exponentially so per-frame jitter in position or speed never reaches the
-// screen.
+// screen; a jump of the zoom target (overview, recenter, zoom buttons) is a
+// short eased transition instead, so it arrives rather than tailing off.
 class CameraController {
 public:
     enum class Mode { HeadingUp, NorthUp, Free, Overview };
@@ -42,6 +43,10 @@ public:
         float azimuth_degrees = 0.0f;   // map rotation, 0 = north up
         float elevation_degrees = 90.0f;// 90 = flat top-down
         bool following = true;
+        // During a zoom transition: the one tile zoom to draw until it ends
+        // (the coarser end), so the map does not load every level crossed.
+        // Negative otherwise.
+        float tile_zoom = -1.0f;
     };
 
     struct Settings {
@@ -53,6 +58,8 @@ public:
         float min_speed_zoom = 14.5f;
         float tilted_elevation = 60.0f;
         float zoom_time_constant_s = 1.2f;
+        float zoom_transition_s = 0.6f;  // eased zoom jumps
+        float zoom_jump = 0.25f;         // target change that starts one
         float azimuth_time_constant_s = 0.6f;
         float heading_min_speed_mps = 1.5f; // below this keep last azimuth
         float recenter_after_s = 10.0f;
@@ -69,7 +76,9 @@ public:
 
     // User commands.
     void zoom_by(float steps) noexcept;
-    void toggle_orientation() noexcept;  // heading-up <-> north-up
+    // Heading-up <-> north-up. Also rotates a free (dragged) map and one
+    // without a vehicle: north-up to 0, heading-up to the last known heading.
+    void toggle_orientation() noexcept;
     void set_tilt(bool tilted) noexcept { tilted_ = tilted; }
     bool tilted() const noexcept { return tilted_; }
     void recenter() noexcept;
@@ -85,6 +94,7 @@ public:
 
     Mode mode() const noexcept { return mode_; }
     Mode follow_mode() const noexcept { return follow_mode_; }
+    bool zoom_transition() const noexcept { return transition_; }
     float user_zoom_offset() const noexcept { return user_zoom_offset_; }
 
     // Advances smoothing by `dt_seconds` and returns the pose to apply.
@@ -109,6 +119,13 @@ private:
     float free_zoom_ = 16.0f;
     double idle_seconds_ = 0.0;
     double last_heading_ = 0.0;
+    bool has_heading_ = false;
+    bool following_vehicle_ = false;  // the last update followed a vehicle
+    float free_azimuth_ = 0.0f;   // target azimuth of the free camera
+    float last_target_zoom_ = 16.0f;
+    bool transition_ = false;
+    float transition_from_ = 16.0f;
+    double transition_t_ = 0.0;
     int last_anchor_x_ = 0;
     int last_anchor_y_ = 0;
     float last_elevation_ = 90.0f;

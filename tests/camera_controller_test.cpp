@@ -159,6 +159,85 @@ int main()
         assert(camera.mode() == CameraController::Mode::HeadingUp);
     }
     {
+        // Zoom jumps are eased transitions that arrive in zoom_transition_s
+        // (no exponential tail) and hold the coarser tile zoom meanwhile.
+        auto camera = controller();
+        (void)camera.update(vehicle(45.0, 0.0), 0.016);
+        camera.overview(50.30, 30.30, 50.60, 30.80);
+        const auto first = camera.update(vehicle(45.0, 0.0), 0.016);
+        assert(camera.zoom_transition());
+        assert(first.zoom < settings.follow_base_zoom && first.zoom > 16.9f);
+        const float target = first.tile_zoom;
+        assert(target > 0.0f && target < 13.0f);
+        CameraController::Pose pose = first;
+        double elapsed = 0.016;
+        while (camera.zoom_transition() && elapsed < 2.0) {
+            pose = camera.update(vehicle(45.0, 0.0), 0.016);
+            elapsed += 0.016;
+            if (camera.zoom_transition())
+                assert(near(pose.tile_zoom, target, 1e-4));
+        }
+        assert(near(elapsed, settings.zoom_transition_s + 0.016, 0.02));
+        assert(near(pose.zoom, target, 1e-4) && pose.tile_zoom < 0.0f);
+        // Recenter eases back in; the tile zoom stays at the overview's.
+        camera.recenter();
+        pose = camera.update(vehicle(45.0, 0.0), 0.016);
+        assert(camera.zoom_transition() && near(pose.tile_zoom, target, 1e-4));
+        for (int i = 0; i < 40; ++i)
+            pose = camera.update(vehicle(45.0, 0.0), 0.016);
+        assert(!camera.zoom_transition());
+        assert(near(pose.zoom, settings.follow_base_zoom, 1e-4));
+        // A zoom button is a transition too, and arrives exactly.
+        camera.zoom_by(1.0f);
+        for (int i = 0; i < 40; ++i)
+            pose = camera.update(vehicle(45.0, 0.0), 0.016);
+        assert(near(pose.zoom, settings.follow_base_zoom + 1.0f, 1e-4));
+    }
+    {
+        // Orientation also turns a dragged map and one without a vehicle.
+        auto camera = controller();
+        (void)camera.update(vehicle(90.0, 10.0), 0.016);  // heading-up, east
+        camera.begin_free(50.45, 30.52);
+        CameraController::Pose pose;
+        for (int i = 0; i < 100; ++i)
+            pose = camera.update(vehicle(90.0, 10.0), 0.05);
+        assert(near(pose.azimuth_degrees, 90.0, 0.1));  // free keeps rotation
+        camera.toggle_orientation();                    // north-up
+        assert(camera.mode() == CameraController::Mode::Free);
+        for (int i = 0; i < 100; ++i)
+            pose = camera.update(vehicle(90.0, 10.0), 0.05);
+        assert(near(CameraController::shortest_angle_delta(pose.azimuth_degrees, 0.0), 0.0, 0.1));
+        camera.toggle_orientation();                    // heading-up again
+        for (int i = 0; i < 100; ++i)
+            pose = camera.update(vehicle(90.0, 10.0), 0.05);
+        assert(near(pose.azimuth_degrees, 90.0, 0.1));
+
+        // No vehicle: north-up turns the map north; heading-up with no
+        // heading ever known keeps it where it is.
+        auto bench = controller();
+        CameraController::Vehicle none;
+        (void)bench.update(none, 0.016);
+        bench.toggle_orientation();
+        assert(bench.mode() == CameraController::Mode::NorthUp);
+        pose = bench.update(none, 0.05);
+        assert(near(pose.azimuth_degrees, 0.0, 1e-3));
+        // Zoom buttons still zoom the map without a vehicle.
+        const float before = pose.zoom;
+        bench.zoom_by(1.0f);
+        for (int i = 0; i < 40; ++i)
+            pose = bench.update(none, 0.016);
+        assert(near(pose.zoom, before + 1.0f, 1e-4));
+
+        // A lost fix after driving: heading-up uses the last heading.
+        auto lost = controller();
+        lost.toggle_orientation();                      // north-up
+        (void)lost.update(vehicle(120.0, 10.0), 0.016);
+        lost.toggle_orientation();                      // heading-up
+        for (int i = 0; i < 100; ++i)
+            pose = lost.update(none, 0.05);
+        assert(near(pose.azimuth_degrees, 120.0, 0.1));
+    }
+    {
         // 1 Hz fixes heading east at ~20 m/s: heading/speed are derived and
         // the position is extrapolated between fixes, not stepped.
         MotionEstimator motion;

@@ -106,6 +106,7 @@ private:
     // Lane strip under the manoeuvre card, the speed-limit sign and the
     // street-name pill (design G9, G10).
     void refresh_road_widgets();
+    void layout_street_pill();
     int rail_width() const noexcept;
     void handle_map_gesture(const PointerSample& sample);
     void clear_object_references() noexcept;

@@ -144,6 +144,7 @@ struct MapDrag {
 class NavigationModel {
 public:
     static constexpr std::size_t maximum_recents = 5;
+    static constexpr const char* calculating_message = "Calculating route…";
 
     Screen screen() const noexcept { return screen_; }
     const std::string& query() const noexcept { return query_; }
@@ -195,12 +196,23 @@ public:
     const std::vector<Destination>& recents() const noexcept { return recents_; }
     std::uint64_t recents_revision() const noexcept { return recents_revision_; }
     void set_recents(std::vector<Destination> recents);
-    // Routes to a recent destination through the normal search/route flow.
+    // Routes to a recent destination: from Search through the search flow,
+    // from free drive directly (see select_place).
     std::uint64_t select_recent(std::size_t index);
-    // Routes to a place picked on the map (a POI) through the same flow;
-    // 0 while guiding.
+    // Routes to a place picked on the map (a POI) or a recent destination.
+    // From free drive the route is calculated directly: the screen stays
+    // free drive, the place card shows the state, and the route opens Route
+    // preview. From Search it becomes a one-result search. 0 while guiding.
     std::uint64_t select_place(Destination place);
-    // Route preview Back: returns to the search results.
+    // A direct route from free drive is being calculated or has failed
+    // (message() says which).
+    bool direct_routing() const noexcept { return direct_route_ && screen_ == Screen::FreeDrive; }
+    bool calculating_route() const noexcept
+    {
+        return has_destination_ && routes_.empty() && message_ == calculating_message;
+    }
+    // Route preview Back: returns to where the route was picked (the search
+    // results, or free drive with the place card).
     bool back_to_search() noexcept;
 
     // Off-route recalculation during guidance: request_reroute() opens a
@@ -220,6 +232,7 @@ public:
 
 private:
     void remember_recent(const Destination& destination);
+    void cancel_direct_route() noexcept;
 
     Screen screen_ = Screen::FreeDrive;
     std::string query_;
@@ -247,6 +260,7 @@ private:
     std::string place_icon_;
     bool has_place_ = false;
     bool rerouting_ = false;
+    bool direct_route_ = false;  // the route was picked from free drive
 };
 
 } // namespace navicore_osmand::ui

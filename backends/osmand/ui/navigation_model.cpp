@@ -12,6 +12,7 @@ const Destination* NavigationModel::destination() const noexcept
 
 void NavigationModel::open_search()
 {
+    cancel_direct_route();
     screen_ = Screen::Search;
     message_.clear();
     has_place_ = false;
@@ -24,6 +25,7 @@ void NavigationModel::close_search() noexcept
     results_.clear();
     routes_.clear();
     has_destination_ = false;
+    direct_route_ = false;
     ++search_revision_;
     ++route_revision_;
     message_.clear();
@@ -62,7 +64,7 @@ std::uint64_t NavigationModel::select_destination(std::size_t index)
     routes_.clear();
     selected_route_ = 0;
     ++route_revision_;
-    message_ = "Calculating route…";
+    message_ = calculating_message;
     return route_revision_;
 }
 
@@ -70,7 +72,7 @@ bool NavigationModel::apply_routes(std::uint64_t revision,
                                    std::vector<RouteAlternative> routes)
 {
     if (revision != route_revision_ || !has_destination_ ||
-        screen_ != Screen::Search)
+        (screen_ != Screen::Search && !direct_routing()))
         return false;
     routes_ = std::move(routes);
     if (routes_.empty()) {
@@ -115,6 +117,8 @@ bool NavigationModel::end_guidance() noexcept
     if (screen_ != Screen::Guidance)
         return false;
     rerouting_ = false;
+    direct_route_ = false;
+    has_place_ = false;
     screen_ = Screen::FreeDrive;
     query_.clear();
     results_.clear();
@@ -260,13 +264,42 @@ std::uint64_t NavigationModel::select_recent(std::size_t index)
 
 std::uint64_t NavigationModel::select_place(Destination place)
 {
-    if (screen_ == Screen::Guidance)
+    if (screen_ == Screen::Search) {
+        query_ = place.title;
+        ++search_revision_;
+        results_ = {std::move(place)};
+        return select_destination(0);
+    }
+    if (screen_ != Screen::FreeDrive)
         return 0;
-    open_search();
-    query_ = place.title;
-    ++search_revision_;
-    results_ = {std::move(place)};
-    return select_destination(0);
+    // The card shows the place while its route is calculated; a recent
+    // destination gets one too, so the state and a failure have a place.
+    if (!has_place_ || place_.id != place.id || place_.title != place.title) {
+        place_icon_.clear();
+        has_place_ = true;
+    }
+    place_ = place;
+    destination_ = std::move(place);
+    has_destination_ = true;
+    direct_route_ = true;
+    routes_.clear();
+    selected_route_ = 0;
+    ++route_revision_;
+    message_ = calculating_message;
+    return route_revision_;
+}
+
+void NavigationModel::cancel_direct_route() noexcept
+{
+    if (!direct_route_)
+        return;
+    direct_route_ = false;
+    if (screen_ == Screen::FreeDrive) {
+        has_destination_ = false;
+        routes_.clear();
+        ++route_revision_;
+        message_.clear();
+    }
 }
 
 
@@ -295,7 +328,9 @@ bool NavigationModel::back_to_search() noexcept
 {
     if (screen_ != Screen::RoutePreview)
         return false;
-    screen_ = Screen::Search;
+    // A route picked in free drive returns there, with its place card.
+    screen_ = direct_route_ ? Screen::FreeDrive : Screen::Search;
+    direct_route_ = false;
     routes_.clear();
     has_destination_ = false;
     selected_route_ = 0;
@@ -313,6 +348,7 @@ bool NavigationModel::show_place_card(Destination place, std::string icon)
 {
     if (screen_ != Screen::FreeDrive)
         return false;
+    cancel_direct_route();
     place_ = std::move(place);
     place_icon_ = std::move(icon);
     has_place_ = true;
@@ -323,6 +359,7 @@ bool NavigationModel::close_place_card() noexcept
 {
     if (!has_place_)
         return false;
+    cancel_direct_route();
     has_place_ = false;
     return true;
 }

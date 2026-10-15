@@ -73,7 +73,8 @@ double CameraController::shortest_angle_delta(double from, double to) noexcept
 void CameraController::zoom_by(float steps) noexcept
 {
     idle_seconds_ = 0.0;
-    if (mode_ == Mode::Free || mode_ == Mode::Overview) {
+    // Without a vehicle a follow mode shows the free view; zoom that.
+    if (mode_ == Mode::Free || mode_ == Mode::Overview || !following_vehicle_) {
         free_zoom_ = std::clamp(free_zoom_ + steps, settings_.min_zoom,
                                 settings_.max_zoom);
         if (mode_ == Mode::Overview)
@@ -90,6 +91,9 @@ void CameraController::toggle_orientation() noexcept
                                                    : Mode::HeadingUp;
     if (mode_ == Mode::HeadingUp || mode_ == Mode::NorthUp)
         mode_ = follow_mode_;
+    else if (mode_ == Mode::Free)
+        free_azimuth_ = follow_mode_ == Mode::NorthUp || !has_heading_
+            ? 0.0f : static_cast<float>(last_heading_);
 }
 
 void CameraController::recenter() noexcept
@@ -103,6 +107,7 @@ void CameraController::begin_free(double latitude, double longitude) noexcept
     idle_seconds_ = 0.0;
     if (mode_ != Mode::Free) {
         free_zoom_ = zoom_;
+        free_azimuth_ = azimuth_;
         free_tilted_ = last_elevation_ < 90.0f;
         mode_ = Mode::Free;
     }
@@ -124,6 +129,7 @@ void CameraController::pan(int dx, int dy) noexcept
         return;
     if (mode_ != Mode::Free) {
         free_tilted_ = false;
+        free_azimuth_ = azimuth_;
         if (mode_ != Mode::Overview) {
             // Start from whatever is currently at the map-area centre so the
             // first drag does not jump the view.
@@ -180,9 +186,12 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
     }
     const bool follow = (mode_ == Mode::HeadingUp || mode_ == Mode::NorthUp) &&
                         vehicle.valid;
+    following_vehicle_ = follow;
 
-    if (vehicle.valid && vehicle.speed_mps >= settings_.heading_min_speed_mps)
+    if (vehicle.valid && vehicle.speed_mps >= settings_.heading_min_speed_mps) {
         last_heading_ = normalise_degrees(vehicle.heading_degrees);
+        has_heading_ = true;
+    }
 
     float target_zoom;
     float target_azimuth;
@@ -192,9 +201,18 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
             settings_.min_zoom, settings_.max_zoom);
         target_azimuth = mode_ == Mode::HeadingUp
             ? static_cast<float>(last_heading_) : 0.0f;
-    } else {
+    } else if (mode_ == Mode::Overview) {
         target_zoom = free_zoom_;
-        target_azimuth = mode_ == Mode::Overview ? 0.0f : azimuth_;
+        target_azimuth = 0.0f;
+    } else if (mode_ == Mode::Free) {
+        target_zoom = free_zoom_;
+        target_azimuth = free_azimuth_;
+    } else {
+        // A follow mode without a vehicle keeps the view where it is but
+        // still shows the chosen orientation.
+        target_zoom = free_zoom_;
+        target_azimuth = mode_ == Mode::NorthUp ? 0.0f
+            : has_heading_ ? static_cast<float>(last_heading_) : azimuth_;
     }
 
     if (!initialised_) {
@@ -202,18 +220,37 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
         azimuth_ = target_azimuth;
         initialised_ = true;
     } else {
-        const double zoom_alpha = smoothing(dt_seconds,
-                                            settings_.zoom_time_constant_s);
-        zoom_ += static_cast<float>((target_zoom - zoom_) * zoom_alpha);
+        if (std::fabs(target_zoom - last_target_zoom_) > settings_.zoom_jump &&
+            std::fabs(target_zoom - zoom_) > 0.05f) {
+            transition_ = true;
+            transition_from_ = zoom_;
+            transition_t_ = 0.0;
+        }
+        if (transition_) {
+            // Ease in and out to the (possibly moving) target, then arrive.
+            transition_t_ += dt_seconds;
+            const double t = settings_.zoom_transition_s > 0.0f
+                ? std::min(1.0, transition_t_ / settings_.zoom_transition_s) : 1.0;
+            const double eased = t * t * (3.0 - 2.0 * t);
+            zoom_ = static_cast<float>(transition_from_ +
+                                       (target_zoom - transition_from_) * eased);
+            if (t >= 1.0)
+                transition_ = false;
+        } else if (mode_ == Mode::Free) {
+            // A free camera is driven directly by the user; do not lag.
+            zoom_ = target_zoom;
+        } else {
+            const double zoom_alpha = smoothing(dt_seconds,
+                                                settings_.zoom_time_constant_s);
+            zoom_ += static_cast<float>((target_zoom - zoom_) * zoom_alpha);
+        }
         const double azimuth_alpha = smoothing(dt_seconds,
                                                settings_.azimuth_time_constant_s);
         azimuth_ = static_cast<float>(normalise_degrees(
             azimuth_ + shortest_angle_delta(azimuth_, target_azimuth) *
                            azimuth_alpha));
     }
-    // A free camera is driven directly by the user; do not lag behind it.
-    if (mode_ == Mode::Free)
-        zoom_ = free_zoom_;
+    last_target_zoom_ = target_zoom;
 
     const int centre_x = viewport_.left + viewport_.width / 2;
     const int centre_y = viewport_.top + viewport_.height / 2;
@@ -235,6 +272,7 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
         pose.anchor_y = centre_y;
     }
     pose.zoom = zoom_;
+    pose.tile_zoom = transition_ ? std::min(transition_from_, target_zoom) : -1.0f;
     pose.azimuth_degrees = azimuth_;
     pose.elevation_degrees =
         tilted_ && ((follow && mode_ == Mode::HeadingUp) || (mode_ == Mode::Free && free_tilted_))

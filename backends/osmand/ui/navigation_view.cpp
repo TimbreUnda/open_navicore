@@ -590,6 +590,7 @@ void NavigationView::apply_map_view()
 {
     const auto& view = model_.map_view();
     set_hidden(control_recenter_, view.following);
+    layout_street_pill();  // its row ends at the recenter button
     // Shows the current mode: an arrow for heading-up, N for north-up.
     set_hidden(control_heading_, !view.heading_up);
     set_hidden(control_north_, view.heading_up);
@@ -975,7 +976,9 @@ Badge badge_for(const std::string& icon)
 } // namespace
 
 // Place card (design proposal G2): a tapped POI with Close and Navigate,
-// bottom left over the free-drive map.
+// bottom left over the free-drive map. Navigate calculates the route from
+// here: the subtitle line shows "Calculating route…" (Navigate disabled) or
+// the failure, and the route opens Route preview.
 void NavigationView::build_place_card()
 {
     using namespace design;
@@ -990,19 +993,27 @@ void NavigationView::build_place_card()
     lv_obj_t* circle = box(card, 16, 16, 48, 48, badge.colour, 24);
     icon(circle, badge.image, white, 11, 11);
     clipped_text(card, place->title.c_str(), &nav_font_24_700, text1, 78, 17, 275);
-    if (!place->subtitle.empty())
+    const bool routing = model_.direct_routing() && !model_.message().empty();
+    const bool calculating = routing && model_.calculating_route();
+    if (routing)
+        clipped_text(card, model_.message().c_str(), &nav_font_14_400,
+                     calculating ? text2 : danger, 78, 46, 275);
+    else if (!place->subtitle.empty())
         clipped_text(card, place->subtitle.c_str(), &nav_font_14_400, text2, 78, 46, 275);
     // Buttons share 348 px as 1fr : 1.4fr with an 8 px gap.
     lv_obj_t* close = box(card, 16, 80, 142, tile, control, 8, true);
     const int close_width = text_width("Close", &nav_font_20_600);
     design::text(close, "Close", &nav_font_20_600, text1, (142 - close_width) / 2, 20);
     lv_obj_add_event_cb(close, place_close_cb, LV_EVENT_CLICKED, this);
-    lv_obj_t* go = box(card, 166, 80, 198, tile, maneuver, 8, true);
+    lv_obj_t* go = box(card, 166, 80, 198, tile, calculating ? control : maneuver, 8,
+                       !calculating);
     const int go_width = 24 + 8 + text_width("Navigate", &nav_font_20_700);
     const int go_x = (198 - go_width) / 2;
-    icon(go, &nav_icon_route_24, white, go_x, 20);
-    design::text(go, "Navigate", &nav_font_20_700, white, go_x + 32, 20);
-    lv_obj_add_event_cb(go, place_navigate_cb, LV_EVENT_CLICKED, this);
+    const uint32_t go_colour = calculating ? text3 : white;
+    icon(go, &nav_icon_route_24, go_colour, go_x, 20);
+    design::text(go, "Navigate", &nav_font_20_700, go_colour, go_x + 32, 20);
+    if (!calculating)
+        lv_obj_add_event_cb(go, place_navigate_cb, LV_EVENT_CLICKED, this);
 }
 
 // Arrival card (design proposal G5): replaces the manoeuvre and trip cards
@@ -1338,6 +1349,29 @@ void NavigationView::refresh_guidance()
     refresh_road_widgets();
 }
 
+// The pill takes the free part of its row: from the left column's edge to
+// the right margin (less the recenter button while it shows). Centred under
+// the camera framing when the name fits there, shifted otherwise; only a
+// name longer than the whole row is cut.
+void NavigationView::layout_street_pill()
+{
+    using namespace design;
+    if (!street_pill_ || !street_pill_label_)
+        return;
+    const MapArea area = map_area();
+    const int left = area.x;
+    int right = area.x + area.width - margin;
+    if (control_recenter_ && !lv_obj_is_hidden(control_recenter_))
+        right -= tile + margin;
+    const int text = text_width(lv_label_get_text(street_pill_label_), &nav_font_20_600);
+    const int width = std::clamp(text + 36, 44, std::max(44, right - left));
+    const int centre = area.x + area.width / 2;
+    const int x = std::clamp(centre - width / 2, left, std::max(left, right - width));
+    lv_obj_set_size(street_pill_label_, width - 36, 24);
+    lv_obj_set_width(street_pill_, width);
+    lv_obj_set_x(street_pill_, x);
+}
+
 void NavigationView::refresh_road_widgets()
 {
     using namespace design;
@@ -1354,11 +1388,7 @@ void NavigationView::refresh_road_widgets()
         set_hidden(street_pill_, !shown);
         if (shown) {
             set_label_text(street_pill_label_, guidance.road.c_str());
-            const int width = std::min(320, text_width(guidance.road.c_str(), &nav_font_20_600) + 36);
-            const MapArea area = map_area();
-            lv_obj_set_size(street_pill_label_, width - 36, 24);
-            lv_obj_set_width(street_pill_, width);
-            lv_obj_set_x(street_pill_, area.x + area.width / 2 - width / 2);
+            layout_street_pill();
         }
     }
     if (!lane_strip_)
