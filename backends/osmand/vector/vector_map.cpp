@@ -33,8 +33,10 @@
 
 #include <QByteArray>
 
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -468,6 +470,35 @@ bool make_dirs(const std::string& path)
     return true;
 }
 
+// Cache variant of a tile: palette, and overzoom (its z14 tiles hold z16
+// detail).
+std::string cache_variant(bool night, bool overzoom)
+{
+    return std::string(night ? "night" : "day") + (overzoom ? "|oz" : "");
+}
+
+// Deletes a file or a directory tree; returns the number of files removed.
+std::size_t remove_tree(const std::string& path)
+{
+    struct stat info {};
+    if (::lstat(path.c_str(), &info) != 0)
+        return 0;
+    if (!S_ISDIR(info.st_mode))
+        return ::unlink(path.c_str()) == 0 ? 1 : 0;
+    std::size_t removed = 0;
+    if (DIR* dir = ::opendir(path.c_str())) {
+        std::vector<std::string> names;
+        while (const dirent* entry = ::readdir(dir))
+            if (std::strcmp(entry->d_name, ".") != 0 && std::strcmp(entry->d_name, "..") != 0)
+                names.emplace_back(entry->d_name);
+        ::closedir(dir);
+        for (const auto& name : names)
+            removed += remove_tree(path + "/" + name);
+    }
+    (void)::rmdir(path.c_str());
+    return removed;
+}
+
 class DiskCache {
 public:
     void configure(const std::string& dir, const std::string& identity,
@@ -483,6 +514,40 @@ public:
     {
         std::lock_guard<std::mutex> lock(mutex_);
         return !dir_.empty();
+    }
+    // Deletes the directories of other identities or tile formats (an older
+    // build, style or map). They are never read again, and each style change
+    // would otherwise leave one behind until the free-space floor turns the
+    // cache off. Returns the number of files removed.
+    std::size_t prune_stale()
+    {
+        std::string dir;
+        std::vector<std::string> keep;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (dir_.empty())
+                return 0;
+            dir = dir_;
+            for (const bool night : {false, true})
+                for (const bool overzoom : {false, true})
+                    keep.push_back(directory_locked(cache_variant(night, overzoom)));
+        }
+        std::vector<std::string> stale;
+        if (DIR* handle = ::opendir(dir.c_str())) {
+            while (const dirent* entry = ::readdir(handle)) {
+                const std::string name = entry->d_name;
+                if (name != "." && name != ".." &&
+                    std::find(keep.begin(), keep.end(), name) == keep.end())
+                    stale.push_back(name);
+            }
+            ::closedir(handle);
+        }
+        std::size_t removed = 0;
+        for (const auto& name : stale)
+            removed += remove_tree(dir + "/" + name);
+        std::lock_guard<std::mutex> lock(mutex_);
+        free_checked_ = 0;  // re-check the free space on the next write
+        return removed;
     }
     bool load(const TileKey& key, const std::string& variant, TileMesh& mesh,
               TileLabels& labels) const
@@ -535,17 +600,23 @@ public:
     }
 
 private:
+    // Directory of one variant of this identity (mutex_ held).
+    std::string directory_locked(const std::string& variant) const
+    {
+        char name[24];
+        std::snprintf(name, sizeof(name), "%016llx",
+                      static_cast<unsigned long long>(
+                          fnv1a(identity_ + "|" + variant + "|nvt1")));
+        return name;
+    }
     std::string file(const TileKey& key, const std::string& variant) const
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (dir_.empty())
             return std::string();
-        char name[96];
-        std::snprintf(name, sizeof(name), "/%016llx/%d/%d/%d.vt",
-                      static_cast<unsigned long long>(
-                          fnv1a(identity_ + "|" + variant + "|nvt1")),
-                      key.z, key.x, key.y);
-        return dir_ + name;
+        char name[64];
+        std::snprintf(name, sizeof(name), "/%d/%d/%d.vt", key.z, key.x, key.y);
+        return dir_ + "/" + directory_locked(variant) + name;
     }
     // Free space is checked every 32 writes.
     bool room()
@@ -689,6 +760,17 @@ public:
     std::uint64_t empty_tiles() const { return empty_tiles_.load(); }
     std::uint64_t disk_writes() const { return disk_writes_.load(); }
     std::uint64_t disk_failures() const { return disk_failures_.load(); }
+    std::uint64_t disk_pruned() const { return disk_pruned_.load(); }
+    // Once the disk cache is configured: an idle worker deletes the stale
+    // cache directories.
+    void request_prune()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            prune_pending_ = true;
+        }
+        wake_.notify_one();
+    }
 
 private:
     using TagCache =
@@ -831,18 +913,30 @@ private:
             {
                 std::unique_lock<std::mutex> lock(mutex_);
                 wake_.wait(lock, [this] {
-                    if (stopping_) return true;
+                    if (stopping_ || prune_pending_) return true;
                     for (const auto& k : wanted_)
                         if (!done_.count(k)) return true;
                     return false;
                 });
                 if (stopping_)
                     return;
+                bool found = false;
                 for (const auto& k : wanted_)
                     if (!done_.count(k)) {
                         key = k;
+                        found = true;
                         break;
                     }
+                if (!found) {
+                    // Idle: stale cache directories go now, off the tiles'
+                    // critical path.
+                    if (prune_pending_) {
+                        prune_pending_ = false;
+                        lock.unlock();
+                        disk_pruned_ += disk_.prune_stale();
+                    }
+                    continue;
+                }
                 done_[key] = true;
                 generation = generation_;
                 night = night_;
@@ -917,8 +1011,7 @@ private:
         BuiltTile out;
         out.key = key;
         // Cache variant: palette, and overzoom (its z14 tiles hold z16 detail).
-        const std::string variant =
-            std::string(night ? "night" : "day") + (overzoom ? "|oz" : "");
+        const std::string variant = cache_variant(night, overzoom);
         if (disk_.enabled()) {
             const auto disk_started = Clock::now();
             if (disk_.load(key, variant, out.mesh, out.labels)) {
@@ -1300,7 +1393,9 @@ private:
     std::uint64_t block_clock_ = 0;
     std::atomic<std::uint64_t> block_reads_{0}, block_hits_{0};
     bool stopping_ = false;
-    std::atomic<std::uint64_t> aborted_{0}, empty_tiles_{0}, disk_writes_{0}, disk_failures_{0};
+    std::atomic<std::uint64_t> aborted_{0}, empty_tiles_{0}, disk_writes_{0}, disk_failures_{0},
+        disk_pruned_{0};
+    bool prune_pending_ = false;  // under mutex_
     std::vector<std::thread> threads_;
 };
 
@@ -2001,6 +2096,7 @@ void VectorMap::set_disk_cache(const std::string& dir, const std::string& identi
                                std::uint64_t min_free_bytes)
 {
     impl_->builder.disk().configure(dir, identity, min_free_bytes);
+    impl_->builder.request_prune();
 }
 
 void VectorMap::set_route(const std::vector<std::pair<std::int32_t, std::int32_t>>& points31)
@@ -3335,6 +3431,7 @@ VectorMapStats VectorMap::stats() const
     out.empty_tiles = impl_->builder.empty_tiles();
     out.disk_writes = impl_->builder.disk_writes();
     out.disk_failures = impl_->builder.disk_failures();
+    out.disk_pruned = impl_->builder.disk_pruned();
     out.block_reads = impl_->builder.block_reads();
     out.block_hits = impl_->builder.block_hits();
     return out;

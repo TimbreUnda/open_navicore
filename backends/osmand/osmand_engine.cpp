@@ -1755,12 +1755,13 @@ bool OsmAndEngine::render_vector_map(const OpenNaviBackendRenderTargetV1& target
         const auto s = vector_map_->stats();
         const double built = s.tiles_built ? static_cast<double>(s.tiles_built) : 1.0;
         const double disk = s.disk_hits ? static_cast<double>(s.disk_hits) : 1.0;
-        char message[512];
+        char message[640];
         std::snprintf(message, sizeof(message),
                       "vector_map frames=%llu incomplete=%llu tiles_built=%llu "
                       "fetch_avg_ms=%.0f fetch_max_ms=%.0f build_avg_ms=%.1f "
                       "labels_avg_ms=%.1f disk_hits=%llu disk_avg_ms=%.1f disk_writes=%llu "
-                      "disk_failures=%llu block_reads=%llu block_hits=%llu aborted=%llu "
+                      "disk_failures=%llu disk_pruned=%llu block_reads=%llu block_hits=%llu "
+                      "aborted=%llu "
                       "empty=%llu wanted=%zu prefetch=%zu gpu_tiles=%zu gpu_mb=%.1f "
                       "calls_avg=%.0f label_quads_avg=%.1f label_place_max_ms=%.1f "
                       "zoom=%.2f tile_zoom=%d..%d",
@@ -1772,6 +1773,7 @@ bool OsmAndEngine::render_vector_map(const OpenNaviBackendRenderTargetV1& target
                       static_cast<unsigned long long>(s.disk_hits), s.disk_ms_total / disk,
                       static_cast<unsigned long long>(s.disk_writes),
                       static_cast<unsigned long long>(s.disk_failures),
+                      static_cast<unsigned long long>(s.disk_pruned),
                       static_cast<unsigned long long>(s.block_reads),
                       static_cast<unsigned long long>(s.block_hits),
                       static_cast<unsigned long long>(s.aborted),

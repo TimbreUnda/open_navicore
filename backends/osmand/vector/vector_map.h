@@ -57,6 +57,7 @@ struct VectorMapStats {
     std::size_t gpu_bytes = 0;
     std::size_t atlas_uploads = 0, atlas_resets = 0;
     std::uint64_t disk_hits = 0, disk_writes = 0, disk_failures = 0;
+    std::uint64_t disk_pruned = 0;  // files of stale cache directories deleted
     std::uint64_t block_reads = 0;  // map reads (one per z14 block and detail)
     std::uint64_t block_hits = 0;   // tiles cut from an already read block
     double disk_ms_total = 0.0;     // reading cached tiles
