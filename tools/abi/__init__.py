@@ -1,1 +1,0 @@
-"""QNX compiler ABI oracles."""
