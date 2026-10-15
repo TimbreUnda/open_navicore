@@ -1563,6 +1563,7 @@ struct VectorMap::Impl {
     bool last_incomplete = false;
     mutable std::mutex stats_mutex;
     VectorMapStats stats;
+    VectorFrameTiming timing;  // render thread only
 
     void draw(const MapView& view, double dt, bool clear, bool& wants_more);
     void place_labels(const MapView& view, const std::vector<TileKey>& draw, double zoom,
@@ -2186,9 +2187,18 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
     const int tz = std::clamp(static_cast<int>(std::floor(tile_zoom)), kMinTileZoom,
                               max_tile_zoom);
     const std::uint64_t generation = builder.generation();
-
+    const auto us_since = [](Clock::time_point started) {
+        return static_cast<std::uint32_t>(std::chrono::duration_cast<
+            std::chrono::microseconds>(Clock::now() - started).count());
+    };
+    timing = VectorFrameTiming{};
+    auto phase = Clock::now();
     take_tiles(generation);
+    timing.take_us = us_since(phase);
+    phase = Clock::now();
     update_route(zoom);
+    timing.route_us = us_since(phase);
+    phase = Clock::now();
 
     // Visible tiles at their detail level, nearest to the vehicle first,
     // then the prefetch along the route.
@@ -2230,6 +2240,8 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
             ++prefetching;
         }
     builder.want(request);
+    timing.want_us = us_since(phase);
+    phase = Clock::now();
     // Prefetched tiles count as recently used so they survive until seen.
     for (const auto& key : prefetch) {
         auto it = gpu.find(key);
@@ -2373,10 +2385,13 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
         glDisableVertexAttribArray(1);
     }
 
+    timing.draw_us = us_since(phase);
     const auto label_started = Clock::now();
     bool fading = false;
     place_labels(view, draw_list, zoom, dt, calls, fading);
     const double label_ms = ms_since(label_started);
+    timing.labels_us = us_since(label_started);
+    phase = Clock::now();
     if (fading)
         wants_more = true;
 
@@ -2398,6 +2413,7 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
         builder.forget(oldest->first);
         gpu.erase(oldest);
     }
+    timing.evict_us = us_since(phase);
     ++frame;
     std::lock_guard<std::mutex> lock(stats_mutex);
     ++stats.frames;
@@ -2444,6 +2460,7 @@ void VectorMap::Impl::take_tiles(std::uint64_t generation)
             stats.labels_ms_total += tile.labels_ms;
         }
         GpuMesh mesh = upload(tile.mesh);
+        ++timing.uploads;
         mesh.last_used = frame;
         gpu_bytes += mesh.bytes;
         bytes += mesh.bytes;
@@ -2788,6 +2805,11 @@ bool VectorMap::pick_poi(float x, float y, float radius, PoiPick& out) const
     out.screen_x = best->x;
     out.screen_y = best->y;
     return true;
+}
+
+VectorFrameTiming VectorMap::frame_timing() const
+{
+    return impl_->timing;
 }
 
 VectorMapStats VectorMap::stats() const

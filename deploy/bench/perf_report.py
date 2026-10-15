@@ -89,8 +89,8 @@ def frame_report(path):
     if not busy:
         print('frames: none')
         return
-    stages = [n for n in names[4:] if n.endswith('_us') and n != 'cpu_us']
-    parts = ('tracker_us', 'route_sync_us', 'guidance_ui_us')
+    stages = [n for n in names[4:] if (n.endswith('_us') or n == 'vec_uploads') and n != 'cpu_us']
+    parts = ('tracker_us', 'route_sync_us', 'guidance_ui_us') + tuple(n for n in names if n.startswith('vec_'))
     print(f'frames: {len(busy)}; work p50 '
           f'{sorted(f["total_us"] for f in busy)[len(busy) // 2] / 1000:.1f} ms')
     for limit in (25, 33, 50):

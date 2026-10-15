@@ -28,6 +28,9 @@ struct FrameMeasurement {
     std::uint32_t camera_us = 0;        // apply_camera()
     std::uint32_t vector_us = 0;        // our vector map (map_render_us is OsmAnd's)
     std::uint32_t cpu_us = 0;           // render-thread CPU time in this frame
+    // Our vector map's parts (VectorFrameTiming).
+    std::uint32_t vec_take_us = 0, vec_uploads = 0, vec_route_us = 0, vec_want_us = 0,
+                  vec_draw_us = 0, vec_labels_us = 0, vec_evict_us = 0;
     std::uint32_t post_us = 0;          // after the UI: search/route submit,
                                         // cluster, dev menu, recents
 };

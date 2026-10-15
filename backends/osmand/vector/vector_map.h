@@ -80,6 +80,17 @@ struct PoiPick {
     float screen_x = 0.0f, screen_y = 0.0f;
 };
 
+// Where the last render() spent its time, in microseconds (bench timing).
+struct VectorFrameTiming {
+    std::uint32_t take_us = 0;    // finished tiles: builder lock + GL uploads
+    std::uint32_t uploads = 0;    // tiles uploaded
+    std::uint32_t route_us = 0;   // route mesh update
+    std::uint32_t want_us = 0;    // tile selection + builder.want()
+    std::uint32_t draw_us = 0;    // GL draw calls (tiles, route, arrow)
+    std::uint32_t labels_us = 0;  // label placement and label GL
+    std::uint32_t evict_us = 0;   // LRU eviction (glDeleteBuffers, builder.forget)
+};
+
 class VectorMap {
 public:
     // on_tile_ready runs on a worker thread when a tile finishes (use it to
@@ -132,6 +143,7 @@ public:
 
     // Maxima (fetch_ms_max, label_place_ms_max) are since the previous call.
     VectorMapStats stats() const;
+    VectorFrameTiming frame_timing() const;
     // The POI shown in the last frame nearest to (x, y) within `radius`
     // pixels of its icon, else a place name shown there (city, town...);
     // false when there is neither.

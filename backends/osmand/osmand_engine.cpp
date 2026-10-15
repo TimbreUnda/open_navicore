@@ -1512,6 +1512,14 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         stage_started = Clock::now();
         vector_wants_frames = render_vector_map(target);
         measurement.vector_us = elapsed_us(stage_started);
+        const auto vt = vector_map_->frame_timing();
+        measurement.vec_take_us = vt.take_us;
+        measurement.vec_uploads = vt.uploads;
+        measurement.vec_route_us = vt.route_us;
+        measurement.vec_want_us = vt.want_us;
+        measurement.vec_draw_us = vt.draw_us;
+        measurement.vec_labels_us = vt.labels_us;
+        measurement.vec_evict_us = vt.evict_us;
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
