@@ -605,7 +605,8 @@ The provider now has one production backend-selection path. During
 `panaInitialize`, after entering `STARTING` but before renderer lifecycle
 preparation, it attempts exactly once per process to load the compile-time
 absolute path
-`/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so`. There is no
+`/open-navicore/libOpenNaviBackendOsmAnd.so` (inside `navigation.ifs`, next
+to the provider). There is no
 environment override, `LD_LIBRARY_PATH` lookup, basename search, arbitrary
 configuration path, or constructor-based registration. `dlopen` uses
 `RTLD_NOW | RTLD_LOCAL`, and every successfully opened handle is pinned until
@@ -785,8 +786,8 @@ surface is a rendering-contract probe; the OsmAnd backend is the navigation
 (map, search, routing, guidance). Neither claims stock feature parity for the
 services listed above.
 
-Installing on a radio is described in `deploy/` (`navigation-ifs/README.md`,
-`backend/deploy_backend.sh`): keep the stock provider and an independent
+Installing on a radio is described in `deploy/navigation-ifs/README.md` (one
+image with all code, one reboot): keep the stock provider and an independent
 rollback path (the disable marker, SD recovery) before any device change.
 
 For ABI discovery beyond guessed C prototypes, the research repository's

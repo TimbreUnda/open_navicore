@@ -1,23 +1,27 @@
 #!/bin/bash
 # deploy_navigation_ifs.sh IMAGE IFS_DEPLOY [--dry-run]
 #
-# Installs navigation.ifs on the bench radio, staged, without mounting it
-# (the boot overlay mounts it at boot: activate with one vp4r-reboot).
+# Installs navigation.ifs (the whole navigation code) on the bench radio,
+# staged, without mounting it (the boot overlay mounts it at boot: activate
+# with one vp4r-reboot).
 #
 #   1. ifs-deploy uploads IMAGE as <dir>/navigation.ifs.new and verifies it
 #      by read-back (sha256)
 #   2. the current navigation.ifs is pulled to the local backup directory
-#      and copied on the unit to navigation.pre-<stamp>.ifs (kept)
-#   3. rm navigation.ifs && cp -p navigation.ifs.new navigation.ifs, flush,
-#      read back and compare; on a mismatch the previous image is restored
+#   3. on the unit, by rename (no copies, so only one extra image of space):
+#      navigation.ifs -> navigation.previous.ifs (replacing the last one),
+#      navigation.ifs.new -> navigation.ifs; flush, read back and compare;
+#      on a mismatch the previous image is renamed back
 #
 # A mounted image is never overwritten in place (a truncated in-place copy
-# made mountifs crash at boot, unit ledger 2026-10-13).
+# made mountifs crash at boot, unit ledger 2026-10-13); renaming it is safe,
+# the mount keeps the old file until the reboot.
 #
 # Environment: RADIO_HOST (192.168.2.8), RADIO_SSH_KEY ($HOME/priv_openssh),
 # NAVIGATION_IFS_DIR (/datastore/navicore), BACKUP_DIR (./ifs-deploy-backups),
-# RADIO_SYNC: a flush helper on the unit (it has no sync), run as
-# "$RADIO_SYNC <path>"; empty skips flushing (not recommended).
+# RADIO_SYNC (/usr/bin/vp4r-sync; the unit has no sync), RADIO_RENAME
+# (/usr/bin/bench_rename, a rename(2) that never overwrites; the unit has no
+# mv), both from dev-tools.
 set -euo pipefail
 
 IMAGE=${1:?usage: deploy_navigation_ifs.sh IMAGE IFS_DEPLOY [--dry-run]}
@@ -27,9 +31,11 @@ HOST=${RADIO_HOST:-192.168.2.8}
 KEY=${RADIO_SSH_KEY:-$HOME/priv_openssh}
 DIR=${NAVIGATION_IFS_DIR:-/datastore/navicore}
 BACKUP_DIR=${BACKUP_DIR:-./ifs-deploy-backups}
-SYNC=${RADIO_SYNC-/datastore/navicore-mock-final-a1/navicore_sync}
+SYNC=${RADIO_SYNC:-/usr/bin/vp4r-sync}
+RENAME=${RADIO_RENAME:-/usr/bin/bench_rename}
 ACTIVE=$DIR/navigation.ifs
 STAGED=$DIR/navigation.ifs.new
+PREVIOUS=$DIR/navigation.previous.ifs
 OPTS=(-oBatchMode=yes -oLogLevel=ERROR -oConnectTimeout=10
       -oHostKeyAlgorithms=+ssh-dss -oPubkeyAcceptedAlgorithms=+ssh-rsa -i "$KEY")
 
@@ -40,56 +46,54 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 cp -p "$IMAGE" "$WORK/navigation.ifs.new"
 
-echo "image:   $IMAGE (sha256 $WANT)"
+echo "image:   $IMAGE ($(($(stat -c %s "$IMAGE") >> 20)) MiB, sha256 $WANT)"
 echo "target:  root@$HOST:$ACTIVE (staged as $STAGED)"
 if [ "$DRY" = "--dry-run" ]; then
     "$IFS_DEPLOY" "$WORK/navigation.ifs.new" --host "$HOST" --key "$KEY" \
         --remote-dir "$DIR" --backup-dir "$BACKUP_DIR" --dry-run
     echo "[dry-run] pull $ACTIVE to $BACKUP_DIR/navigation.ifs.$STAMP"
-    echo "[dry-run] on the unit: cp -p $ACTIVE $DIR/navigation.pre-$STAMP.ifs"
-    echo "[dry-run] on the unit: rm $ACTIVE && cp -p $STAGED $ACTIVE; flush; read back"
+    echo "[dry-run] on the unit: rm $PREVIOUS; $RENAME $ACTIVE $PREVIOUS; $RENAME $STAGED $ACTIVE; flush; read back"
     exit 0
 fi
 
-remote() { ssh "${OPTS[@]}" "root@$HOST" "$1" 2>&1 | grep -v '^welcome' || true; }
 remote_ok() { ssh "${OPTS[@]}" "root@$HOST" "$1" >/dev/null 2>&1; }
-flush() { [ -z "$SYNC" ] || remote_ok "$SYNC $1" || echo "warning: flush $1 failed"; }
+flush() { remote_ok "$SYNC" || echo "warning: flush failed"; }
 readback() {
     rm -f "$WORK/readback"
     scp -O -q "${OPTS[@]}" "root@$HOST:$1" "$WORK/readback" 2>/dev/null &&
         sha256sum "$WORK/readback" | cut -d' ' -f1
 }
+remote_ok "[ -x $RENAME ] && [ -x $SYNC ]" ||
+    { echo "the unit lacks $RENAME or $SYNC (install dev-tools)"; exit 1; }
 
 # 1. Upload the staged copy (ifs-deploy verifies it).
 "$IFS_DEPLOY" "$WORK/navigation.ifs.new" --host "$HOST" --key "$KEY" \
     --remote-dir "$DIR" --backup-dir "$BACKUP_DIR"
-flush "$STAGED"
+flush
 
-# 2. Keep the current image, locally and on the unit.
-PREVIOUS=
+# 2. Keep the current image locally.
+HAD_ACTIVE=0
 if remote_ok "[ -f $ACTIVE ]"; then
+    HAD_ACTIVE=1
     mkdir -p "$BACKUP_DIR"
     scp -O -p -q "${OPTS[@]}" "root@$HOST:$ACTIVE" "$BACKUP_DIR/navigation.ifs.$STAMP"
-    PREVIOUS=$DIR/navigation.pre-$STAMP.ifs
-    remote_ok "/bin/cp -p $ACTIVE $PREVIOUS" || { echo "backup on the unit failed; active untouched"; exit 1; }
-    flush "$PREVIOUS"
-    [ "$(readback "$PREVIOUS")" = "$(sha256sum "$BACKUP_DIR/navigation.ifs.$STAMP" | cut -d' ' -f1)" ] ||
-        { echo "backup on the unit does not read back; active untouched"; exit 1; }
-    echo "backup:  $BACKUP_DIR/navigation.ifs.$STAMP and $PREVIOUS"
+    echo "backup:  $BACKUP_DIR/navigation.ifs.$STAMP"
 fi
 
-# 3. Swap by unlink + copy and verify; restore the previous image on failure.
-remote_ok "[ -s $STAGED ] && /bin/rm -f $ACTIVE && /bin/cp -p $STAGED $ACTIVE" || true
-flush "$ACTIVE"
-flush "$DIR"
+# 3. Swap by rename and verify; rename the previous image back on failure.
+if [ $HAD_ACTIVE -eq 1 ]; then
+    remote_ok "/bin/rm -f $PREVIOUS; $RENAME $ACTIVE $PREVIOUS" ||
+        { echo "could not set the current image aside; nothing changed"; exit 1; }
+fi
+remote_ok "$RENAME $STAGED $ACTIVE" || true
+flush
 if [ "$(readback "$ACTIVE")" != "$WANT" ]; then
     echo "installed image does not read back"
-    if [ -n "$PREVIOUS" ]; then
-        remote_ok "/bin/rm -f $ACTIVE; /bin/cp -p $PREVIOUS $ACTIVE" && flush "$ACTIVE"
-        echo "previous image restored from $PREVIOUS"
+    if [ $HAD_ACTIVE -eq 1 ]; then
+        remote_ok "/bin/rm -f $ACTIVE; $RENAME $PREVIOUS $ACTIVE" && flush
+        echo "previous image restored"
     fi
     exit 1
 fi
-remote_ok "/bin/rm -f $STAGED" && flush "$DIR"
-echo "installed: $ACTIVE ($WANT)"
+echo "installed: $ACTIVE ($WANT); previous image: $PREVIOUS"
 echo "activate:  one reboot (vp4r-reboot); then check open_navicore_mount_rc=0 in /datastore/boot_overlay.log"

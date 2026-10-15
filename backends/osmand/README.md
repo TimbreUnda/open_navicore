@@ -184,7 +184,7 @@ legacy transport source; it does not broaden the patch's file or hunk scope.
 
 After linking, `tests/check_osmand_elf.sh` checks ELF32 ARM EABI5 soft-float,
 the exact export and dependency sets, SONAME, absence of TEXTREL/RUNPATH and
-the sole permitted RPATH (`/datastore/navicore-backend`). The backend's
+the sole permitted RPATH (`/open-navicore`). The backend's
 host-testable parts (session and C entry, UI, camera, labels, vector style)
 run in `make test` without Qt, EGL, OsmAnd or QNX. The on-target smokes
 `osmand_obf_smoke`, `osmand_route_smoke` and `osmand_plugin_smoke` are built
@@ -200,16 +200,17 @@ backend's git description.
 
 | Asset | Default target path |
 |---|---|
-| Backend | `/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so` |
-| Core | `/datastore/navicore-backend/libOsmAndCore_shared.so` |
-| Resources and embedded default style | `/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so` |
+| Backend | `/open-navicore/libOpenNaviBackendOsmAnd.so` (in `navigation.ifs`) |
+| Core | `/open-navicore/libOsmAndCore_shared.so` (in `navigation.ifs`) |
+| Resources and embedded default style | `/open-navicore/libOsmAndCore_ResourcesBundle_shared.so` (in `navigation.ifs`) |
 | Map | `/datastore/navicore-backend/maps/kyiv.obf` |
-| Fonts | `/datastore/navicore-backend/fonts/` |
+| Extra fonts (optional, none installed) | `/datastore/navicore-backend/fonts/` |
+| Recents, vector cache | `/datastore/navicore-backend/recents.tsv`, `vectorcache/` |
 
 `OPEN_NAVICORE_OSMAND_RESOURCES`, `OPEN_NAVICORE_OSMAND_MAP` and
 `OPEN_NAVICORE_OSMAND_FONTS` are copied at start; environment changes affect
-the next start only. The sole runtime search path is
-`/datastore/navicore-backend`. Record map region/date/source/license and font
+the next start only. The sole library search path is `/open-navicore`
+(the mounted `navigation.ifs`); `/datastore/navicore-backend` holds data only. Record map region/date/source/license and font
 files/licenses with the bundle. Map data, fonts and binary/resource bundles
 are not committed. SDK library hashes identify offline link inputs; they do
 not establish equivalence to the radio's graphics implementation.

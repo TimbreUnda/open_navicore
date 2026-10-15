@@ -19,7 +19,7 @@ if printf '%s\n' "$dynamic" | grep -Eq '(RUNPATH|TEXTREL)'; then
     exit 1
 fi
 rpath=$(printf '%s\n' "$dynamic" | sed -n 's/.*RPATH.*\[\([^]]*\)\].*/\1/p')
-test "$rpath" = /datastore/navicore-backend || {
+test "$rpath" = /open-navicore || {
     echo "unexpected OsmAnd RPATH: $rpath" >&2
     exit 1
 }

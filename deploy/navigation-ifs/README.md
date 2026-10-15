@@ -1,20 +1,23 @@
 # Open NaviCore as the default navigation (navigation.ifs)
 
-Installs Open NaviCore as the unit's navigation provider on every boot, with
-no fallback to the native NaviCore.
+One image holds the whole navigation code and installs Open NaviCore as the
+unit's navigation provider on every boot, with no fallback to the native
+NaviCore. A new version is this one file and one reboot.
 
 ## Pieces
 
 | Piece | Where on the unit | Built by |
 |---|---|---|
-| `navigation.ifs`: provider, `nv_navigation.cfg` and `boot.sh` under `/open-navicore` | `/datastore/navicore/navigation.ifs` | `CMakeLists.txt` (ifs-build) + `build_navigation_ifs.py` (payload) |
+| `navigation.ifs`, all code under `/open-navicore`: provider, `nv_navigation.cfg`, `boot.sh`, OsmAnd backend, OsmAnd core and resource bundle | `/datastore/navicore/navigation.ifs` | `CMakeLists.txt` (ifs-build) + `build_navigation_ifs.py` (payload) |
 | Boot overlay: mounts the image at boot and runs its `boot.sh` | `/datastore/ifs-overrides/boot_overlay.ifs` | not this repository (see "Boot") |
-| Backend plugin, OsmAnd, resources, maps, vector cache | `/datastore/navicore-backend/` | `make`, `deploy/backend/deploy_backend.sh` |
+| Data: maps, recents, vector cache, bench markers | `/datastore/navicore-backend/` | maps by hand; the rest is written by the backend |
 
 The config is the factory `nv_navigation.cfg` with one change,
-`NaviDllName=/open-navicore/libNaviCore.so`. The provider loads the backend
-from its fixed path in `/datastore/navicore-backend`, so the backend can be
-updated without rebuilding the image.
+`NaviDllName=/open-navicore/libNaviCore.so`. The provider loads
+`/open-navicore/libOpenNaviBackendOsmAnd.so`, whose RPATH `/open-navicore`
+finds the OsmAnd core; the backend opens the resource bundle there too. Qt
+and the C++ runtime are linked statically. All entries are stored `+raw`
+(uncompressed, page-aligned) so the libraries are mapped in place.
 
 ## Boot
 
@@ -47,13 +50,14 @@ build).
 
 ```sh
 make ifs STOCK_NV_NAVIGATION_CFG=<factory nv_navigation.cfg>
-      # build/qnx/ifs/navigation.{build,ifs}; the setting is remembered
+      # build/qnx/ifs/navigation.{build,ifs} (about 100 MiB); remembered
 ```
 
 The factory config must have SHA-256 `c889c2b4…d680e` (QR39.5); it is not
-committed. The image is stored `+raw` (uncompressed), so the provider inside
-is byte-identical to `build/qnx/libNaviCore.so`; all entries are mode 0555.
-A changed provider rebuilds the image.
+committed. The OsmAnd core and resource bundle come from the OsmAnd QNX
+build (`OSMAND_QNX_ROOT`, `source/binaries/qnx/gcc-armv7/Release`;
+`OSMAND_RESOURCES_BUNDLE` overrides the bundle). All entries are mode 0555.
+A changed provider, backend, core or bundle rebuilds the image.
 
 ## Install (unit)
 
@@ -65,18 +69,17 @@ deploy/navigation-ifs/deploy_navigation_ifs.sh build/qnx/ifs/navigation.ifs \
 ```
 
 It uploads the image as `/datastore/navicore/navigation.ifs.new` with
-ifs-build's `ifs-deploy` (read-back verified), keeps the current image (pulled
-to `./ifs-deploy-backups/` and copied on the unit to
-`navigation.pre-<stamp>.ifs`), then swaps by `rm` + `cp -p`, flushes and
-verifies, restoring the previous image on a mismatch. A mounted IFS is never
-overwritten in place (unit ledger, 2026-10-13: a truncated in-place copy made
-`mountifs` crash at boot). Do not use ifs-build's generic `deploy-ifs` target
-for this image: it uploads to `/datastore/ifs-overrides`, where the overlay does
+ifs-build's `ifs-deploy` (read-back verified), pulls the current image to
+`./ifs-deploy-backups/`, then on the unit renames the current image to
+`navigation.previous.ifs` (replacing the last one) and the new one into place,
+flushes and verifies, renaming the previous image back on a mismatch. The
+rename swap needs no copies, so `/datastore` needs one image of free space.
+It uses dev-tools' `/usr/bin/bench_rename` and `/usr/bin/vp4r-sync` (the unit
+has no `mv` or `sync`). A mounted IFS is never overwritten in place (unit
+ledger, 2026-10-13: a truncated in-place copy made `mountifs` crash at boot);
+renaming it is safe. Do not use ifs-build's generic `deploy-ifs` target for
+this image: it uploads to `/datastore/ifs-overrides`, where the overlay does
 not look for navigation.
-
-The provider and the backend are installed together: the provider loads
-`/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so`, so install that
-(`deploy/backend/deploy_backend.sh`) before rebooting into a new image.
 
 Then reboot once (the provider is mapped by the running `nv_navigation`; the
 new image is mounted at the next boot) and check `/datastore/boot_overlay.log`
@@ -84,9 +87,8 @@ for `open_navicore_mount_rc=0` and `open_navicore_config_link_rc=0`, and that
 `nv_navigation` maps `/open-navicore/libNaviCore.so`. Record the change in the
 unit ledger.
 
-Settings: `RADIO_HOST`, `RADIO_SSH_KEY`, `NAVIGATION_IFS_DIR`, `BACKUP_DIR` and
-`RADIO_SYNC` (the unit's flush helper; it has no `sync`), see the script
-header.
+Settings: `RADIO_HOST`, `RADIO_SSH_KEY`, `NAVIGATION_IFS_DIR`, `BACKUP_DIR`,
+`RADIO_SYNC` and `RADIO_RENAME`, see the script header.
 
 ## Rollback
 
@@ -94,7 +96,8 @@ There is no automatic fallback. To return to the native NaviCore:
 
 - create `/datastore/navicore/disabled` and reboot (the overlay then leaves
   the factory config in place), or
-- copy back `navigation.pre-<stamp>.ifs` (rm + cp -p) and reboot, or
+- rename `navigation.previous.ifs` back (`rm navigation.ifs`, then
+  `bench_rename navigation.previous.ifs navigation.ifs`) and reboot, or
 - from SD recovery, remove `/datastore/navicore/navigation.ifs`.
 
 A provider that crashes at every start makes System Manager relaunch

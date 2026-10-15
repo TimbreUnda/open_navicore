@@ -43,6 +43,11 @@ workspace that holds this repository, so set them from a linked worktree):
 | `OSMAND_QNX_ROOT` | the OsmAnd QNX build tree (`osmand-qnx-build`): compiler, core, Qt |
 | `IFSBUILD_DIR` | ifs-build checkout (`ifs-build`), for `make ifs` |
 
+`navigation.ifs` is the whole navigation for the radio (about 100 MiB): the
+provider and its config, the backend, OsmAnd core and its resource bundle
+(`OSMAND_RESOURCES_BUNDLE`, default next to the core in the OsmAnd build),
+all under `/open-navicore`. Maps and other data are not in it.
+
 `make ifs` also needs `STOCK_NV_NAVIGATION_CFG=<factory nv_navigation.cfg>`
 once (QR39.5, SHA-256 `c889c2b4…d680e`, not committed; take it read-only
 from the firmware dump's root partition, `pas/scfg/nv_navigation.cfg`).

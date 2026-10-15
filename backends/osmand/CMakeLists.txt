@@ -82,7 +82,7 @@ set_target_properties(osmand_backend PROPERTIES OUTPUT_NAME OpenNaviBackendOsmAn
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} SKIP_BUILD_RPATH ON)
 target_link_options(osmand_backend PRIVATE -Wl,--as-needed -static-libstdc++ -static-libgcc
   -Wl,-Bsymbolic -Wl,-soname,libOpenNaviBackendOsmAnd.so
-  -Wl,-rpath,/datastore/navicore-backend
+  -Wl,-rpath,/open-navicore
   -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/osmand_backend.map
   -Wl,--gc-sections -Wl,--no-undefined -Wl,-z,text)
 add_custom_command(TARGET osmand_backend POST_BUILD

@@ -124,7 +124,7 @@ int main(int argc, char **argv)
         (void)fprintf(stderr,
             "usage: %s provider.so\n"
             "install the reviewed reference plugin first at "
-            "/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so\n",
+            "/open-navicore/libOpenNaviBackendOsmAnd.so\n",
             argv[0]);
         return 2;
     }

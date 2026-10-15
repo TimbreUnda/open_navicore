@@ -8,7 +8,7 @@ namespace navicore_osmand {
 // The production build has no feature switches: the vector map, car camera
 // and design UI are always on. Only the paths and bench tools below remain.
 struct Config {
-    std::string resources = "/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so";
+    std::string resources = "/open-navicore/libOsmAndCore_ResourcesBundle_shared.so";
     std::string map = "/datastore/navicore-backend/maps/kyiv.obf";
     std::string fonts = "/datastore/navicore-backend/fonts";
     std::string recents = "/datastore/navicore-backend/recents.tsv";

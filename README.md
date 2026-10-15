@@ -100,7 +100,7 @@ treating a recovered callback or stock-looking control as an available feature.
 | [`backends/`](backends) | OsmAnd backend (the navigation) and the reference backend |
 | [`contracts/`](contracts) | Checked provider and callback compatibility contracts |
 | [`tests/`](tests) | Host, lifecycle, stress, ABI and contract checks |
-| [`deploy/`](deploy) | `navigation.ifs` (ifs-build) and the backend install |
+| [`deploy/`](deploy) | `navigation.ifs`: the whole navigation code in one image (ifs-build), and its install |
 | [`docs/`](docs) | Technical reference, design constraints, development notes |
 | [`cmake/`](cmake) | QNX toolchain file, build helpers |
 
@@ -122,7 +122,7 @@ repository.
 
 ```sh
 make          # the product for the radio (build/qnx)
-make ifs      # navigation.ifs (build/qnx/ifs/navigation.ifs)
+make ifs      # navigation.ifs: all code for the radio in one image
 make test     # host tests and contract checks (build/host; CI)
 ```
 

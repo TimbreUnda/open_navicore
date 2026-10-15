@@ -13,7 +13,7 @@
 
 #ifndef OPEN_NAVI_BACKEND_PLUGIN_PATH
 #define OPEN_NAVI_BACKEND_PLUGIN_PATH \
-    "/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so"
+    "/open-navicore/libOpenNaviBackendOsmAnd.so"
 #endif
 
 typedef enum {

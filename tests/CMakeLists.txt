@@ -14,7 +14,7 @@ if(ONC_QNX)
     target_compile_definitions(osmand_${t}_smoke PRIVATE ${ONC_OSMAND_DEFINES})
     target_compile_options(osmand_${t}_smoke PRIVATE ${ONC_WARNINGS} ${ONC_OSMAND_FLAGS})
     target_link_options(osmand_${t}_smoke PRIVATE -static-libstdc++ -static-libgcc
-      -Wl,--allow-shlib-undefined -Wl,-rpath,/datastore/navicore-backend)
+      -Wl,--allow-shlib-undefined -Wl,-rpath,/open-navicore)
     target_link_libraries(osmand_${t}_smoke PRIVATE osmand_core socket slog2 z pps EGL GLESv2 m c)
     set_target_properties(osmand_${t}_smoke PROPERTIES SKIP_BUILD_RPATH ON)
   endforeach()

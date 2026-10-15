@@ -18,9 +18,9 @@ its /open-navicore/boot.sh (README.md, "Boot"); it adds only paths under
                                      pointing at the provider above
   /open-navicore/.open_navicore_navigation_v1   marker checked at boot
 
-The backend plugin, OsmAnd, resources and maps stay in
-/datastore/navicore-backend (the provider's fixed plugin path), so they can be
-updated without rebuilding this image.
+The image also carries the OsmAnd backend, core and resource bundle
+(CMakeLists.txt adds them directly); data (maps, recents, vector cache) stays
+in /datastore/navicore-backend.
 """
 import hashlib
 import os
