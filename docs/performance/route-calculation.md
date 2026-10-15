@@ -56,6 +56,24 @@ In the app the autostart route (Lavra) logged
 `worker=route_calculated method=hh routes=3 ms=5140` (cold caches), with
 rendering at 30 fps throughout.
 
+## Decoded route data cache
+
+HH unloads every routing tile before each detailed network segment and each
+start/end search (the search state lives in the tiles' `RouteSegment`
+wrappers), and the core decoded the same OBF blocks again each time: about
+1,100 unloads for one 15 km route. That is CPU, not I/O: with the map
+copied to RAM the route took 3.1 s against 3.2 s from flash.
+`patches/osmand-core/qnx-routing-decoded-cache.patch` keeps the decoded
+objects process-wide (48 MB cap) and rebuilds only the wrappers. Routes,
+distances and alternatives are identical.
+
+| HH + 2 alternatives, free core | Before | First request | Repeated |
+|---|---:|---:|---:|
+| 15 km | 5.2 s | 4.0 s | 3.4 s |
+| 25 km | 7.3 s | 5.5 s | 4.8 s |
+
+In the app the autostart route went from 5,140 ms to 2,991 ms.
+
 ## What is left in an HH route
 
 For the 15 km route (3.2 s on a free core): attaching start and end to the
@@ -64,9 +82,27 @@ geometry 1.6 s, result preparation 0.25 s; tile loading (1.9 s) is spread
 over these. The detailed pass calls `unloadAllData()` before each network
 segment and reloads its tiles (1,100 unloads; upstream marks it "needed for
 proper multidijkstra"). Alternatives cost 20-120 ms to find and about
-1-2 s for their detailed geometry. Candidates if more is needed: keep the
-HH context and the start/end search between requests, and compute
-alternatives' geometry only when their card is shown.
+1-2 s for their detailed geometry. With the cache, a repeated 15 km
+request spends about 1.6 s in tile loading (now mostly rebuilding the
+per-point `RouteSegment` wrappers: one heap allocation per road point) and
+1.0 s in the start/end search.
+
+Further options, by expected gain for effort:
+
+1. Publish the fastest route first and the alternatives when ready: the
+   preview appears about 1-2 s sooner (alternatives' detailed geometry is
+   most of their cost).
+2. Reset the search state in place instead of `unloadAllData()` and fresh
+   wrappers: up to about 1 s, needs care (which fields a search writes).
+3. Start-side search from the current position in the background while the
+   destination is being chosen (half of the 1.0 s start/end search).
+4. Precomputed detailed geometry of the HH network segments in a file next
+   to the map (per map version): removes the per-segment A* of the detailed
+   pass, about 1 s, but needs a generator run and invalidation.
+
+Not worth it: a decoded-tile file on disk (decoding from RAM is what the
+cache already avoids, and I/O is not the cost), compiler flags (the core is
+built with -O3), a larger memory limit (6%).
 
 ## Measuring
 
