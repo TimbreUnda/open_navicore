@@ -11,7 +11,7 @@ switched back to the stock config on the first sign of trouble.
 
 | Piece | Where on the unit | Built by |
 |---|---|---|
-| `navigation.ifs`: provider + `nv_navigation.cfg` under `/open-navicore` | `/datastore/navicore/navigation.ifs` | `build_navigation_ifs.py` |
+| `navigation.ifs`: provider + `nv_navigation.cfg` under `/open-navicore` | `/datastore/navicore/navigation.ifs` | `CMakeLists.txt` (ifs-build) + `build_navigation_ifs.py` (payload) |
 | Boot hook: `bin/boot_overlay_main.sh` mounts it and links `/pas/scfg/nv_navigation.cfg` | `/datastore/ifs-overrides/boot_overlay.ifs` | `patch_boot_overlay.py` |
 | Backend plugin, OsmAnd, resources, maps, vector cache | `/datastore/navicore-backend/` (unchanged) | `make osmand-backend` |
 
@@ -28,38 +28,61 @@ or `open_navicore_disabled_by_marker`, `open_navicore_image_absent`,
 
 ## Build (host)
 
+The image is packaged by [ifs-build](../../../ifs-build), the workspace's
+IFS packaging project (a sibling checkout of this repository, like
+dev-tools). This directory only declares the contents.
+
 ```sh
-export QNX_MKIFS_TOOLKIT=<path to the QNX 6.6 mkifs toolkit>
 make                                  # dist/libNaviCore.so (provider)
 make osmand-backend                   # dist/libMockNavBackendOsmAnd.so
-python3 deploy/navigation-ifs/build_navigation_ifs.py \
-    dist/libNaviCore.so <factory nv_navigation.cfg> /tmp/navigation-ifs
-python3 deploy/navigation-ifs/patch_boot_overlay.py \
-    <copy of the unit's boot_overlay.ifs> /tmp/boot-overlay
+cmake -S deploy/navigation-ifs -B build/navigation-ifs \
+      -DSTOCK_NV_NAVIGATION_CFG=<factory nv_navigation.cfg>
+      # from a linked worktree also: -DIFSBUILD_DIR=<ifs-build checkout>
+cmake --build build/navigation-ifs --target ifs
+      # build/navigation-ifs/ifs/navigation.{build,ifs}, payload/SHA256SUMS
 ```
 
 The factory config must have SHA-256 `c889c2b4…d680e` (QR39.5); it is not
-committed. `patch_boot_overlay.py` changes only the navigation section of
-the boot script and verifies every other entry byte-identical
-(`REPORT`, `boot_overlay_main.diff`). `mkifs` keeps the provider unstripped
-(`+raw`), so it is byte-identical to `dist/libNaviCore.so`.
+committed. The image is stored `+raw` (uncompressed), so the provider inside
+is byte-identical to `dist/libNaviCore.so`; all entries are mode 0555. The
+QNX SDK is found by ifs-build's toolchain (`-DQNX_SDK=` or `$QNX_SDK` to
+override).
+
+`patch_boot_overlay.py` (needed once, already applied on the bench unit)
+changes only the navigation section of the boot script and verifies every
+other entry byte-identical (`REPORT`, `boot_overlay_main.diff`):
+
+```sh
+python3 deploy/navigation-ifs/patch_boot_overlay.py \
+    <copy of the unit's boot_overlay.ifs> <new output dir>
+```
 
 ## Install (unit)
 
-Never overwrite a mounted IFS in place (see the unit ledger, 2026-10-13:
-a truncated in-place copy made `mountifs` crash at boot). Stage, verify,
-then rename:
+```sh
+cmake --build build/navigation-ifs --target deploy-navigation-dry-run   # the plan
+cmake --build build/navigation-ifs --target deploy-navigation
+```
 
-1. Back up `/datastore/ifs-overrides/boot_overlay.ifs` (for example
-   `boot_overlay.pre-navigation-ifs.ifs`) and record its SHA-256.
-2. Copy `navigation.ifs` to `/datastore/navicore/navigation.ifs`
-   (a new file) and the new boot overlay to
-   `/datastore/ifs-overrides/boot_overlay.ifs.new`; read both back and check
-   their SHA-256 against `SHA256SUMS` / `REPORT`; sync.
-3. Rename `boot_overlay.ifs.new` over `boot_overlay.ifs`, sync, and do the
-   one documented reboot.
-4. Check `/datastore/boot_overlay.log` for the two `rc=0` lines and that
-   `nv_navigation` maps `/open-navicore/libNaviCore.so`.
+`deploy_navigation_ifs.sh` uploads the image as
+`/datastore/navicore/navigation.ifs.new` with ifs-build's `ifs-deploy`
+(read-back verified), keeps the current image (pulled to
+`./ifs-deploy-backups/` and copied on the unit to `navigation.pre-<stamp>.ifs`),
+then swaps by `rm` + `cp -p`, flushes and verifies, restoring the previous
+image on a mismatch. A mounted IFS is never overwritten in place (unit
+ledger, 2026-10-13: a truncated in-place copy made `mountifs` crash at boot).
+Do not use the `deploy-ifs` target that ifs-build also defines: it uploads to
+`/datastore/ifs-overrides`, where the boot hook does not look.
+
+Then reboot once (the provider is mapped by the running `nv_navigation`;
+the new image is mounted at the next boot) and check
+`/datastore/boot_overlay.log` for `open_navicore_mount_rc=0` and
+`open_navicore_config_link_rc=0`, and that `nv_navigation` maps
+`/open-navicore/libNaviCore.so`. Record the change in the unit ledger.
+
+Settings: `RADIO_HOST`, `RADIO_SSH_KEY`, `NAVIGATION_IFS_DIR`, `BACKUP_DIR`
+and `RADIO_SYNC` (the unit's flush helper; it has no `sync`), see the script
+header.
 
 The backend files in `/datastore/navicore-backend/` must already be in place
 (they are on the bench unit).

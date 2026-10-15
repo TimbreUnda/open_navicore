@@ -1,5 +1,11 @@
 # Mock NaviCore provider: reversible bench deployment
 
+> **Current install path:** Open NaviCore is installed as the default
+> provider by `navigation-ifs/` (image built with ifs-build, staged deploy,
+> mounted by the boot overlay), and the backend by `backend/deploy_backend.sh`.
+> The skills in `.claude/skills/` walk through both. The harness below is the
+> earlier one-shot bench experiment, kept for reference.
+
 This directory contains a deliberately narrow first-test harness. It redirects
 only `/pas/scfg/nv_navigation.cfg` through QNX's in-memory process-manager
 namespace. The redirected config points to
