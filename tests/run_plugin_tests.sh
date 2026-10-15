@@ -6,7 +6,7 @@ readelf_bin=${READELF:-readelf}
 build_dir=${1:?usage: run_plugin_tests.sh build-dir}
 mkdir -p "$build_dir/plugins"
 
-common_flags="-std=c99 -O2 -g -Wall -Wextra -Werror -pthread -fPIC -fvisibility=hidden -DMOCK_REF_PLUGIN_HEADLESS -Iinclude -Isrc/compat/qr39 -Isrc/runtime -Isrc/backend -Isrc/renderer -Isrc/capture ${EXTRA_CFLAGS:-}"
+common_flags="-std=c99 -O2 -g -Wall -Wextra -Werror -pthread -fPIC -fvisibility=hidden -DMOCK_REF_PLUGIN_HEADLESS -Iinclude -Isrc/compat/qr39 -Isrc/runtime -Isrc/backend -Isrc/renderer ${EXTRA_CFLAGS:-}"
 plugin_path="$build_dir/plugins/active.so"
 trace_path="$build_dir/reference-plugin.log"
 

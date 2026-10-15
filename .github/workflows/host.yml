@@ -17,6 +17,6 @@ jobs:
         with:
           submodules: recursive
       - name: Install host build dependencies
-        run: sudo apt-get update && sudo apt-get install --yes gcc-multilib
+        run: sudo apt-get update && sudo apt-get install --yes gcc-multilib cmake
       - name: Run portable host and contract checks
-        run: make test-host
+        run: make test

@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200112L
 #include "mock_api_telemetry.h"
 #include "mock_callback_backend.h"
 #include <open_navicore/cluster.h>

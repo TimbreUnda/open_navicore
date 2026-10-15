@@ -11,7 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define TRACE_TEST_PATH "/tmp/mock-navicore-host-test.log"
+#define TRACE_TEST_PATH MOCK_NAVICORE_TRACE_PATH  /* set by the build */
 
 typedef uint32_t (*TestGPSDataVirtual)(void *self, const void *record);
 
