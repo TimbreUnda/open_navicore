@@ -67,6 +67,7 @@ typedef struct {
     uint64_t trace_pace_nanoseconds;
     uint64_t pace_nanoseconds;
     int render_priority;
+    int render_priority_checked;
     uint64_t trace_swap_nanoseconds;
     uint64_t trace_swap_max_nanoseconds;
     uint32_t trace_presented;
@@ -226,20 +227,28 @@ static int marker_integer(const char *path)
     return value;
 }
 
-/* Runs on the render thread (platform create); 0 keeps the inherited one. */
+/* Runs on the render thread at its first frame, after the backend started:
+ * threads the backend created during its start keep the inherited
+ * priority. The result goes to the present trace. */
 static void apply_render_priority(void)
 {
     const int priority = marker_integer(OPEN_NAVI_RENDER_PRIORITY_MARKER);
     struct sched_param parameters;
     int policy = 0;
-    g_qnx.render_priority = 0;
+    int applied = 0;
     if (pthread_getschedparam(pthread_self(), &policy, &parameters) != 0)
         return;
     g_qnx.render_priority = parameters.sched_priority;
-    if (priority < 10 || priority > 40) return;
-    parameters.sched_priority = priority;
-    if (pthread_setschedparam(pthread_self(), policy, &parameters) == 0)
-        g_qnx.render_priority = priority;
+    if (priority >= 10 && priority <= 40) {
+        parameters.sched_priority = priority;
+        applied = pthread_setschedparam(pthread_self(), policy, &parameters) == 0;
+        if (applied) g_qnx.render_priority = priority;
+    }
+    if (g_qnx.trace_file != NULL) {
+        (void)fprintf(g_qnx.trace_file, "render_priority=%d marker=%d applied=%d\n",
+                      g_qnx.render_priority, priority, applied);
+        (void)fflush(g_qnx.trace_file);
+    }
 }
 
 static void set_diagnostic(char *output, size_t capacity,
@@ -352,8 +361,6 @@ int open_navi_renderer_platform_create(OpenNaviBackendRenderTargetV1 *target,
     EGLConfig config = NULL;
     EGLint config_id = 0;
     EGLint min_swap_interval = -1;
-
-    apply_render_priority();
     EGLint max_swap_interval = -1;
     int size[2] = { 0, 0 };
     int window_position[2] = { OPEN_NAVI_CONTENT_X, OPEN_NAVI_CONTENT_Y };
@@ -571,14 +578,12 @@ int open_navi_renderer_platform_create(OpenNaviBackendRenderTargetV1 *target,
                       "usage=0x%x pipeline=%d overlay_requested=%d "
                       "overlay_pipeline=%d overlay_applied=%d "
                       "opaque_requested=%d opaque_applied=%d "
-                      "transparency=%d buffers=%d pace_us=%llu "
-                      "render_priority=%d\n",
+                      "transparency=%d buffers=%d pace_us=%llu\n",
                       (unsigned int)class_usage, class_pipeline,
                       (unsigned int)usage, pipeline, overlay_requested,
                       overlay_pipeline, overlay_applied, opaque_requested,
                       opaque_applied, transparency, requested_buffers,
-                      (unsigned long long)(g_qnx.pace_nanoseconds / 1000u),
-                      g_qnx.render_priority);
+                      (unsigned long long)(g_qnx.pace_nanoseconds / 1000u));
         (void)fflush(g_qnx.trace_file);
     }
     set_diagnostic(diagnostic, capacity,
@@ -603,6 +608,10 @@ fail:
 
 int open_navi_renderer_platform_begin_frame(char *diagnostic, size_t capacity)
 {
+    if (!g_qnx.render_priority_checked) {
+        g_qnx.render_priority_checked = 1;
+        apply_render_priority();
+    }
     if (eglGetCurrentContext() == g_qnx.context &&
         eglGetCurrentSurface(EGL_DRAW) == g_qnx.surface &&
         eglGetCurrentSurface(EGL_READ) == g_qnx.surface)
