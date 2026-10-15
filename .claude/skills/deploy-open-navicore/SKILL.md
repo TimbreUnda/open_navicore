@@ -42,10 +42,11 @@ deploy/navigation-ifs/deploy_navigation_ifs.sh build/qnx/ifs/navigation.ifs \
 ```
 
 It uploads with ifs-build's `ifs-deploy` as `navigation.ifs.new` (read-back
-verified), pulls the current image to local `ifs-deploy-backups/`, then on
-the unit renames `navigation.ifs` to `navigation.previous.ifs` and
-`navigation.ifs.new` to `navigation.ifs` (no copies), flushes and reads
-back, renaming the previous image back on a mismatch. Never copy over a
+verified by scp), pulls the current image to local `ifs-deploy-backups/`,
+then on the unit renames `navigation.ifs` to `navigation.previous.ifs` and
+`navigation.ifs.new` to `navigation.ifs` (no copies), flushes and checks the
+installed file with the unit's `/usr/bin/sha256sum` (dev-tools) against the
+host hash, renaming the previous image back on a mismatch. Never copy over a
 mounted IFS in place (a truncated in-place copy once made `mountifs` crash
 at boot); renaming is safe. Do **not** use ifs-build's generic `deploy-ifs`
 target: it uploads to `/datastore/ifs-overrides`, which the navigation hook
@@ -70,6 +71,8 @@ Then one reboot: `/usr/bin/vp4r-sync`, then `/usr/bin/vp4r-reboot`
   `init=resources`, `surface_created=...`, `cluster=publish_status`).
 - On screen: hold the day/night button 1.5 s in free drive for the
   developer menu (build commit, frame rate, raw car inputs, cluster).
+- Hash on the unit: `/usr/bin/sha256sum /datastore/navicore/navigation.ifs`
+  equals the host's `sha256sum build/qnx/ifs/navigation.ifs`.
 - Update the ledger entry to `active`, or record what failed.
 
 ## 3. Rollback
@@ -89,7 +92,9 @@ Then one reboot: `/usr/bin/vp4r-sync`, then `/usr/bin/vp4r-reboot`
 
 No `ls`, `head`, `df`, `mv`, `md5sum`, `sha256sum`, `sync` on the stock
 PATH; present: `/bin/cat`, `/bin/cp`, `/bin/rm`, `/proc/boot/pidin`,
-`/bin/slay`, shell globs, and dev-tools' `/usr/bin` helpers when mounted.
+`/bin/slay`, shell globs. dev-tools (mounted at boot) adds `/usr/bin`
+`md5sum`, `sha256sum` (`-c` check mode), `chmod`, `vp4r-sync`, `vp4r-reboot`,
+`bench_rename`; skill `dev-tools-on-radio`.
 ssh needs `-oHostKeyAlgorithms=+ssh-dss -oPubkeyAcceptedAlgorithms=+ssh-rsa
 -i <key>`, scp needs `-O`; every connection prints a `welcome` banner. The
 unit's clock is unset: note host time around each action in the ledger.

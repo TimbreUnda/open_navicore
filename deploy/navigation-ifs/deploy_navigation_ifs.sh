@@ -21,7 +21,8 @@
 # NAVIGATION_IFS_DIR (/datastore/navicore), BACKUP_DIR (./ifs-deploy-backups),
 # RADIO_SYNC (/usr/bin/vp4r-sync; the unit has no sync), RADIO_RENAME
 # (/usr/bin/bench_rename, a rename(2) that never overwrites; the unit has no
-# mv), both from dev-tools.
+# mv), RADIO_SHA256 (/usr/bin/sha256sum, hashes on the unit instead of
+# pulling the image back), all from dev-tools.
 set -euo pipefail
 
 IMAGE=${1:?usage: deploy_navigation_ifs.sh IMAGE IFS_DEPLOY [--dry-run]}
@@ -33,6 +34,7 @@ DIR=${NAVIGATION_IFS_DIR:-/datastore/navicore}
 BACKUP_DIR=${BACKUP_DIR:-./ifs-deploy-backups}
 SYNC=${RADIO_SYNC:-/usr/bin/vp4r-sync}
 RENAME=${RADIO_RENAME:-/usr/bin/bench_rename}
+SHA256=${RADIO_SHA256:-/usr/bin/sha256sum}
 ACTIVE=$DIR/navigation.ifs
 STAGED=$DIR/navigation.ifs.new
 PREVIOUS=$DIR/navigation.previous.ifs
@@ -58,13 +60,12 @@ fi
 
 remote_ok() { ssh "${OPTS[@]}" "root@$HOST" "$1" >/dev/null 2>&1; }
 flush() { remote_ok "$SYNC" || echo "warning: flush failed"; }
-readback() {
-    rm -f "$WORK/readback"
-    scp -O -q "${OPTS[@]}" "root@$HOST:$1" "$WORK/readback" 2>/dev/null &&
-        sha256sum "$WORK/readback" | cut -d' ' -f1
+readback() {  # sha256 of a file on the unit, hashed there
+    ssh "${OPTS[@]}" "root@$HOST" "$SHA256 $1" 2>/dev/null |
+        sed -n 's/^\([0-9a-f]\{64\}\) .*/\1/p'
 }
-remote_ok "[ -x $RENAME ] && [ -x $SYNC ]" ||
-    { echo "the unit lacks $RENAME or $SYNC (install dev-tools)"; exit 1; }
+remote_ok "[ -x $RENAME ] && [ -x $SYNC ] && [ -x $SHA256 ]" ||
+    { echo "the unit lacks $RENAME, $SYNC or $SHA256 (mount dev-tools)"; exit 1; }
 
 # 1. Upload the staged copy (ifs-deploy verifies it).
 "$IFS_DEPLOY" "$WORK/navigation.ifs.new" --host "$HOST" --key "$KEY" \
