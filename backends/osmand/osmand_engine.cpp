@@ -213,6 +213,10 @@ private:
     std::vector<ui::UploadRect> upload_rects_;
     bool overlay_enabled_ = true;
     FrameMetrics frame_metrics_{false};
+    // update_guidance() parts of the current frame (frame log only).
+    std::uint32_t guidance_tracker_us_ = 0;
+    std::uint32_t guidance_sync_us_ = 0;
+    std::uint32_t guidance_apply_us_ = 0;
 };
 
 bool failure(const char* message)
@@ -549,6 +553,11 @@ bool OsmAndEngine::update_guidance()
         position_available = true;
         simulated = true;
     }
+    const auto tracker_started = std::chrono::steady_clock::now();
+    const auto since_us = [](std::chrono::steady_clock::time_point started) {
+        return static_cast<std::uint32_t>(std::chrono::duration_cast<
+            std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
+    };
     if (position_available) {
         state = guidance_tracker_.update(route, {
             position.latitude, position.longitude});
@@ -569,8 +578,14 @@ bool OsmAndEngine::update_guidance()
     state.recalculating = navigation_->rerouting();
     gps_dirty_ = false;
     guidance_active_ = true;
+    guidance_tracker_us_ += since_us(tracker_started);
+    const auto sync_started = std::chrono::steady_clock::now();
     sync_vector_guidance(&state);
-    return view_->apply_guidance(std::move(state));
+    guidance_sync_us_ += since_us(sync_started);
+    const auto apply_started = std::chrono::steady_clock::now();
+    const bool changed = view_->apply_guidance(std::move(state));
+    guidance_apply_us_ += since_us(apply_started);
+    return changed;
 }
 
 // More than 50 m from the route for 4 s (GPS noise and short parallel
@@ -1355,6 +1370,14 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     using Clock = std::chrono::steady_clock;
     const auto frame_started = Clock::now();
     FrameMeasurement measurement;
+    // Render-thread CPU time: wall time far above it means the thread was
+    // preempted or blocked, not busy.
+    const auto thread_cpu_us = [] {
+        timespec now{};
+        (void)clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now);
+        return static_cast<std::int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
+    };
+    const std::int64_t cpu_started = thread_cpu_us();
     const auto elapsed_us = [](Clock::time_point started) {
         const auto value = std::chrono::duration_cast<std::chrono::microseconds>(
             Clock::now() - started).count();
@@ -1376,11 +1399,14 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         }
         measurement.outcome = outcome;
         measurement.total_us = elapsed_us(frame_started);
+        measurement.cpu_us = static_cast<std::uint32_t>(
+            std::max<std::int64_t>(0, thread_cpu_us() - cpu_started));
         frame_metrics_.record(measurement);
         return result;
     };
     if (phase_ != Phase::Ready)
         return finish({FrameOutcome::Fault}, MeasuredFrameOutcome::Fault);
+    guidance_tracker_us_ = guidance_sync_us_ = guidance_apply_us_ = 0;
     NavigationWorker::SearchResult search_result;
     if (navigation_worker_ && navigation_worker_->take_search_result(search_result))
     {
@@ -1427,6 +1453,8 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
                 show_route(navigation_->routes().front());
         }
     }
+    measurement.results_us = elapsed_us(frame_started);
+    auto logic_started = Clock::now();
     bool guidance_changed = false;
     if (navigation_->screen() == ui::Screen::Guidance &&
         (!guidance_active_ || gps_dirty_ ||
@@ -1442,8 +1470,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         if (!has_valid_position_) motion_.reset();
         pose_applied_ = false;
     }
+    measurement.guidance_us = elapsed_us(logic_started);
     if (target.width != width_ || target.height != height_)
         resize(target);
+    logic_started = Clock::now();
     if (overlay_enabled_) {
         const auto input_now = std::chrono::steady_clock::now();
         const auto elapsed_ms = input_at_ == std::chrono::steady_clock::time_point{} ? 16 :
@@ -1451,7 +1481,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         input_at_ = input_now;
         view_->process_input(static_cast<uint32_t>(std::clamp<long long>(elapsed_ms, 0, 250)));
     }
+    measurement.input_us = elapsed_us(logic_started);
+    logic_started = Clock::now();
     const bool camera_animating = apply_camera();
+    measurement.camera_us = elapsed_us(logic_started);
     auto stage_started = Clock::now();
     const bool update_ok = renderer_->update();
     measurement.update_us = elapsed_us(stage_started);
@@ -1478,7 +1511,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     if (vector_map_) {
         stage_started = Clock::now();
         vector_wants_frames = render_vector_map(target);
-        measurement.map_render_us += elapsed_us(stage_started);
+        measurement.vector_us = elapsed_us(stage_started);
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
@@ -1511,6 +1544,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     }
     // A Start/End click is dispatched by LVGL above. Apply the new camera and
     // guidance model now, then request the frame that presents that rebuild.
+    const auto post_started = Clock::now();
     if (navigation_->screen() == ui::Screen::Guidance && !guidance_active_)
         guidance_changed = update_guidance() || guidance_changed;
     else if (navigation_->screen() != ui::Screen::Guidance &&
@@ -1587,6 +1621,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         if (!recents_store_->save(navigation_->recents()))
             trace("error=recents_save");
     }
+    measurement.post_us = elapsed_us(post_started);
+    measurement.tracker_us = guidance_tracker_us_;
+    measurement.route_sync_us = guidance_sync_us_;
+    measurement.guidance_ui_us = guidance_apply_us_;
     return finish({FrameOutcome::Presented, PendingStage::None,
                    guidance_changed || camera_animating || vector_wants_frames ||
                        (overlay_enabled_ && view_->wants_frames()) ||

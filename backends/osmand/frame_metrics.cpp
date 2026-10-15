@@ -18,7 +18,9 @@ std::FILE* frame_log()
         if (f) {
             (void)std::setvbuf(f, buffer, _IOFBF, sizeof(buffer));
             (void)std::fputs("# outcome t_ms interval_us total_us update_us prepare_us "
-                             "map_us ui_render_us ui_composite_us\n", f);
+                             "map_us ui_render_us ui_composite_us results_us guidance_us "
+                             "tracker_us route_sync_us guidance_ui_us input_us camera_us "
+                             "vector_us post_us cpu_us\n", f);
         }
         return f;
     }();
@@ -107,14 +109,18 @@ void FrameMetrics::record(const FrameMeasurement& measurement) noexcept
     if (std::FILE* log = frame_log()) {
         static const char outcomes[] = {'P', 'p', 'r', 'F'};
         (void)std::fprintf(
-            log, "%c %lld %lld %u %u %u %u %u %u\n",
+            log, "%c %lld %lld %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u\n",
             outcomes[static_cast<int>(measurement.outcome)],
             static_cast<long long>(std::chrono::duration_cast<
                 std::chrono::milliseconds>(now.time_since_epoch()).count()),
             static_cast<long long>(interval_us), measurement.total_us,
             measurement.update_us, measurement.prepare_us,
             measurement.map_render_us, measurement.ui_render_us,
-            measurement.ui_composite_us);
+            measurement.ui_composite_us, measurement.results_us,
+            measurement.guidance_us, measurement.tracker_us,
+            measurement.route_sync_us, measurement.guidance_ui_us,
+            measurement.input_us, measurement.camera_us, measurement.vector_us,
+            measurement.post_us, measurement.cpu_us);
     }
 
     if (now - window_started_ >= std::chrono::seconds(1))
