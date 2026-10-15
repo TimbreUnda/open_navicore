@@ -20,12 +20,7 @@ struct Config {
     bool benchmark_autostart = false;  // enable-benchmark-autostart
     bool simulate_detour = false;      // simulate-detour
     bool performance_metrics = false;  // enable-performance-metrics
-    bool vector_upload_pool = false;   // vector-upload-pool
-    int vector_upload_budget = 4;      // vector-upload-budget (tiles per frame)
-    bool vector_upload_thread = false; // vector-upload-thread
-    // OsmAnd's renderer has no layers and the vector map clears the frame,
-    // so OsmAnd's renderFrame() draws nothing visible (osmand-render-skip).
-    bool osmand_render_skip = false;
+
     double simulation_speed_metres_per_second = 20.0;
 
     static Config from_environment();

@@ -26,18 +26,20 @@
 /* Frame cap in fps (10..120). Swaps never wait (swap interval 0), so a cheap
  * renderer would otherwise spin far above Screen's ~30 Hz composition. */
 #define OPEN_NAVI_PACE_MARKER "/datastore/navicore-backend/nav-pace-fps"
-/* Render thread priority (10..40). nv_navigation runs on one core with its
- * workers at the same default priority, round-robin; a higher render
- * priority keeps worker timeslices out of a frame. */
 /* Input by notification: Screen sends a pulse when an event is queued and
  * the render loop calls screen_get_event() only then (plus a safety poll
  * every 500 ms), instead of an IPC to Screen on every loop, which waits
- * whenever Screen is busy compositing. */
-#define OPEN_NAVI_INPUT_NOTIFY_MARKER \
-    "/datastore/navicore-backend/nav-input-notify"
+ * (up to 14 ms seen) whenever Screen is busy compositing. Falls back to
+ * polling every loop if the notification cannot be set up. */
 #define OPEN_NAVI_INPUT_SAFETY_POLL_NANOSECONDS UINT64_C(500000000)
 #define OPEN_NAVI_NOTIFY_PULSE_EVENT (_PULSE_CODE_MINAVAIL + 1)
 #define OPEN_NAVI_NOTIFY_PULSE_STOP (_PULSE_CODE_MINAVAIL + 2)
+/* Render thread priority. nv_navigation runs pinned to one core shared
+ * with other services; at the inherited 15 the render
+ * thread was preempted mid-frame (bench 2026-10-15: presents over 40 ms
+ * fell from 232 to 25 per drive at 20; 25 was no better). The marker
+ * (10..40) overrides it for bench runs. */
+#define OPEN_NAVI_RENDER_PRIORITY_DEFAULT 20
 #define OPEN_NAVI_RENDER_PRIORITY_MARKER \
     "/datastore/navicore-backend/nav-render-priority"
 #define OPEN_NAVI_PRESENT_TRACE_PATH "/tmp/open-navicore-present.log"
@@ -268,7 +270,6 @@ static void *notify_main(void *unused)
 static void start_input_notify(void)
 {
     struct sigevent event;
-    if (access(OPEN_NAVI_INPUT_NOTIFY_MARKER, F_OK) != 0) return;
     g_qnx.notify_chid = ChannelCreate(_NTO_CHF_PRIVATE);
     if (g_qnx.notify_chid == -1) return;
     g_qnx.notify_coid = ConnectAttach(0, 0, g_qnx.notify_chid, _NTO_SIDE_CHANNEL, 0);
@@ -323,21 +324,21 @@ int open_navi_renderer_platform_input_pending(void)
  * priority. The result goes to the present trace. */
 static void apply_render_priority(void)
 {
-    const int priority = marker_integer(OPEN_NAVI_RENDER_PRIORITY_MARKER);
+    const int marker = marker_integer(OPEN_NAVI_RENDER_PRIORITY_MARKER);
+    const int priority = (marker >= 10 && marker <= 40)
+                         ? marker : OPEN_NAVI_RENDER_PRIORITY_DEFAULT;
     struct sched_param parameters;
     int policy = 0;
     int applied = 0;
     if (pthread_getschedparam(pthread_self(), &policy, &parameters) != 0)
         return;
     g_qnx.render_priority = parameters.sched_priority;
-    if (priority >= 10 && priority <= 40) {
-        parameters.sched_priority = priority;
-        applied = pthread_setschedparam(pthread_self(), policy, &parameters) == 0;
-        if (applied) g_qnx.render_priority = priority;
-    }
+    parameters.sched_priority = priority;
+    applied = pthread_setschedparam(pthread_self(), policy, &parameters) == 0;
+    if (applied) g_qnx.render_priority = priority;
     if (g_qnx.trace_file != NULL) {
         (void)fprintf(g_qnx.trace_file, "render_priority=%d marker=%d applied=%d\n",
-                      g_qnx.render_priority, priority, applied);
+                      g_qnx.render_priority, marker, applied);
         (void)fflush(g_qnx.trace_file);
     }
 }

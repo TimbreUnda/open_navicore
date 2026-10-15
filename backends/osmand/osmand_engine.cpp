@@ -213,7 +213,6 @@ private:
     std::vector<ui::UploadRect> upload_rects_;
     bool overlay_enabled_ = true;
     FrameMetrics frame_metrics_{false};
-    bool osmand_render_skip_ = false;
     // update_guidance() parts of the current frame (frame log only).
     std::uint32_t guidance_tracker_us_ = 0;
     std::uint32_t guidance_sync_us_ = 0;
@@ -316,9 +315,7 @@ bool OsmAndEngine::initialize(const Config& config,
             std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-2";
     }
     frame_metrics_ = FrameMetrics(config.performance_metrics);
-    osmand_render_skip_ = config.osmand_render_skip;
-    if (osmand_render_skip_)
-        trace("osmand_render=skip");
+
     if (config.performance_metrics)
         trace("performance_metrics=enabled");
     simulation_speed_metres_per_second_ =
@@ -405,22 +402,15 @@ bool OsmAndEngine::initialize(const Config& config,
     try {
         vector_map_.reset(new navicore_vector::VectorMap(
             obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); }));
-        vector_map_->set_upload_thread(config.vector_upload_thread);
+        vector_map_->set_upload_thread(true);
         if (!vector_map_->init_gl())
             throw std::runtime_error("vector_map gl");
         if (!vector_cache_dir_.empty())
             vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
                                         200ull << 20);
         vector_map_->set_night(night_);
-        vector_map_->set_upload_policy(config.vector_upload_pool,
-                                       config.vector_upload_budget);
-        {
-            char line[96];
-            std::snprintf(line, sizeof(line), "vector_upload pool=%d budget=%d thread=%d",
-                          config.vector_upload_pool ? 1 : 0, config.vector_upload_budget,
-                          vector_map_->upload_thread_active() ? 1 : 0);
-            trace(line);
-        }
+        trace(vector_map_->upload_thread_active() ? "vector_upload=thread"
+                                                  : "vector_upload=render_thread");
         trace("init=vector_map");
     } catch (...) {
         if (vector_map_)
@@ -1516,10 +1506,11 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     // The bool API collapses StageResult::Wait and ::Fail. Preserve the live
     // resource-wait behavior, but let Session report sustained lack of progress.
     stage_started = Clock::now();
-    // Without the vector map OsmAnd's frame is the only one; with it the
-    // vector map clears and covers everything OsmAnd would draw.
-    const bool map_rendered =
-        (osmand_render_skip_ && vector_map_) || renderer_->renderFrame();
+    // OsmAnd's renderer has no layers; with the vector map (which clears and
+    // covers the frame) its renderFrame() draws nothing visible, and it was
+    // seen blocked 20-38 ms in the driver. update()/prepareFrame() above
+    // still keep its camera current.
+    const bool map_rendered = vector_map_ || renderer_->renderFrame();
     measurement.map_render_us = elapsed_us(stage_started);
     if (!map_rendered)
         return finish({FrameOutcome::Pending, PendingStage::Render, true},

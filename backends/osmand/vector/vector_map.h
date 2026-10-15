@@ -128,12 +128,9 @@ public:
     void set_overzoom(bool on);
     // Night palette; tiles are rebuilt (or read from their own cache).
     void set_night(bool night);
-    // Tile uploads (render thread): reuse evicted tiles' GL buffers instead
-    // of deleting and allocating new ones, and at most `budget` tiles per
-    // frame (1..8).
-    void set_upload_policy(bool pool, int budget);
     // Upload tiles on a thread with a shared GL context (call before
     // init_gl; falls back to render-thread uploads if the context fails).
+    // GL buffer uploads wait on Screen (19-136 ms seen) while it composites.
     void set_upload_thread(bool on);
     bool upload_thread_active() const;
 

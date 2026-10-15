@@ -44,21 +44,7 @@ Config Config::from_environment()
     config.performance_metrics = marker_or_environment(
         "OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS",
         "/datastore/navicore-backend/enable-performance-metrics");
-    config.vector_upload_pool = marker_or_environment(
-        "OPEN_NAVICORE_OSMAND_VECTOR_UPLOAD_POOL",
-        "/datastore/navicore-backend/vector-upload-pool");
-    config.osmand_render_skip = marker_or_environment(
-        "OPEN_NAVICORE_OSMAND_RENDER_SKIP",
-        "/datastore/navicore-backend/osmand-render-skip");
-    config.vector_upload_thread = marker_or_environment(
-        "OPEN_NAVICORE_OSMAND_VECTOR_UPLOAD_THREAD",
-        "/datastore/navicore-backend/vector-upload-thread");
-    if (std::FILE* budget = std::fopen("/datastore/navicore-backend/vector-upload-budget", "r")) {
-        int value = 0;
-        if (std::fscanf(budget, "%d", &value) == 1 && value >= 1 && value <= 8)
-            config.vector_upload_budget = value;
-        std::fclose(budget);
-    }
+
     return config;
 }
 } // namespace navicore_osmand
