@@ -659,7 +659,8 @@ static void increment_counter(uint32_t *counter)
     if (*counter != UINT32_MAX) ++*counter;
 }
 
-int mock_renderer_platform_poll_pointer(MockNavBackendPointerV1 *pointer_out,
+int mock_renderer_platform_poll_pointer(MockNavBackendPointerV2 *pointer_out,
+                                        int contacts,
                                         char *diagnostic, size_t capacity)
 {
     MockScreenRawEvent raw;
@@ -753,7 +754,9 @@ int mock_renderer_platform_poll_pointer(MockNavBackendPointerV1 *pointer_out,
         raw.touch_id_valid = 1u;
     }
     {
-        const int decoded = mock_screen_input_decode(&g_qnx.input, &raw, pointer_out);
+        int decoded;
+        g_qnx.input.multi_contact = contacts != 0 ? 1u : 0u;
+        decoded = mock_screen_input_decode(&g_qnx.input, &raw, pointer_out);
         input_trace("type=%d own=%d pos=%d,%d src=%d,%d btn=%u id=%u decoded=%d "
                     "action=%u out=%d,%d acc=%u foreign=%u dup=%u sec=%u drop=%u oob=%u ign=%u",
                     event_type, raw.window == (uintptr_t)g_qnx.window,

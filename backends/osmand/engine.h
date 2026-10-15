@@ -27,7 +27,7 @@ public:
                             std::shared_ptr<Wakeup>) = 0;
     virtual FrameResult frame(const MockNavBackendRenderTargetV1&) = 0;
     virtual int gps(const MockNavBackendGpsV1&) = 0;
-    virtual int pointer(const MockNavBackendPointerV1&) = 0;
+    virtual int pointer(const MockNavBackendPointerV2&) = 0;
     virtual ReleaseResult release(ReleaseMode) = 0;
 };
 

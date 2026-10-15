@@ -46,7 +46,15 @@ int mock_renderer_notify_driver_distraction(uint32_t source_slot,
                                             uint32_t request_handle,
                                             uint32_t status_raw);
 
+/* The installed backend takes MockNavBackendPointerV2 contacts (every
+ * touch contact, V2 payloads); otherwise only the first contact, as V1.
+ * Set by the plugin loader before install; rejected unless cold. */
+int mock_renderer_set_pointer_contacts(int enabled);
+
 #if defined(MOCK_NAVICORE_TESTING)
+int mock_renderer_test_submit_contact(uint32_t action, int32_t x, int32_t y,
+                                      uint32_t buttons, uint32_t contact,
+                                      uint32_t count);
 int mock_renderer_test_submit_pointer(uint32_t action, int32_t x, int32_t y,
                                       uint32_t buttons);
 uint32_t mock_renderer_test_pointer_accepted(void);

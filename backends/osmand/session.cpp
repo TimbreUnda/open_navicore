@@ -166,7 +166,7 @@ FrameResult Session::frame(const MockNavBackendRenderTargetV1& target) noexcept
     return result;
 }
 
-int Session::pointer(const MockNavBackendPointerV1& event) noexcept
+int Session::pointer(const MockNavBackendPointerV2& event) noexcept
 {
     if (state_ != State::Attached || !engine_)
         return -1;

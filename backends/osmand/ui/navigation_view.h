@@ -30,7 +30,9 @@ public:
     NavigationView& operator=(const NavigationView&) = delete;
 
     void resize(uint32_t width, uint32_t height);
-    void pointer(int action, int32_t x, int32_t y);
+    // contact: 0 for the first finger (also drives LVGL), 1 for a second
+    // one (two-finger map gestures only).
+    void pointer(int action, int32_t x, int32_t y, int contact = 0);
     // Advances LVGL time by the real frame interval and reads every queued
     // pointer sample, so map drags reach the camera in the same frame.
     // Call once per frame before the camera update.
@@ -87,13 +89,14 @@ public:
     // is noticed while the finger rests.
     bool wants_frames() const noexcept
     {
-        return map_drag_ && !map_dragging_ && !long_pressed_ && pointer_down_;
+        return map_drag_ && !map_dragging_ && !long_pressed_ && !pinching_ &&
+               !gesture_consumed_ && pointer_down_;
     }
     // A late subtitle (dropped pin address) for the card showing `id`.
     bool set_place_subtitle(const std::string& id, std::string subtitle);
 
 private:
-    struct PointerSample { int action; int32_t x; int32_t y; };
+    struct PointerSample { int action; int32_t x; int32_t y; int contact = 0; };
 
     void create_display();
     void destroy_display() noexcept;
@@ -120,6 +123,7 @@ private:
     int rail_width() const noexcept;
     void handle_map_gesture(const PointerSample& sample);
     void check_long_press();
+    void handle_second_contact(const PointerSample& sample);
     void build_pin_marker();
     void clear_object_references() noexcept;
     // Search: results grid or status message, and the query field text.
@@ -199,9 +203,13 @@ private:
     bool map_drag_ = false;      // pressed on bare map
     bool map_dragging_ = false;  // moved past the slop: a drag, not a tap
     bool long_pressed_ = false;  // this press became a long press
+    bool pinching_ = false;      // a second finger joined: pinch/rotate
+    bool gesture_consumed_ = false;  // a pinch ended; the press does nothing more
     bool last_tap_valid_ = false;  // a tap that may start a double tap
     uint32_t last_tap_tick_ = 0;
     int32_t last_tap_x_ = 0;
+    int32_t second_x_ = 0;
+    int32_t second_y_ = 0;
     int32_t last_tap_y_ = 0;
     lv_obj_t* pin_marker_ = nullptr;
     bool pin_visible_ = false;

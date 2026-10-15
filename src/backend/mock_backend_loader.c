@@ -3,6 +3,7 @@
 #include "mock_backend_loader.h"
 
 #include "mock_default_backend.h"
+#include "mock_renderer.h"
 
 #include <dlfcn.h>
 #include <pthread.h>
@@ -131,7 +132,16 @@ int mock_backend_plugin_validate(const MockNavBackendPluginV1 *plugin,
     REQUIRE_EQUAL(gps_interval_v2_size,
                   sizeof(MockNavBackendGpsIntervalV2));
     REQUIRE_EQUAL(audio_v2_size, sizeof(MockNavBackendAudioV2));
-    REQUIRE_EQUAL(capabilities, MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
+    /* Optional capabilities (pointer contacts) may be added to the exact
+     * required set in every query version. */
+    if ((plugin->capabilities & ~(uint32_t)MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES) !=
+        (uint32_t)MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES) {
+        set_diagnostic(diagnostic, diagnostic_capacity,
+                       "plugin capabilities mismatch got=%u expected=%u",
+                       (unsigned int)plugin->capabilities,
+                       (unsigned int)MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
+        return -1;
+    }
     if (memcmp(plugin->build_id, g_expected_build_id,
                sizeof(g_expected_build_id)) != 0) {
         set_diagnostic(diagnostic, diagnostic_capacity,
@@ -202,7 +212,8 @@ int mock_backend_plugin_validate_v2(const MockNavBackendPluginV2 *plugin,
     REQUIRE_V2(plugin->v1.gps_interval_v2_size,
                sizeof(MockNavBackendGpsIntervalV2));
     REQUIRE_V2(plugin->v1.audio_v2_size, sizeof(MockNavBackendAudioV2));
-    REQUIRE_V2(plugin->v1.capabilities, MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
+    REQUIRE_V2(plugin->v1.capabilities & ~(uint32_t)MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES,
+               MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
     REQUIRE_V2(plugin->services_v2_size, sizeof(MockNavBackendServicesV2));
     REQUIRE_V2(plugin->cluster_v1_size, sizeof(MockNavBackendClusterV1));
     REQUIRE_V2(plugin->utf8_span_v1_size, sizeof(MockNavBackendUtf8SpanV1));
@@ -284,7 +295,7 @@ int mock_backend_plugin_validate_v3(const MockNavBackendPluginV3 *plugin,
     REQUIRE_V3(plugin->v2.v1.gps_interval_v2_size,
                sizeof(MockNavBackendGpsIntervalV2));
     REQUIRE_V3(plugin->v2.v1.audio_v2_size, sizeof(MockNavBackendAudioV2));
-    REQUIRE_V3(plugin->v2.v1.capabilities,
+    REQUIRE_V3(plugin->v2.v1.capabilities & ~(uint32_t)MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES,
                MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
     REQUIRE_V3(plugin->v2.services_v2_size,
                sizeof(MockNavBackendServicesV2));
@@ -373,7 +384,7 @@ int mock_backend_plugin_validate_v4(const MockNavBackendPluginV4 *plugin,
                sizeof(MockNavBackendGpsIntervalV2));
     REQUIRE_V4(plugin->v3.v2.v1.audio_v2_size,
                sizeof(MockNavBackendAudioV2));
-    REQUIRE_V4(plugin->v3.v2.v1.capabilities,
+    REQUIRE_V4(plugin->v3.v2.v1.capabilities & ~(uint32_t)MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES,
                MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
     REQUIRE_V4(plugin->v3.v2.services_v2_size,
                sizeof(MockNavBackendServicesV2));
@@ -880,6 +891,8 @@ static void bootstrap_once(void)
         g_loader.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V4;
         g_loader.test.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V4;
         initialize_wrapper_v5();
+        (void)mock_renderer_set_pointer_contacts(
+            (query_result_v4.v3.v2.v1.capabilities & MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
         status = mock_navicore_backend_install_v5(&g_loader.wrapper_v5);
     } else {
         memset(&query_result_v3, 0, sizeof(query_result_v3));
@@ -900,6 +913,8 @@ static void bootstrap_once(void)
             g_loader.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V3;
             g_loader.test.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V3;
             initialize_wrapper_v4();
+            (void)mock_renderer_set_pointer_contacts(
+                (query_result_v3.v2.v1.capabilities & MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
             status = mock_navicore_backend_install_v4(&g_loader.wrapper_v4);
         } else {
             memset(&query_result_v2, 0, sizeof(query_result_v2));
@@ -920,6 +935,9 @@ static void bootstrap_once(void)
                 g_loader.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V2;
                 g_loader.test.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V2;
                 initialize_wrapper_v3();
+                (void)mock_renderer_set_pointer_contacts(
+                    (query_result_v2.v1.capabilities &
+                     MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
                 status = mock_navicore_backend_install_v3(
                     &g_loader.wrapper_v3);
             } else {
@@ -942,6 +960,9 @@ static void bootstrap_once(void)
                 g_loader.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V1;
                 g_loader.test.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V1;
                 initialize_wrapper();
+                (void)mock_renderer_set_pointer_contacts(
+                    (query_result.capabilities &
+                     MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
                 status = mock_navicore_backend_install_v2(
                     &g_loader.wrapper);
             }

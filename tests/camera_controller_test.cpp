@@ -267,6 +267,17 @@ int main()
         }
         assert(checked_middle && near(pose.zoom, z0 + 1.0f, 1e-4));
         assert(near(pose.latitude, (at_lat + 50.45) / 2.0, 1e-9));
+        // Two-finger gesture: zoom and rotation apply at once, no easing,
+        // then stay (no drift back, no transition).
+        camera.set_free_view(z0 + 0.4f, 33.0f);
+        pose = camera.update(none, 0.016);
+        assert(near(pose.zoom, z0 + 0.4f, 1e-5) && near(pose.azimuth_degrees, 33.0, 1e-4));
+        assert(!camera.zoom_transition());
+        for (int i = 0; i < 20; ++i)
+            pose = camera.update(none, 0.016);
+        assert(near(pose.zoom, z0 + 0.4f, 1e-5) && near(pose.azimuth_degrees, 33.0, 1e-4));
+        camera.set_free_view(z0 + 1.0f, 0.0f);  // back for the checks below
+        (void)camera.update(none, 0.016);
         // A drag afterwards is not pulled back to the anchor.
         camera.set_free_location(50.40, 30.40);
         pose = camera.update(none, 0.016);

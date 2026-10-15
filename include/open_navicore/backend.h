@@ -110,6 +110,25 @@ typedef struct {
     uint32_t buttons;
 } MockNavBackendPointerV1;
 
+/* Multi-touch pointer: the exact V1 fields, then the contact. Delivered
+ * through pointer_changed (abi_version MOCK_NAV_BACKEND_POINTER_ABI_V2,
+ * struct_size the V2 size) only to a plugin that declares
+ * MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS; every other backend receives V1
+ * payloads for the first contact only. contact_id is a small slot number
+ * (0 = the first finger down, 1 = a second one); contact_count is the
+ * number of contacts down after this event. */
+enum { MOCK_NAV_BACKEND_POINTER_ABI_V2 = 2u, MOCK_NAV_BACKEND_POINTER_CONTACTS = 2u };
+typedef struct {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t action;
+    int32_t x;
+    int32_t y;
+    uint32_t buttons;
+    uint32_t contact_id;
+    uint32_t contact_count;
+} MockNavBackendPointerV2;
+
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;

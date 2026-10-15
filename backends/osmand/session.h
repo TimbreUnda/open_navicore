@@ -34,7 +34,7 @@ public:
     int attach(const MockNavBackendRenderTargetV1&) noexcept;
     FrameResult frame(const MockNavBackendRenderTargetV1&) noexcept;
     int gps(const MockNavBackendGpsV1&) noexcept;
-    int pointer(const MockNavBackendPointerV1&) noexcept;
+    int pointer(const MockNavBackendPointerV2&) noexcept;
     void detach(uintptr_t current_context) noexcept;
     void stop() noexcept;
     bool accepts_events() const noexcept;

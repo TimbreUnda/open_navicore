@@ -106,6 +106,11 @@ public:
     // keeps the current zoom and tilt. set_free_location moves it.
     void begin_free(double latitude, double longitude) noexcept;
     void set_free_location(double latitude, double longitude) noexcept;
+    // Two-finger gesture (free camera): zoom and rotation follow the
+    // fingers directly, with no easing, from the next update.
+    void set_free_view(float zoom, float azimuth_degrees) noexcept;
+    float zoom() const noexcept { return zoom_; }
+    float azimuth() const noexcept { return azimuth_; }
     // Fits a lat/lon bounding box (route overview) until recenter/timeout.
     void overview(double min_latitude, double min_longitude,
                   double max_latitude, double max_longitude) noexcept;
@@ -144,6 +149,7 @@ private:
     double last_heading_ = 0.0;
     bool has_heading_ = false;
     bool following_vehicle_ = false;  // the last update followed a vehicle
+    bool direct_ = false;  // set_free_view: apply without easing once
     float dynamic_elevation(double speed_mps) const noexcept;
     bool maneuver_active_ = false;
     bool maneuver_tight_ = false;

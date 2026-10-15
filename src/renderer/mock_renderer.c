@@ -47,7 +47,7 @@ typedef struct {
         MockNavBackendInternationalizationV1 internationalization;
         MockNavBackendClusterDisplayV1 cluster_display;
         MockNavBackendDriverDistractionV1 driver_distraction;
-        MockNavBackendPointerV1 pointer;
+        MockNavBackendPointerV2 pointer;  /* V1 backends get a V1 copy */
     } data;
 } RenderEvent;
 
@@ -163,6 +163,7 @@ typedef struct {
     uint32_t pointer_edge_dropped;
     uint32_t pointer_move_evicted;
     uint32_t pointer_gesture_pairs_evicted;
+    int pointer_contacts;
     uint32_t platform_ignored;
     uint32_t platform_errors;
     uint32_t platform_window_lost;
@@ -539,7 +540,25 @@ static int evict_oldest_gesture_pair_locked(void)
     return 0;
 }
 
-static int enqueue_pointer(const MockNavBackendPointerV1 *pointer)
+/* The queued move of the same contact a new move can replace: searched
+ * back from the tail across moves only (other contacts' moves may be
+ * passed, never a press or release), so per-contact order is kept. */
+static RenderEvent *coalescible_move_locked(uint32_t contact)
+{
+    unsigned int back;
+    for (back = 1u; back <= g_runtime.pointer_count; ++back) {
+        RenderEvent *event = &g_runtime.pointer_queue[
+            (g_runtime.pointer_head + g_runtime.pointer_count - back) %
+            MOCK_POINTER_QUEUE_CAPACITY];
+        if (event->data.pointer.action != MOCK_NAV_BACKEND_POINTER_MOVE)
+            return NULL;
+        if (event->data.pointer.contact_id == contact)
+            return event;
+    }
+    return NULL;
+}
+
+static int enqueue_pointer(const MockNavBackendPointerV2 *pointer)
 {
     RenderEvent *event;
     unsigned int tail;
@@ -556,14 +575,7 @@ static int enqueue_pointer(const MockNavBackendPointerV1 *pointer)
         increment_counter(&g_runtime.pointer_dropped);
         result = -1;
     } else if (pointer->action == MOCK_NAV_BACKEND_POINTER_MOVE &&
-               g_runtime.pointer_count != 0u &&
-               g_runtime.pointer_queue[
-                   (g_runtime.pointer_head + g_runtime.pointer_count - 1u) %
-                   MOCK_POINTER_QUEUE_CAPACITY].data.pointer.action ==
-                   MOCK_NAV_BACKEND_POINTER_MOVE) {
-        event = &g_runtime.pointer_queue[
-            (g_runtime.pointer_head + g_runtime.pointer_count - 1u) %
-            MOCK_POINTER_QUEUE_CAPACITY];
+               (event = coalescible_move_locked(pointer->contact_id)) != NULL) {
         /* Keep the queued move's sequence: take_event() serves the oldest
          * event first, and a move renumbered on every coalesce stays newer
          * than the frame request the backend renews each frame, so during a
@@ -621,9 +633,10 @@ static int drain_platform_pointer(void)
 {
     unsigned int drained;
     for (drained = 0u; drained < MOCK_PLATFORM_DRAIN_LIMIT; ++drained) {
-        MockNavBackendPointerV1 pointer;
+        MockNavBackendPointerV2 pointer;
         int result = mock_renderer_platform_poll_pointer(
-            &pointer, g_runtime.diagnostic, sizeof(g_runtime.diagnostic));
+            &pointer, g_runtime.pointer_contacts, g_runtime.diagnostic,
+            sizeof(g_runtime.diagnostic));
         if (result == 0) return 0;
         if (result == 1) {
             (void)enqueue_pointer(&pointer);
@@ -729,9 +742,25 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
         }
         break;
     case RENDER_EVENT_POINTER:
-        if (backend.pointer_changed != NULL)
-            (void)backend.pointer_changed(backend.backend_context,
-                                          &event->data.pointer);
+        if (backend.pointer_changed != NULL) {
+            if (g_runtime.pointer_contacts != 0) {
+                /* V2 shares the exact V1 prefix; the callback type is the
+                 * V1 pointer, the payload says V2 by version and size. */
+                (void)backend.pointer_changed(
+                    backend.backend_context,
+                    (const MockNavBackendPointerV1 *)(const void *)&event->data.pointer);
+            } else if (event->data.pointer.contact_id == 0u) {
+                MockNavBackendPointerV1 v1;
+                memset(&v1, 0, sizeof(v1));
+                v1.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+                v1.struct_size = sizeof(v1);
+                v1.action = event->data.pointer.action;
+                v1.x = event->data.pointer.x;
+                v1.y = event->data.pointer.y;
+                v1.buttons = event->data.pointer.buttons;
+                (void)backend.pointer_changed(backend.backend_context, &v1);
+            }
+        }
         break;
     case RENDER_EVENT_FRAME:
         if (backend.render_frame != NULL) {
@@ -955,6 +984,18 @@ static void *renderer_thread(void *unused)
     (void)pthread_cond_broadcast(&g_runtime.condition);
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return NULL;
+}
+
+int mock_renderer_set_pointer_contacts(int enabled)
+{
+    int result = 0;
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    if (g_runtime.state != RENDERER_COLD)
+        result = -1;
+    else
+        g_runtime.pointer_contacts = enabled != 0;
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+    return result;
 }
 
 int mock_navicore_backend_install_v1(const MockNavBackendV1 *backend)
@@ -1726,14 +1767,23 @@ int mock_renderer_notify_driver_distraction(uint32_t source_slot,
 int mock_renderer_test_submit_pointer(uint32_t action, int32_t x, int32_t y,
                                       uint32_t buttons)
 {
-    MockNavBackendPointerV1 pointer;
+    return mock_renderer_test_submit_contact(action, x, y, buttons, 0u, 1u);
+}
+
+int mock_renderer_test_submit_contact(uint32_t action, int32_t x, int32_t y,
+                                      uint32_t buttons, uint32_t contact,
+                                      uint32_t count)
+{
+    MockNavBackendPointerV2 pointer;
     memset(&pointer, 0, sizeof(pointer));
-    pointer.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    pointer.abi_version = MOCK_NAV_BACKEND_POINTER_ABI_V2;
     pointer.struct_size = sizeof(pointer);
     pointer.action = action;
     pointer.x = x;
     pointer.y = y;
     pointer.buttons = buttons;
+    pointer.contact_id = contact;
+    pointer.contact_count = count;
     return enqueue_pointer(&pointer);
 }
 

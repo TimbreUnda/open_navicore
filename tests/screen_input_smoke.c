@@ -16,7 +16,7 @@ int main(void)
 {
     MockScreenInputState state;
     MockScreenRawEvent raw;
-    MockNavBackendPointerV1 pointer;
+    MockNavBackendPointerV2 pointer;
 
     assert(mock_screen_input_platform_result(0) == 2);
     assert(mock_screen_input_platform_result(1) == 1);
@@ -40,7 +40,10 @@ int main(void)
     assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
     assert(pointer.action == MOCK_NAV_BACKEND_POINTER_PRESS);
     assert(pointer.x == 10 && pointer.y == 20);
-    assert(sizeof(pointer) == 24u);
+    assert(sizeof(MockNavBackendPointerV1) == 24u);
+    assert(sizeof(pointer) == 32u);
+    assert(pointer.abi_version == MOCK_NAV_BACKEND_POINTER_ABI_V2);
+    assert(pointer.contact_id == 0u && pointer.contact_count == 1u);
 
     raw.touch_id = 8u;
     assert(mock_screen_input_decode(&state, &raw, &pointer) == 0);
@@ -222,5 +225,51 @@ int main(void)
     raw.source_y = 2;
     assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
     assert(state.input_class == MOCK_SCREEN_INPUT_CLASS_TOUCH);
+
+    /* Multi-contact: a second touch is contact 1 with its own last
+     * position; a third is still dropped; each contact releases alone. */
+    mock_screen_input_reset(&state, 0x1234u, 0, 800u, 480u);
+    state.multi_contact = 1u;
+    raw = raw_event(MOCK_SCREEN_RAW_TOUCH, 0x1234u);
+    raw.touch_id_valid = 1u;
+    raw.touch_id = 7u;
+    raw.source_valid = 1u;
+    raw.source_x = 100;
+    raw.source_y = 100;
+    assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
+    assert(pointer.contact_id == 0u && pointer.contact_count == 1u);
+    raw.touch_id = 8u;
+    raw.source_x = 300;
+    raw.source_y = 200;
+    assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
+    assert(pointer.action == MOCK_NAV_BACKEND_POINTER_PRESS);
+    assert(pointer.contact_id == 1u && pointer.contact_count == 2u);
+    raw.touch_id = 9u;
+    assert(mock_screen_input_decode(&state, &raw, &pointer) == 0);
+    assert(state.secondary_touch == 1u);
+    raw.type = MOCK_SCREEN_RAW_MOVE;
+    raw.touch_id = 8u;
+    raw.source_x = 320;
+    assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
+    assert(pointer.action == MOCK_NAV_BACKEND_POINTER_MOVE && pointer.contact_id == 1u);
+    raw.touch_id = 7u;
+    raw.source_x = 90;
+    assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
+    assert(pointer.contact_id == 0u && pointer.x == 90);
+    /* The first finger lifts; the second keeps moving as contact 1 and
+     * releases at its own last position. */
+    raw.type = MOCK_SCREEN_RAW_RELEASE;
+    assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
+    assert(pointer.contact_id == 0u && pointer.contact_count == 1u);
+    raw.type = MOCK_SCREEN_RAW_MOVE;
+    raw.touch_id = 8u;
+    raw.source_x = 330;
+    assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
+    assert(pointer.contact_id == 1u);
+    raw.type = MOCK_SCREEN_RAW_RELEASE;
+    raw.source_valid = 0u;
+    assert(mock_screen_input_decode(&state, &raw, &pointer) == 1);
+    assert(pointer.contact_id == 1u && pointer.contact_count == 0u);
+    assert(pointer.x == 330 && pointer.y == 200);
     return 0;
 }

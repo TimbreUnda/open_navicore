@@ -95,7 +95,8 @@ int mock_renderer_platform_end_frame(int present, char *diagnostic,
     return 0;
 }
 
-int mock_renderer_platform_poll_pointer(MockNavBackendPointerV1 *pointer_out,
+int mock_renderer_platform_poll_pointer(MockNavBackendPointerV2 *pointer_out,
+                                        int contacts,
                                         char *diagnostic,
                                         size_t diagnostic_capacity)
 {
@@ -122,6 +123,7 @@ int mock_renderer_platform_poll_pointer(MockNavBackendPointerV1 *pointer_out,
     raw = g_input_queue[g_input_head];
     g_input_head = (g_input_head + 1u) % MOCK_STUB_INPUT_CAPACITY;
     --g_input_count;
+    g_input_state.multi_contact = contacts != 0 ? 1u : 0u;
     result = mock_screen_input_platform_result(
         mock_screen_input_decode(&g_input_state, &raw, pointer_out));
     (void)pthread_mutex_unlock(&g_input_lock);

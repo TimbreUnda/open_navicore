@@ -150,6 +150,18 @@ void CameraController::set_free_location(double latitude, double longitude) noex
     free_longitude_ = longitude;
 }
 
+void CameraController::set_free_view(float zoom, float azimuth_degrees) noexcept
+{
+    if (mode_ != Mode::Free)
+        return;
+    idle_seconds_ = 0.0;
+    anchored_ = false;
+    transition_ = false;
+    free_zoom_ = std::clamp(zoom, settings_.min_zoom, settings_.max_zoom);
+    free_azimuth_ = static_cast<float>(normalise_degrees(azimuth_degrees));
+    direct_ = true;
+}
+
 void CameraController::pan(int dx, int dy) noexcept
 {
     idle_seconds_ = 0.0;
@@ -275,7 +287,7 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
             : has_heading_ ? static_cast<float>(last_heading_) : azimuth_;
     }
 
-    if (!initialised_) {
+    if (!initialised_ || (direct_ && mode_ == Mode::Free)) {
         zoom_ = target_zoom;
         azimuth_ = target_azimuth;
         initialised_ = true;
@@ -311,6 +323,7 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
                            azimuth_alpha));
     }
     last_target_zoom_ = target_zoom;
+    direct_ = false;
     if (anchored_ && mode_ == Mode::Free) {
         // Scaling about the anchor keeps it on the same screen point.
         const double scale = std::pow(2.0, static_cast<double>(anchor_zoom_ - zoom_));

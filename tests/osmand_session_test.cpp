@@ -59,7 +59,7 @@ public:
         ++p_->gps_events;
         return 0;
     }
-    int pointer(const MockNavBackendPointerV1&) override { return 0; }
+    int pointer(const MockNavBackendPointerV2&) override { return 0; }
     ReleaseResult release(ReleaseMode mode) override
     {
         ++p_->released;

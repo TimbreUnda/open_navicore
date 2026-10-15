@@ -192,6 +192,41 @@ bool NavigationModel::take_drag(MapDrag& out) noexcept
     return true;
 }
 
+void NavigationModel::begin_pinch(int x0, int y0, int x1, int y1) noexcept
+{
+    pinch_ = {true, true, x0, y0, x1, y1};
+    pinch_pending_ = true;
+}
+
+void NavigationModel::move_pinch(int x0, int y0, int x1, int y1) noexcept
+{
+    if (!pinch_.active)
+        return;
+    pinch_.x0 = x0;
+    pinch_.y0 = y0;
+    pinch_.x1 = x1;
+    pinch_.y1 = y1;
+    pinch_pending_ = true;
+}
+
+void NavigationModel::end_pinch() noexcept
+{
+    if (!pinch_.active)
+        return;
+    pinch_.active = false;
+    pinch_pending_ = true;
+}
+
+bool NavigationModel::take_pinch(MapPinch& out) noexcept
+{
+    if (!pinch_pending_)
+        return false;
+    out = pinch_;
+    pinch_.started = false;
+    pinch_pending_ = false;
+    return true;
+}
+
 void NavigationModel::push_map_touch(MapGesture gesture, int x, int y) noexcept
 {
     if (touch_count_ >= 4)

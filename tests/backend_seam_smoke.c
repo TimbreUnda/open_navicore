@@ -52,6 +52,8 @@ typedef struct {
     MockNavBackendScreenV1 screen;
     MockNavBackendGpsV1 gps;
     MockNavBackendPointerV1 pointer;
+    MockNavBackendPointerV2 contact[2];  /* last V2 payload per contact */
+    unsigned int v2_pointer_count;
     MockNavBackendVehicleV2 vehicle;
     MockNavBackendGpsIntervalV2 gps_interval;
     MockNavBackendAudioV2 audio;
@@ -198,6 +200,14 @@ static int fake_pointer(void *context,
 {
     FakeBackend *fake = (FakeBackend *)context;
     fake->pointer = *pointer;
+    if (pointer->abi_version == MOCK_NAV_BACKEND_POINTER_ABI_V2 &&
+        pointer->struct_size >= sizeof(MockNavBackendPointerV2)) {
+        const MockNavBackendPointerV2 *v2 =
+            (const MockNavBackendPointerV2 *)(const void *)pointer;
+        assert(v2->contact_id < 2u);
+        fake->contact[v2->contact_id] = *v2;
+        ++fake->v2_pointer_count;
+    }
     record(fake, EVENT_POINTER);
     return fake->event_status;
 }
@@ -377,6 +387,19 @@ int main(void)
     assert(fake.gps.noise_raw == 0.125);
     assert(fake.pointer.action == MOCK_NAV_BACKEND_POINTER_RELEASE);
     assert(fake.pointer.x == 111 && fake.pointer.y == 222);
+    /* Without the contacts capability a backend gets V1 payloads for the
+     * first contact only. */
+    assert(fake.pointer.abi_version == MOCK_NAV_BACKEND_ABI_V1);
+    assert(fake.pointer.struct_size == sizeof(MockNavBackendPointerV1));
+    assert(mock_renderer_test_submit_contact(MOCK_NAV_BACKEND_POINTER_PRESS,
+                                             500, 50, 0u, 1u, 2u) == 0);
+    assert(mock_renderer_test_submit_pointer(MOCK_NAV_BACKEND_POINTER_PRESS,
+                                             7, 8, 1u) == 0);
+    wait_count(&fake, EVENT_POINTER, 3u);
+    delay_ms(10u);
+    assert(fake.pointer_count == 3u && fake.v2_pointer_count == 0u);
+    assert(fake.pointer.x == 7 && fake.pointer.y == 8);
+    assert(mock_renderer_set_pointer_contacts(1) == -1);  /* not while live */
     for (index = 3u; index < fake.count && ordered_count < 6u; ++index) {
         if (fake.events[index] != EVENT_RENDER)
             ordered[ordered_count++] = fake.events[index];
@@ -483,8 +506,33 @@ int main(void)
     initialize_fake(&outbound);
     backend_v3 = backend_v3_for(&outbound);
     assert(mock_navicore_backend_install_v3(&backend_v3) == 0);
+    /* With the contacts capability (set by the plugin loader) every
+     * contact arrives as a V2 payload, moves coalesced per contact. */
+    assert(mock_renderer_set_pointer_contacts(1) == 0);
     assert(mock_renderer_create(diagnostic, sizeof(diagnostic)) == 0);
     wait_count(&outbound, EVENT_RENDER, 1u);
+    assert(mock_renderer_test_submit_contact(MOCK_NAV_BACKEND_POINTER_PRESS,
+                                             100, 100, 0u, 0u, 1u) == 0);
+    assert(mock_renderer_test_submit_contact(MOCK_NAV_BACKEND_POINTER_PRESS,
+                                             300, 100, 0u, 1u, 2u) == 0);
+    assert(mock_renderer_test_submit_contact(MOCK_NAV_BACKEND_POINTER_MOVE,
+                                             310, 100, 0u, 1u, 2u) == 0);
+    assert(mock_renderer_test_submit_contact(MOCK_NAV_BACKEND_POINTER_MOVE,
+                                             90, 100, 0u, 0u, 2u) == 0);
+    assert(mock_renderer_test_submit_contact(MOCK_NAV_BACKEND_POINTER_MOVE,
+                                             320, 100, 0u, 1u, 2u) == 0);
+    for (index = 0u; index < 3000u; ++index) {
+        int done;
+        (void)pthread_mutex_lock(&outbound.lock);
+        done = outbound.contact[1].x == 320 && outbound.contact[0].x == 90;
+        (void)pthread_mutex_unlock(&outbound.lock);
+        if (done) break;
+        delay_ms(1u);
+    }
+    assert(outbound.contact[0].x == 90 && outbound.contact[1].x == 320);
+    assert(outbound.contact[1].contact_count == 2u);
+    assert(outbound.contact[1].struct_size == sizeof(MockNavBackendPointerV2));
+    assert(outbound.v2_pointer_count >= 4u && outbound.v2_pointer_count <= 5u);
     assert(mock_renderer_notify_vehicle_status(4u, 0u, 2u) == 0);
     assert(mock_renderer_notify_gps_interval(6u, 750u) == 0);
     assert(mock_renderer_notify_audio(19u, 0u, 3u, 17u) == 0);
@@ -508,6 +556,7 @@ int main(void)
                stale_services.v1.runtime_context, NULL) ==
            MOCK_NAV_BACKEND_SERVICE_STALE);
     mock_renderer_destroy();
+    assert(mock_renderer_set_pointer_contacts(0) == 0);
     assert(mock_navicore_backend_install_v3(NULL) == 0);
 
     /* Registration validates the version/size prefix, and failed start is

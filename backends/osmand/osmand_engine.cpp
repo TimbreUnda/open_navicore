@@ -44,7 +44,7 @@ public:
                     std::shared_ptr<Wakeup>) override;
     FrameResult frame(const MockNavBackendRenderTargetV1&) override;
     int gps(const MockNavBackendGpsV1&) override;
-    int pointer(const MockNavBackendPointerV1&) override;
+    int pointer(const MockNavBackendPointerV2&) override;
     ReleaseResult release(ReleaseMode) override;
 
 private:
@@ -107,6 +107,12 @@ private:
     bool apply_drag(const ui::MapDrag& drag);
     void handle_map_tap(int x, int y);
     void handle_map_touch(const ui::MapTouch& touch);
+    bool apply_pinch(const ui::MapPinch& pinch);
+    bool pinch_valid_ = false;
+    double pinch_grab_x_ = 0.0, pinch_grab_y_ = 0.0;
+    double pinch_target_x_ = 0.0, pinch_target_y_ = 0.0;
+    double pinch_distance_ = 1.0, pinch_angle_ = 0.0;
+    float pinch_zoom_ = 16.0f, pinch_azimuth_ = 0.0f;
     void drop_pin(int x, int y);
     void update_pin_marker();
     bool unproject_lat_lon(int x, int y, OsmAnd::LatLon& out) const;
@@ -615,6 +621,9 @@ bool OsmAndEngine::apply_camera()
     ui::MapDrag drag;
     if (navigation_->take_drag(drag))
         dragging = apply_drag(drag);
+    ui::MapPinch pinch;
+    if (navigation_->take_pinch(pinch))
+        dragging = apply_pinch(pinch) || dragging;
     while (navigation_->take_map_touch(map_touch_))
         handle_map_touch(map_touch_);
 
@@ -738,6 +747,64 @@ bool OsmAndEngine::apply_drag(const ui::MapDrag& drag)
     if (!drag.active)
         drag_valid_ = false;
     return drag.active;
+}
+
+// Two fingers: their distance zooms (log2 of the ratio), their angle
+// rotates, and the ground point grabbed under their midpoint is kept under
+// it the same way a drag keeps its point (corrected each frame).
+bool OsmAndEngine::apply_pinch(const ui::MapPinch& pinch)
+{
+    constexpr double degrees = 180.0 / 3.14159265358979323846;
+    const auto unproject = [this](double x, double y, double& x31, double& y31) {
+        OsmAnd::PointI64 location;
+        if (!renderer_->getLocationFromScreenPoint(OsmAnd::PointD(x, y), location))
+            return false;
+        x31 = static_cast<double>(location.x);
+        y31 = static_cast<double>(location.y);
+        return true;
+    };
+    const auto to_lat_lon = [](double x31, double y31) {
+        return OsmAnd::Utilities::convert31ToLatLon(OsmAnd::PointI(
+            static_cast<int32_t>(x31), static_cast<int32_t>(y31)));
+    };
+    const double mid_x = (pinch.x0 + pinch.x1) / 2.0;
+    const double mid_y = (pinch.y0 + pinch.y1) / 2.0;
+    const double distance = std::max(1.0, std::hypot(pinch.x1 - pinch.x0, pinch.y1 - pinch.y0));
+    const double angle = std::atan2(pinch.y1 - pinch.y0, pinch.x1 - pinch.x0) * degrees;
+    if (pinch.started) {
+        const auto& viewport = camera_.viewport();
+        pinch_valid_ =
+            unproject(mid_x, mid_y, pinch_grab_x_, pinch_grab_y_) &&
+            unproject(viewport.left + viewport.width / 2.0, viewport.top + viewport.height / 2.0,
+                      pinch_target_x_, pinch_target_y_);
+        if (pinch_valid_) {
+            const auto centre = to_lat_lon(pinch_target_x_, pinch_target_y_);
+            camera_.begin_free(centre.latitude, centre.longitude);
+            pinch_distance_ = distance;
+            pinch_angle_ = angle;
+            pinch_zoom_ = camera_.zoom();
+            pinch_azimuth_ = camera_.azimuth();
+            trace("map_gesture=pinch");
+        }
+    }
+    if (pinch_valid_ && pinch.active) {
+        // Screen angles grow clockwise (y down); turning the fingers
+        // clockwise turns the map with them, which lowers the azimuth.
+        camera_.set_free_view(
+            pinch_zoom_ + static_cast<float>(std::log2(distance / pinch_distance_)),
+            pinch_azimuth_ - static_cast<float>(CameraController::shortest_angle_delta(
+                                 pinch_angle_, angle)));
+        double under_x = 0.0, under_y = 0.0;
+        if (unproject(mid_x, mid_y, under_x, under_y)) {
+            pinch_target_x_ += pinch_grab_x_ - under_x;
+            pinch_target_y_ += pinch_grab_y_ - under_y;
+            const auto centre = to_lat_lon(pinch_target_x_, pinch_target_y_);
+            camera_.set_free_location(centre.latitude, centre.longitude);
+        }
+    }
+    if (!pinch.active)
+        pinch_valid_ = false;
+    return pinch.active;
 }
 
 bool OsmAndEngine::unproject_lat_lon(int x, int y, OsmAnd::LatLon& out) const
@@ -1286,12 +1353,13 @@ int OsmAndEngine::gps(const MockNavBackendGpsV1& event)
     return navigation_wakeup_ ? navigation_wakeup_->request() : 0;
 }
 
-int OsmAndEngine::pointer(const MockNavBackendPointerV1& event)
+int OsmAndEngine::pointer(const MockNavBackendPointerV2& event)
 {
     if (phase_ != Phase::Ready || !view_)
         return -1;
     trace_pointer("received", event.action, event.x, event.y);
-    view_->pointer(static_cast<int>(event.action), event.x, event.y);
+    view_->pointer(static_cast<int>(event.action), event.x, event.y,
+                   static_cast<int>(event.contact_id));
     return 0;
 }
 

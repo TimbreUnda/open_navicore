@@ -1530,10 +1530,17 @@ void NavigationView::clear_object_references() noexcept
     last_tap_valid_ = false;
 }
 
-void NavigationView::pointer(int action, int32_t x, int32_t y)
+void NavigationView::pointer(int action, int32_t x, int32_t y, int contact)
 {
     if (rendered_frames_ < input_quarantine_frames) {
         trace_pointer("quarantined", static_cast<uint32_t>(action), x, y);
+        return;
+    }
+    if (contact != 0) {
+        // In order with the first finger's samples; LVGL never sees it.
+        if (pointer_queue_.size() == 32)
+            pointer_queue_.pop_front();
+        pointer_queue_.push_back({action, x, y, contact});
         return;
     }
     if (action == MOCK_NAV_BACKEND_POINTER_PRESS) {
@@ -1719,6 +1726,12 @@ void NavigationView::add_dirty(uint32_t x, uint32_t y, uint32_t width,
 void NavigationView::pointer_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
     auto* self = static_cast<NavigationView*>(lv_indev_get_user_data(indev));
+    // Second-finger samples ahead of the next first-finger one.
+    while (!self->pointer_queue_.empty() && self->pointer_queue_.front().contact != 0) {
+        const PointerSample sample = self->pointer_queue_.front();
+        self->pointer_queue_.pop_front();
+        self->handle_map_gesture(sample);
+    }
     if (!self->pointer_queue_.empty()) {
         self->last_pointer_ = self->pointer_queue_.front();
         self->pointer_queue_.pop_front();
@@ -1747,10 +1760,33 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
     constexpr uint32_t tap_ms = 500;
     constexpr uint32_t double_tap_ms = 350;  // first release to second release
     constexpr int32_t double_tap_px = 30;
+    if (sample.contact != 0) {
+        handle_second_contact(sample);
+        return;
+    }
+    if ((pinching_ || gesture_consumed_) &&
+        sample.action != MOCK_NAV_BACKEND_POINTER_PRESS) {
+        // The first finger of a pinch: moves the pinch; no drag or tap.
+        drag_last_x_ = sample.x;
+        drag_last_y_ = sample.y;
+        if (pinching_ && sample.action == MOCK_NAV_BACKEND_POINTER_MOVE)
+            model_.move_pinch(sample.x, sample.y, second_x_, second_y_);
+        if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+            if (pinching_)
+                model_.end_pinch();
+            pinching_ = false;
+            gesture_consumed_ = false;
+            map_drag_ = false;
+            map_dragging_ = false;
+        }
+        return;
+    }
     if (sample.action == MOCK_NAV_BACKEND_POINTER_PRESS) {
         map_drag_ = false;
         map_dragging_ = false;
         long_pressed_ = false;
+        pinching_ = false;
+        gesture_consumed_ = false;
         if (built_screen_ == Screen::Search || !screen_)
             return;
         lv_point_t point{sample.x, sample.y};
@@ -1815,10 +1851,42 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
     }
 }
 
+// A second finger on the map while the first one is down there starts a
+// pinch (from a drag too); lifting either finger ends it, and the other
+// one then does nothing until it lifts.
+void NavigationView::handle_second_contact(const PointerSample& sample)
+{
+    if (sample.action == MOCK_NAV_BACKEND_POINTER_PRESS) {
+        if (!map_drag_ || long_pressed_ || pinching_ || gesture_consumed_)
+            return;
+        if (map_dragging_)
+            model_.end_drag();
+        map_dragging_ = false;
+        pinching_ = true;
+        last_tap_valid_ = false;
+        second_x_ = sample.x;
+        second_y_ = sample.y;
+        model_.begin_pinch(drag_last_x_, drag_last_y_, sample.x, sample.y);
+        return;
+    }
+    if (!pinching_)
+        return;
+    second_x_ = sample.x;
+    second_y_ = sample.y;
+    if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+        model_.end_pinch();
+        pinching_ = false;
+        gesture_consumed_ = true;
+        return;
+    }
+    model_.move_pinch(drag_last_x_, drag_last_y_, sample.x, sample.y);
+}
+
 void NavigationView::check_long_press()
 {
     constexpr uint32_t long_press_ms = 600;
-    if (!map_drag_ || map_dragging_ || long_pressed_ || !pointer_down_ ||
+    if (!map_drag_ || map_dragging_ || long_pressed_ || pinching_ || gesture_consumed_ ||
+        !pointer_down_ ||
         lv_tick_elaps(press_tick_) < long_press_ms)
         return;
     long_pressed_ = true;

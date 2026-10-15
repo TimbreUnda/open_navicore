@@ -176,6 +176,11 @@ int main(void)
     make_valid(&plugin);
     assert(mock_backend_plugin_validate(&plugin, diagnostic,
                                         sizeof(diagnostic)) == 0);
+    /* Optional capabilities (pointer contacts) may be added. */
+    plugin.capabilities |= MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS;
+    assert(mock_backend_plugin_validate(&plugin, diagnostic,
+                                        sizeof(diagnostic)) == 0);
+    REJECT(plugin.capabilities = MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS);
     REJECT(plugin.magic0 ^= 1u);
     REJECT(++plugin.magic1);
     REJECT(++plugin.query_abi_version);

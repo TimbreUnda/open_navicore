@@ -237,6 +237,44 @@ void test_car_controls()
         view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 700, 300);
         settle(view, 2);
         assert(!model.take_map_touch(touch) && !model.take_drag(drag));
+        // A second finger turns a drag into a pinch: the drag ends, the
+        // pinch reports both fingers, and lifting either ends it with no
+        // tap, drag or long press from the finger left down.
+        MapPinch pinch;
+        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 500, 300);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 540, 300);
+        frame(view);
+        assert(model.take_drag(drag) && drag.started);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 700, 300, 1);
+        frame(view);
+        assert(model.take_drag(drag) && !drag.active);
+        assert(model.take_pinch(pinch) && pinch.started && pinch.active);
+        assert(pinch.x0 == 540 && pinch.x1 == 700);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 760, 320, 1);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 520, 290);
+        frame(view);
+        assert(model.take_pinch(pinch) && !pinch.started && pinch.active);
+        assert(pinch.x0 == 520 && pinch.y0 == 290 && pinch.x1 == 760 && pinch.y1 == 320);
+        assert(!model.take_drag(drag));
+        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 760, 320, 1);
+        frame(view);
+        assert(model.take_pinch(pinch) && !pinch.active);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 400, 200);
+        settle(view, 45);  // past the long-press time
+        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 400, 200);
+        settle(view, 2);
+        assert(!model.take_pinch(pinch) && !model.take_drag(drag));
+        assert(!model.take_map_touch(touch));
+        // A second finger alone (first one on a control) does nothing.
+        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, column_x, button_y(0));
+        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 600, 300, 1);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 600, 300, 1);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, column_x, button_y(0));
+        settle(view, 4);
+        assert(!model.take_pinch(pinch));
+        (void)commands(model);
+        settle(view, 30);
+
         // Moving past the slop first makes it a drag, never a long press.
         view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 620, 280);
         view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 660, 280);

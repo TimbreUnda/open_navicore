@@ -78,11 +78,24 @@ int accept_event(void* context, const T* event) noexcept
            static_cast<Session*>(context)->accepts_events() ? 0 : -1;
 }
 
+// V2 payloads carry the touch contact (we declare the contacts capability);
+// a V1 payload is the first contact.
 int backend_pointer(void* context, const MockNavBackendPointerV1* event) noexcept
 {
-    if (!context || !valid(event))
+    if (!context || !event)
         return -1;
-    return static_cast<Session*>(context)->pointer(*event);
+    MockNavBackendPointerV2 pointer{};
+    if (event->abi_version == MOCK_NAV_BACKEND_POINTER_ABI_V2 &&
+        event->struct_size >= sizeof(MockNavBackendPointerV2)) {
+        std::memcpy(&pointer, event, sizeof(pointer));
+    } else if (valid(event)) {
+        std::memcpy(&pointer, event, sizeof(*event));
+        pointer.contact_id = 0;
+        pointer.contact_count = event->action == MOCK_NAV_BACKEND_POINTER_RELEASE ? 0u : 1u;
+    } else {
+        return -1;
+    }
+    return static_cast<Session*>(context)->pointer(pointer);
 }
 
 int backend_gps(void* context, const MockNavBackendGpsV1* event) noexcept
@@ -128,7 +141,8 @@ void fill_v1_query(MockNavBackendPluginV1* output)
     output->vehicle_v2_size = sizeof(MockNavBackendVehicleV2);
     output->gps_interval_v2_size = sizeof(MockNavBackendGpsIntervalV2);
     output->audio_v2_size = sizeof(MockNavBackendAudioV2);
-    output->capabilities = MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES;
+    output->capabilities = MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES |
+                           MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS;
     std::memcpy(output->build_id, build_id, sizeof(build_id));
     output->backend.v1.abi_version = MOCK_NAV_BACKEND_ABI_V2;
     output->backend.v1.struct_size = sizeof(MockNavBackendV2);

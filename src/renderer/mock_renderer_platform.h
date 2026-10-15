@@ -17,7 +17,10 @@ int mock_renderer_platform_end_frame(int present, char *diagnostic,
  * an unrelated Screen event was consumed, 3 for a transient Screen/property
  * failure, -2 when NAV_main was unrealized, and -1 for an internal failure.
  * This function never blocks. */
-int mock_renderer_platform_poll_pointer(MockNavBackendPointerV1 *pointer_out,
+/* contacts: decode a second touch contact too (the backend wants
+ * MockNavBackendPointerV2 contacts); otherwise only the first. */
+int mock_renderer_platform_poll_pointer(MockNavBackendPointerV2 *pointer_out,
+                                        int contacts,
                                         char *diagnostic,
                                         size_t diagnostic_capacity);
 

@@ -141,6 +141,16 @@ struct MapDrag {
     int x = 0, y = 0;
 };
 
+// A two-finger map gesture in absolute screen pixels: the fingers' distance
+// sets the zoom, their angle the rotation, and the map point under their
+// midpoint stays under it (pinch-zoom and two-finger rotate together).
+struct MapPinch {
+    bool active = false;   // both fingers still down
+    bool started = false;  // first report of this gesture
+    int x0 = 0, y0 = 0;    // first finger
+    int x1 = 0, y1 = 0;    // second finger
+};
+
 // Bare-map touches the engine acts on (taps pick POIs and places, a double
 // tap zooms in there, a long press drops a pin).
 enum class MapGesture { Tap, DoubleTap, LongPress };
@@ -193,6 +203,11 @@ public:
     // True when the drag changed since the last call; `started` is reported
     // once per drag.
     bool take_drag(MapDrag& out) noexcept;
+    void begin_pinch(int x0, int y0, int x1, int y1) noexcept;
+    void move_pinch(int x0, int y0, int x1, int y1) noexcept;
+    void end_pinch() noexcept;
+    // True when the pinch changed since the last call (like take_drag).
+    bool take_pinch(MapPinch& out) noexcept;
     // Touches on bare map (bounded; oldest kept).
     void push_map_touch(MapGesture gesture, int x, int y) noexcept;
     bool take_map_touch(MapTouch& out) noexcept;
@@ -269,6 +284,8 @@ private:
     int pan_dy_ = 0;
     MapDrag drag_;
     bool drag_pending_ = false;
+    MapPinch pinch_;
+    bool pinch_pending_ = false;
     MapTouch touches_[4];
     int touch_count_ = 0;
     MapViewState map_view_;

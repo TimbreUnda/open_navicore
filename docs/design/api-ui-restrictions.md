@@ -62,36 +62,33 @@ stable safe-area contract.
 
 ### Touch and input
 
-The complete pointer payload is `action`, `x`, `y` and `buttons`, with only
-press, release and move actions. It contains no touch identifier, contact
-count, pressure, velocity, scroll delta, gesture, key or text event.
+The V1 pointer payload is `action`, `x`, `y` and `buttons`, with only press,
+release and move actions. `MockNavBackendPointerV2` appends `contact_id` (0 for
+the first finger, 1 for a second) and `contact_count`. A plugin receives V2
+payloads, for both contacts, only when it declares the optional
+`MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS` capability (accepted in every query
+version); every other backend still receives V1 payloads for the first contact
+only. Moves are coalesced per contact in the provider queue.
 
-Consequently, the current API cannot provide:
+Hardware path: the raw Screen input trace (2026-10-14, marker
+`/datastore/navicore-backend/enable-input-trace`) showed a second contact
+(`touch_id` 1) reaching the navigation window while the first is down, so the
+contacts are not discarded before our process. At most two contacts are
+tracked; a third is counted in `secondary_touch` and dropped.
 
-- true pinch-to-zoom, two-finger rotate or any other multi-touch gesture;
-- concurrent pointers or reliable tracking of separate fingers;
-- pressure-sensitive, wheel/scroll or stylus-specific behavior;
+The payloads still carry no pressure, velocity, scroll delta, gesture, key or
+text event, so the API cannot provide:
+
+- more than two fingers, pressure-sensitive, wheel/scroll or stylus input;
 - stock keyboard/IME input, hardware-key events, accessibility focus, haptics,
   rotary input or steering-wheel input.
 
-This is a restriction of `MockNavBackendPointerV1`, not proof of a hardware
-limit. Open NaviCore owns this backend seam and can extend it append-only. The
-preferred path to multi-touch is to capture the original QNX Screen event
-before `mock_screen_input` reduces it, verify which contact fields the radio
-actually delivers, and introduce a versioned touch payload with contact ID,
-phase, coordinates and timestamp. Pressure or device information should be
-added only if observed on the bench.
+The OsmAnd backend declares the capability and implements pinch-zoom and
+two-finger rotate (the map point under the fingers' midpoint stays under it).
+Gesture behaviour on the unit's touch panel is still to be verified by hand.
 
-If the stock HMI or `nv_navigation` has already discarded additional contacts
-before the event reaches our process, extending the backend payload alone will
-not recover them. A bounded raw-event trace is therefore required before
-claiming multi-touch support. Reading the Screen queue directly from the
-OsmAnd plugin or interposing Screen calls may help discovery, but is not the
-preferred product architecture: it can compete with stock event ownership,
-routing, coordinate transforms and visibility policy.
-
-Tap, drag/pan, on-canvas buttons and timer-derived long press are feasible with
-the single pointer stream. Zoom can use on-canvas buttons or another
+Tap, drag/pan, on-canvas buttons, double tap and timer-derived long press work
+with the first contact alone. Zoom can use on-canvas buttons or another
 single-pointer interaction. An on-canvas keyboard is technically possible,
 but it would be our keyboard, not the stock IME, and would not gain stock
 accessibility behavior automatically.
@@ -186,7 +183,7 @@ architecture and resource-budget decision.
 |---|---|---|
 | Custom map, panels, buttons and markers | Available | Implement inside the GLES canvas |
 | Tap, one-finger pan and UI buttons | Available | Implement pointer handling |
-| Pinch zoom or two-finger rotate | Blocked by Pointer V1; hardware path unverified | Capture raw QNX events, then extend input ABI with contact IDs/count |
+| Pinch zoom or two-finger rotate | Implemented (Pointer V2 contacts, opt-in capability); second contact seen in the raw trace | Verify the gestures by hand on the unit |
 | Stock keyboard or text input | Hard restriction | Recover a text/IME service, or ship our own keyboard |
 | Route search and guidance in our canvas | Implemented; live qualification in progress | Complete bench and driven/simulated-route qualification |
 | Stock UI starts or edits our route | Hard restriction | Recover and qualify destination/route request contracts |

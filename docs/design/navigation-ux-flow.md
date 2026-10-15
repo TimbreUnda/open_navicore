@@ -20,7 +20,7 @@ are in [api-ui-restrictions.md](api-ui-restrictions.md).
 | Left rail | 336 px, opaque; the map fills the remaining ~688 px |
 | Touch targets | at least 64 px, 8 px spacing, 16 px from edges |
 | Corner radius | 6 to 8 px (12 px on floating map buttons) |
-| Input | **one finger only**: tap, drag, (long press possible). No pinch or rotate, no hardware keys, no stock keyboard |
+| Input | tap, double tap, drag, long press, and two-finger pinch/rotate (Pointer V2 contacts). No hardware keys, no stock keyboard |
 | Theme | UI panels are dark (night palette). The **map** has a day and a night palette, switched by a button |
 | Audio | none: no voice prompts, no chimes |
 | Text | Montserrat 14/20/24/28; English only; Cyrillic map labels come from the map renderer |
@@ -301,14 +301,14 @@ Please design each of these:
 | G14 | No **favourites list** beyond 5 recents | Favourites/saved places |
 | G15 | UI panels are always dark; only the map follows Day/Night | Light variant of panels for day |
 | G16 | No voice, so the turn card must carry everything visually | Strong distance and countdown emphasis near the turn |
-| G17 | No pinch zoom (single-touch API) | Keep +/−; consider a double-tap or one-finger zoom gesture |
+| G17 | ~~No pinch zoom (single-touch API)~~ Done: pinch/rotate (Pointer V2) and double tap | Keep +/− as well |
 
 ## 7. Out of scope (platform limits)
 
 The stock top and bottom bars and any stock dialogs cannot be changed. The
 following are not available on this platform:
 
-- multi-touch;
+- more than two touch contacts;
 - the stock keyboard;
 - voice prompts;
 - online traffic;
