@@ -5,7 +5,7 @@ import csv
 import pathlib
 import re
 
-from tools.callback_symbols import callback_symbol
+from tests.callback_symbols import callback_symbol
 
 
 ALLOWED_RAW_CALLBACKS = {
@@ -28,7 +28,7 @@ def rows(path):
 def main():
     root = pathlib.Path(__file__).resolve().parents[1]
     callback_files = [
-        root / "include/open_navicore/host_callbacks.h",
+        root / "src/include/host_callbacks.h",
         root / "src/compat/qr39/host_callbacks.c",
     ]
     numbered = set()

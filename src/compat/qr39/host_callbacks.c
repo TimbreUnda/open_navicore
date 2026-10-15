@@ -1,7 +1,7 @@
 /* Handwritten typed ABI adapters, checked against the callback manifests.
  * The generated raw-capture trampolines are a separate diagnostic path; they
  * do not supply prototypes or decide which callbacks the provider emits. */
-#include <open_navicore/host_callbacks.h>
+#include "host_callbacks.h"
 
 #include <stddef.h>
 #include <string.h>

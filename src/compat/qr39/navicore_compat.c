@@ -5,7 +5,7 @@
 #include "mock_callback_backend.h"
 #include "mock_backend_loader.h"
 #include <open_navicore/cluster.h>
-#include <open_navicore/host_callbacks.h>
+#include "host_callbacks.h"
 #include "mock_gps_backend.h"
 #include "mock_pointer_backend.h"
 #include "mock_renderer.h"

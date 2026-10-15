@@ -18,7 +18,7 @@ add_library(provider SHARED
   renderer/mock_renderer.c
   renderer/mock_screen_input.c
   platform/qnx/mock_renderer_qnx.c)
-target_include_directories(provider PRIVATE ${ONC_ROOT}/include compat/qr39 runtime backend
+target_include_directories(provider PRIVATE ${ONC_ROOT}/include include compat/qr39 runtime backend
                            renderer)
 target_compile_options(provider PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS} ${ONC_THUMB}
                        -fvisibility=hidden)

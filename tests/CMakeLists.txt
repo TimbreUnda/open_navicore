@@ -4,7 +4,7 @@ if(ONC_QNX)
   add_executable(plugin_smoke qnx_plugin_dlopen_smoke.c)
   add_executable(osmand_plugin_smoke qnx_osmand_plugin_smoke.c)
   foreach(t navicore_smoke plugin_smoke osmand_plugin_smoke)
-    target_include_directories(${t} PRIVATE ${ONC_ROOT}/include)
+    target_include_directories(${t} PRIVATE ${ONC_ROOT}/include ${ONC_ROOT}/src/include)
     target_compile_options(${t} PRIVATE ${ONC_WARNINGS} ${ONC_THUMB})
     target_link_libraries(${t} PRIVATE c)
   endforeach()
@@ -37,7 +37,7 @@ set(HOST_PROVIDER_SOURCES ${src}/compat/qr39/navicore_compat.c ${src}/runtime/mo
     ${src}/backend/mock_backend_loader.c ${src}/compat/qr39/host_callbacks.c
     ${src}/runtime/mock_gps_backend.c ${src}/runtime/mock_pointer_backend.c
     ${src}/runtime/mock_scalar_backend.c ${HOST_RENDERER_SOURCES})
-set(PROVIDER_INCLUDES ${ONC_ROOT}/include ${src}/compat/qr39 ${src}/runtime ${src}/backend
+set(PROVIDER_INCLUDES ${ONC_ROOT}/include ${src}/include ${src}/compat/qr39 ${src}/runtime ${src}/backend
     ${src}/renderer)
 
 # onc_test(<name> SOURCES ... [DEFINES ...] [INCLUDES ...] [LIBS ...])
@@ -111,7 +111,7 @@ foreach(check
     "plugin_elf_selftest|sh tests/check_plugin_elf.sh --self-test"
     "callback_coverage|sh tests/check_callback_coverage.sh ${MATRIX}/callback-api-matrix.csv ${C}/callbacks/runtime-coverage.csv src/compat/qr39/navicore_compat.c"
     "static_callback_additions|${Python3_EXECUTABLE} -m tests.check_static_callback_additions ${C}/callbacks/runtime-coverage.csv ${C}/callbacks/dispatch-additions.csv"
-    "static_callback_contracts|${Python3_EXECUTABLE} -m tests.check_static_callback_contracts ${C}/callbacks/static-contracts.csv ${C}/callbacks/runtime-coverage.csv ${C}/callbacks/dispatch-additions.csv include/open_navicore/host_callbacks.h src/compat/qr39/host_callbacks.c src/compat/qr39/navicore_compat.c"
+    "static_callback_contracts|${Python3_EXECUTABLE} -m tests.check_static_callback_contracts ${C}/callbacks/static-contracts.csv ${C}/callbacks/runtime-coverage.csv ${C}/callbacks/dispatch-additions.csv src/include/host_callbacks.h src/compat/qr39/host_callbacks.c src/compat/qr39/navicore_compat.c"
     "provider_coverage|${Python3_EXECUTABLE} -m tests.check_provider_coverage ${MATRIX}/provider-api-matrix.csv ${MATRIX}/pointer-api-matrix.csv ${C}/provider/api-coverage.csv src/compat/qr39/navicore_compat.c"
     "static_provider_slots|${Python3_EXECUTABLE} -m tests.check_static_provider_slots ${C}/provider/slot-manifest.csv src/compat/qr39/navicore_compat.c src/compat/qr39/provider_slots.def")
   string(FIND "${check}" "|" bar)

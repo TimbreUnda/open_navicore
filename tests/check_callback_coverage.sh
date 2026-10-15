@@ -34,7 +34,7 @@ test "$(tail -n +2 "$manifest" |
 
 tail -n +2 "$manifest" | awk -F, '$4 != "" { print $4 }' | sort >"$temporary/typed"
 while IFS= read -r symbol; do
-    grep -q "${symbol}(" include/open_navicore/host_callbacks.h
+    grep -q "${symbol}(" src/include/host_callbacks.h
     grep -q "$symbol" src/compat/qr39/host_callbacks.c
 done <"$temporary/typed"
 grep -o 'mock_pas_[a-zA-Z0-9_]*' "$source_file" |

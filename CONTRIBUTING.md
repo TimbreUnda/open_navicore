@@ -36,7 +36,7 @@ Python tools and checks are local packages. Run them from the repository root
 with `python3 -m tools.<group>.<module>` or `python3 -m tests.<module>`, for example
 `python3 -m tools.abi.qnx_arm_abi_oracle --help`. The Make targets use this same
 convention. No package installation or `PYTHONPATH` setting is needed; shared
-helpers use ordinary imports such as `from tools.callback_symbols import
+helpers use ordinary imports such as `from tests.callback_symbols import
 callback_symbol`.
 
 ## ABI evidence rules

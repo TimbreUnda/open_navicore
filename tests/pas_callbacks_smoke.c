@@ -1,4 +1,4 @@
-#include <open_navicore/host_callbacks.h>
+#include "host_callbacks.h"
 
 #include <assert.h>
 #include <stdint.h>
