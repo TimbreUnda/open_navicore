@@ -183,6 +183,7 @@ private:
     bool night_ = false;
     bool overview_pending_ = false;
     bool route_shown_ = false;  // the vector map draws a route
+    std::size_t shown_route_index_ = 0;  // which of the routes it draws
     double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
     OpenNaviBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
@@ -620,7 +621,7 @@ void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
     submitted_route_revision_ = revision;
     trace_result("reroute=submit", revision,
                  static_cast<std::size_t>(state.off_route_metres));
-    navigation_worker_->submit_route(revision, *navigation_->destination(), position);
+    navigation_worker_->submit_route(revision, *navigation_->destination(), position, false);
 }
 
 bool OsmAndEngine::apply_camera()
@@ -1441,6 +1442,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
                 if (found) {
                     trace("reroute=applied");
                     show_route(navigation_->routes().front(), false);
+                    shown_route_index_ = 0;
                     if (detour_phase_ == 1) detour_phase_ = 2;
                 } else {
                     // Keep the old route; try again a little later.
@@ -1453,8 +1455,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         } else {
             const bool accepted = view_->apply_routes(
                 route_result.revision, std::move(route_result.routes));
-            if (accepted && !navigation_->routes().empty())
+            if (accepted && !navigation_->routes().empty()) {
                 show_route(navigation_->routes().front());
+                shown_route_index_ = 0;
+            }
         }
     }
     measurement.results_us = elapsed_us(frame_started);
@@ -1581,6 +1585,14 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     if (route_shown_ && navigation_->screen() != ui::Screen::RoutePreview &&
         navigation_->screen() != ui::Screen::Guidance)
         guidance_changed = clear_route() || guidance_changed;
+    // Route preview: the map draws the selected route card's route.
+    if (route_shown_ && navigation_->screen() == ui::Screen::RoutePreview &&
+        navigation_->selected_route() != shown_route_index_ &&
+        navigation_->selected_route() < navigation_->routes().size()) {
+        shown_route_index_ = navigation_->selected_route();
+        show_route(navigation_->routes()[shown_route_index_], false);
+        guidance_changed = true;
+    }
     if (navigation_->screen() == ui::Screen::Search) {
         const auto revision = navigation_->search_revision();
         const auto now = std::chrono::steady_clock::now();
@@ -1627,7 +1639,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
                                    10000000.0;
             }
             navigation_worker_->submit_route(submitted_route_revision_,
-                                              *navigation_->destination(), origin);
+                                              *navigation_->destination(), origin, true);
         }
     }
     advance_benchmark_autostart();

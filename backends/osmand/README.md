@@ -182,6 +182,15 @@ git apply --ignore-space-change \
 `--ignore-space-change` accommodates the CRLF line endings retained by the
 legacy transport source; it does not broaden the patch's file or hunk scope.
 
+[`qnx-hh-alternatives.patch`](../../patches/osmand-core/qnx-hh-alternatives.patch)
+(apply the same way, after the first) fixes HH alternative routes in
+core-legacy, which otherwise never found any (see the patch header).
+
+Routing uses the map's highway-hierarchy (HH) sections when it has them,
+with A* as the fallback: a 15 km Kyiv route took 36 s with A* in the
+running navigation and 3.7 s with HH (`deploy/bench/route_bench.cpp`;
+`docs/performance/route-calculation.md`).
+
 After linking, `tests/check_osmand_elf.sh` checks ELF32 ARM EABI5 soft-float,
 the exact export and dependency sets, SONAME, absence of TEXTREL/RUNPATH and
 the sole permitted RPATH (`/open-navicore`). The backend's

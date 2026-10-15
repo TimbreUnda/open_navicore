@@ -21,16 +21,21 @@
 #define _OSMAND_LOGGING_H_
 #include "binaryRead.h"
 #include "commonOsmAndCore.h"
+#include "hhRouteDataStructure.h"
+#include "hhRoutePlanner.h"
 #include "routeCalculationProgress.h"
 #include "routePlannerFrontEnd.h"
+#include "routeResultPreparation.h"
 #include "routeSegmentResult.h"
 #include "routingConfiguration.h"
 
 #include <QByteArray>
 #include <QString>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -38,6 +43,10 @@
 #include <fcntl.h>
 #include <mutex>
 #include <stdexcept>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/neutrino.h>
+#include <sys/syspage.h>
 #include <thread>
 #include <unistd.h>
 #include <utility>
@@ -47,6 +56,7 @@ namespace {
 
 constexpr std::size_t kMaxAddressResults = 8;
 constexpr std::size_t kMaxAmenityResults = 4;
+constexpr std::size_t kMaxRoutes = 3;  // the fastest and up to two alternatives
 const OsmAnd::LatLon kDemoOrigin(50.4501, 30.5234);
 
 std::string utf8(const QString& value)
@@ -208,6 +218,42 @@ std::vector<ui::Lane> lanes_of(const SHARED_PTR<TurnType>& turn)
     return lanes;
 }
 
+// Routing runs for seconds. nv_navigation is pinned to one core, where the
+// render thread (priority 20) leaves it about half the CPU: a 15 km route
+// took 7.3 s there against 3.7 s free to use either core (route_bench,
+// 2026-10-15). Below the default priority 10 it only takes idle time from
+// the other core's services.
+constexpr int kWorkerPriority = 9;
+
+void place_worker_thread()
+{
+    const unsigned cpus = _syspage_ptr ? _syspage_ptr->num_cpu : 1u;
+    const unsigned mask = cpus >= 32u ? ~0u : (1u << cpus) - 1u;
+    const bool any_cpu =
+        ThreadCtl(_NTO_TCTL_RUNMASK, reinterpret_cast<void*>(static_cast<uintptr_t>(mask))) != -1;
+    int policy = 0;
+    sched_param parameters{};
+    bool lowered = false;
+    if (pthread_getschedparam(pthread_self(), &policy, &parameters) == 0) {
+        parameters.sched_priority = kWorkerPriority;
+        lowered = pthread_setschedparam(pthread_self(), policy, &parameters) == 0;
+    }
+    char line[80];
+    std::snprintf(line, sizeof(line), "worker=placed cpus=%u runmask=%d priority=%d",
+                  cpus, any_cpu ? 1 : 0, lowered ? kWorkerPriority : -1);
+    trace(line);
+}
+
+using Segments = std::vector<SHARED_PTR<RouteSegmentResult>>;
+
+double duration_of(const Segments& segments)
+{
+    double seconds = 0.0;
+    for (const auto& segment : segments)
+        if (segment) seconds += segment->segmentTime;
+    return seconds;
+}
+
 } // namespace
 
 class NavigationWorker::Impl {
@@ -240,12 +286,13 @@ public:
     }
 
     void submit_route(std::uint64_t revision, ui::Destination destination,
-                      ui::GeoPoint origin)
+                      ui::GeoPoint origin, bool alternatives)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) return;
         if (active_) active_->cancel();
         pending_ = Request::route(revision, std::move(destination), origin);
+        pending_.alternatives = alternatives;
         has_pending_ = true;
         trace_result("worker=route_queued", revision, 1u);
         condition_.notify_one();
@@ -312,6 +359,7 @@ private:
         std::string query;
         ui::Destination destination;
         ui::GeoPoint origin;
+        bool alternatives = false;  // route: also look for alternatives
 
         static Request search(std::uint64_t revision, std::string query)
         {
@@ -429,30 +477,119 @@ private:
             trace("error=map_has_no_routing_index");
             return false;
         }
+        has_hh_ = !map->hhIndexes.empty();
+        trace(has_hh_ ? "worker=router hh=1" : "worker=router hh=0");
         router_ready_ = true;
         return true;
+    }
+
+    // Highway-hierarchy routing over the map's precomputed HH sections, with
+    // alternatives when asked. Plain A* over the same 15 km took 15.4 s on
+    // a free core and HH 3.2 s, the same route (route_bench, 2026-10-15).
+    // Empty when the map has no HH data or HH finds nothing.
+    std::vector<Segments> route_hh(RoutePlannerFrontEnd& front_end,
+                                   const SHARED_PTR<RoutingContext>& context,
+                                   int sx, int sy, int ex, int ey, bool alternatives)
+    {
+        std::vector<Segments> routes;
+        std::unique_ptr<HHRoutingConfig> config(HHRoutingConfig::astar(0));
+        config->calcDetailed(HHRoutingConfig::CALCULATE_ALL_DETAILED);
+        if (alternatives) config->calcAlternative();
+        config->INITIAL_DIRECTION = context->config->initialDirection;
+        HHNetworkRouteRes* result = nullptr;
+        {
+            HHRoutePlanner planner(context.get());
+            result = planner.runRouting(sx, sy, ex, ey, config.get());
+        }
+        if (!result) return routes;
+        // The result owns neither its alternatives nor itself.
+        std::unique_ptr<HHNetworkRouteRes> main(result);
+        std::vector<std::unique_ptr<HHNetworkRouteRes>> others;
+        for (auto* alt : main->altRoutes) others.emplace_back(alt);
+        main->altRoutes.clear();
+        if (!main->error.empty() || main->detailed.empty()) return routes;
+        // What RoutePlannerFrontEnd does with an HH result.
+        prepareResult(context.get(), main->detailed);
+        front_end.makeStartEndPointsPrecise(context.get(), main->detailed, sx, sy, ex, ey);
+        routes.push_back(std::move(main->detailed));
+        for (auto& alt : others) {
+            if (alt->detailed.empty()) continue;
+            prepareResult(context.get(), alt->detailed);
+            front_end.makeStartEndPointsPrecise(context.get(), alt->detailed, sx, sy, ex, ey);
+            routes.push_back(std::move(alt->detailed));
+        }
+        return routes;
     }
 
     std::vector<ui::RouteAlternative> route(
         const Request& request, const std::shared_ptr<Cancellation>& cancel)
     {
         if (!prepare_router() || cancel->isAborted()) return {};
+        const auto started = std::chrono::steady_clock::now();
+        const int sx = get31TileNumberX(request.origin.longitude);
+        const int sy = get31TileNumberY(request.origin.latitude);
+        const int ex = get31TileNumberX(request.destination.longitude);
+        const int ey = get31TileNumberY(request.destination.latitude);
         RoutePlannerFrontEnd front_end;
-        auto context = front_end.buildRoutingContext(routing_config_);
-        context->progress = std::make_shared<RouteProgress>(cancel);
-        std::vector<int> intermediates_x;
-        std::vector<int> intermediates_y;
-        auto segments = front_end.searchRoute(
-            context,
-            get31TileNumberX(request.origin.longitude),
-            get31TileNumberY(request.origin.latitude),
-            get31TileNumberX(request.destination.longitude),
-            get31TileNumberY(request.destination.latitude),
-            intermediates_x, intermediates_y, nullptr);
-        if (cancel->isAborted() || segments.empty()) return {};
+        std::vector<Segments> found;
+        const char* method = "hh";
+        if (has_hh_) {
+            auto context = front_end.buildRoutingContext(routing_config_);
+            context->progress = std::make_shared<RouteProgress>(cancel);
+            found = route_hh(front_end, context, sx, sy, ex, ey, request.alternatives);
+        }
+        if (found.empty() && !cancel->isAborted()) {
+            // A* (no HH data, or HH found nothing).
+            method = "astar";
+            auto context = front_end.buildRoutingContext(routing_config_);
+            context->progress = std::make_shared<RouteProgress>(cancel);
+            std::vector<int> intermediates_x;
+            std::vector<int> intermediates_y;
+            auto segments = front_end.searchRoute(context, sx, sy, ex, ey,
+                                                  intermediates_x, intermediates_y, nullptr);
+            if (!segments.empty()) found.push_back(std::move(segments));
+        }
+        if (cancel->isAborted() || found.empty()) return {};
+        {
+            char line[96];
+            std::snprintf(line, sizeof(line), "worker=route_calculated method=%s routes=%zu ms=%lld",
+                          method, found.size(),
+                          static_cast<long long>(std::chrono::duration_cast<
+                              std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                         started).count()));
+            trace(line);
+        }
+        // Fastest first; the others are labelled against it.
+        std::stable_sort(found.begin(), found.end(), [](const Segments& a, const Segments& b) {
+            return duration_of(a) < duration_of(b);
+        });
+        std::vector<ui::RouteAlternative> output;
+        for (std::size_t index = 0; index < found.size() && index < kMaxRoutes; ++index) {
+            ui::RouteAlternative alternative = convert(request, found, index);
+            if (alternative.geometry.size() < 2) continue;
+            output.push_back(std::move(alternative));
+        }
+        if (output.size() > 1) {
+            const double fastest_metres = output.front().distance_metres;
+            for (std::size_t index = 1; index < output.size(); ++index)
+                output[index].reason =
+                    output[index].distance_metres < fastest_metres ? "Shorter" : "Alternative";
+        }
+        if (!output.empty())
+            trace_result("worker=route_maneuvers", request.revision,
+                         output.front().maneuvers.size());
+        return output;
+    }
 
+    // One routing result as a UI route; geometry shorter than two points
+    // means unusable.
+    ui::RouteAlternative convert(const Request& request, std::vector<Segments>& found,
+                                 std::size_t route_index)
+    {
+        Segments& segments = found[route_index];  // getStreetName takes it non-const
         ui::RouteAlternative alternative;
-        alternative.id = "car-fastest";
+        alternative.id = route_index == 0 ? "car-fastest"
+                                          : "car-alternative-" + std::to_string(route_index);
         alternative.reason = "Fastest";
         alternative.arrival = "--";
         for (std::size_t segment_index = 0; segment_index < segments.size();
@@ -501,17 +638,16 @@ private:
         }
         alternative.duration = duration_label(alternative.duration_seconds);
         alternative.distance = distance_label(alternative.distance_metres);
-        if (alternative.geometry.size() < 2) return {};
+        if (alternative.geometry.size() < 2) return alternative;
         alternative.maneuvers.push_back({
             ui::ManeuverKind::Arrive, request.destination.title,
             alternative.distance_metres, alternative.geometry.size() - 1u, 0, {}});
-        trace_result("worker=route_maneuvers", request.revision,
-                     alternative.maneuvers.size());
-        return {std::move(alternative)};
+        return alternative;
     }
 
     void run()
     {
+        place_worker_thread();
         for (;;) {
             Request request;
             std::shared_ptr<Cancellation> cancel;
@@ -603,6 +739,7 @@ private:
     bool has_address_result_ = false;
     bool stopping_ = false;
     bool router_ready_ = false;
+    bool has_hh_ = false;  // the map has highway-hierarchy routing sections
 };
 
 NavigationWorker::NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
@@ -616,9 +753,9 @@ NavigationWorker::NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
 
 void NavigationWorker::submit_route(std::uint64_t revision,
                                     ui::Destination destination,
-                                    ui::GeoPoint origin)
+                                    ui::GeoPoint origin, bool alternatives)
 {
-    impl_->submit_route(revision, std::move(destination), origin);
+    impl_->submit_route(revision, std::move(destination), origin, alternatives);
 }
 
 NavigationWorker::~NavigationWorker() = default;

@@ -45,8 +45,10 @@ public:
     NavigationWorker& operator=(const NavigationWorker&) = delete;
 
     void submit_search(std::uint64_t revision, std::string query);
+    // alternatives: also offer up to two other routes (route preview; a
+    // reroute during guidance takes the fastest only).
     void submit_route(std::uint64_t revision, ui::Destination destination,
-                      ui::GeoPoint origin);
+                      ui::GeoPoint origin, bool alternatives);
     // Replaces a pending request like the others (one job at a time).
     void submit_address(std::uint64_t revision, ui::GeoPoint point);
     bool take_search_result(SearchResult& output);
