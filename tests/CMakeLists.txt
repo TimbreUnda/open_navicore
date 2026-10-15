@@ -30,13 +30,13 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 set(src ${ONC_ROOT}/src)
-set(HOST_RENDERER_SOURCES ${src}/renderer/mock_renderer.c ${src}/renderer/mock_screen_input.c
-    ${src}/backend/mock_default_backend.c ${src}/platform/host/mock_renderer_stub.c)
-set(HOST_PROVIDER_SOURCES ${src}/compat/qr39/navicore_compat.c ${src}/runtime/mock_api_telemetry.c
-    ${src}/runtime/mock_callback_backend.c ${src}/runtime/mock_cluster_backend.c
-    ${src}/backend/mock_backend_loader.c ${src}/compat/qr39/host_callbacks.c
-    ${src}/runtime/mock_gps_backend.c ${src}/runtime/mock_pointer_backend.c
-    ${src}/runtime/mock_scalar_backend.c ${HOST_RENDERER_SOURCES})
+set(HOST_RENDERER_SOURCES ${src}/renderer/open_navi_renderer.c ${src}/renderer/open_navi_screen_input.c
+    ${src}/backend/open_navi_default_backend.c ${src}/platform/host/open_navi_renderer_stub.c)
+set(HOST_PROVIDER_SOURCES ${src}/compat/qr39/navicore_compat.c ${src}/runtime/open_navi_api_telemetry.c
+    ${src}/runtime/open_navi_callback_backend.c ${src}/runtime/open_navi_cluster_backend.c
+    ${src}/backend/open_navi_backend_loader.c ${src}/compat/qr39/host_callbacks.c
+    ${src}/runtime/open_navi_gps_backend.c ${src}/runtime/open_navi_pointer_backend.c
+    ${src}/runtime/open_navi_scalar_backend.c ${HOST_RENDERER_SOURCES})
 set(PROVIDER_INCLUDES ${ONC_ROOT}/include ${src}/include ${src}/compat/qr39 ${src}/runtime ${src}/backend
     ${src}/renderer)
 
@@ -51,17 +51,17 @@ function(onc_test name)
   add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
-set(stub MOCK_NAVICORE_TESTING MOCK_NAVICORE_RENDERER_STUB)
+set(stub OPEN_NAVI_TESTING OPEN_NAVI_RENDERER_STUB)
 onc_test(host_smoke SOURCES ${HOST_PROVIDER_SOURCES} smoke.c
-         DEFINES MOCK_NAVICORE_DISABLE_LOG ${stub})
+         DEFINES OPEN_NAVI_DISABLE_LOG ${stub})
 onc_test(lifecycle_smoke SOURCES ${HOST_PROVIDER_SOURCES} lifecycle_smoke.c
-         DEFINES MOCK_NAVICORE_DISABLE_LOG ${stub})
-onc_test(pas_callbacks_smoke SOURCES ${src}/runtime/mock_callback_backend.c
-         ${src}/compat/qr39/host_callbacks.c pas_callbacks_smoke.c DEFINES MOCK_NAVICORE_TESTING)
-onc_test(cluster_backend_smoke SOURCES ${src}/runtime/mock_cluster_backend.c
+         DEFINES OPEN_NAVI_DISABLE_LOG ${stub})
+onc_test(pas_callbacks_smoke SOURCES ${src}/runtime/open_navi_callback_backend.c
+         ${src}/compat/qr39/host_callbacks.c pas_callbacks_smoke.c DEFINES OPEN_NAVI_TESTING)
+onc_test(cluster_backend_smoke SOURCES ${src}/runtime/open_navi_cluster_backend.c
          cluster_backend_smoke.c)
-onc_test(screen_input_smoke SOURCES ${src}/renderer/mock_screen_input.c screen_input_smoke.c)
-onc_test(default_backend_gl_smoke SOURCES ${src}/backend/mock_default_backend.c
+onc_test(screen_input_smoke SOURCES ${src}/renderer/open_navi_screen_input.c screen_input_smoke.c)
+onc_test(default_backend_gl_smoke SOURCES ${src}/backend/open_navi_default_backend.c
          default_backend_gl_smoke.c INCLUDES fixtures/fake_gles)
 onc_test(reference_backend_gl_smoke SOURCES ${ONC_ROOT}/backends/reference/reference_backend.c
          reference_backend_gl_smoke.c INCLUDES fixtures/fake_gles)
@@ -69,8 +69,8 @@ onc_test(backend_seam_smoke SOURCES ${HOST_RENDERER_SOURCES} backend_seam_smoke.
 onc_test(backend_runtime_stress SOURCES ${HOST_RENDERER_SOURCES} backend_runtime_stress.c
          DEFINES ${stub})
 onc_test(trace_smoke SOURCES ${HOST_PROVIDER_SOURCES} trace_smoke.c
-         DEFINES MOCK_NAVICORE_TRACE_PATH="${CMAKE_CURRENT_BINARY_DIR}/trace-smoke.log"
-         MOCK_NAVICORE_DISABLE_SYSLOG MOCK_NAVICORE_RENDERER_STUB)
+         DEFINES OPEN_NAVI_TRACE_PATH="${CMAKE_CURRENT_BINARY_DIR}/trace-smoke.log"
+         OPEN_NAVI_DISABLE_SYSLOG OPEN_NAVI_RENDERER_STUB)
 add_test(NAME plugin_tests COMMAND sh tests/run_plugin_tests.sh ${CMAKE_CURRENT_BINARY_DIR}
          WORKING_DIRECTORY ${ONC_ROOT})
 set_tests_properties(plugin_tests PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")

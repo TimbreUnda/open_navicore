@@ -1,9 +1,9 @@
 #define _POSIX_C_SOURCE 200112L
 
-#include "mock_renderer.h"
+#include "open_navi_renderer.h"
 
-#include "mock_default_backend.h"
-#include "mock_renderer_platform.h"
+#include "open_navi_default_backend.h"
+#include "open_navi_renderer_platform.h"
 
 #include <pthread.h>
 #include <errno.h>
@@ -13,11 +13,11 @@
 #include <time.h>
 
 enum {
-    MOCK_POINTER_QUEUE_CAPACITY = 32u,
-    MOCK_POINTER_EDGE_RESERVE = 2u,
-    MOCK_PLATFORM_DRAIN_LIMIT = 16u,
-    MOCK_PLATFORM_POLL_MILLISECONDS = 10u,
-    MOCK_RENDERER_CANCELLED = -3
+    OPEN_NAVI_POINTER_QUEUE_CAPACITY = 32u,
+    OPEN_NAVI_POINTER_EDGE_RESERVE = 2u,
+    OPEN_NAVI_PLATFORM_DRAIN_LIMIT = 16u,
+    OPEN_NAVI_PLATFORM_POLL_MILLISECONDS = 10u,
+    OPEN_NAVI_RENDERER_CANCELLED = -3
 };
 
 typedef enum {
@@ -38,16 +38,16 @@ typedef struct {
     uint64_t sequence;
     RenderEventType type;
     union {
-        MockNavBackendVisibilityV1 visibility;
-        MockNavBackendScreenV1 screen;
-        MockNavBackendGpsV1 gps;
-        MockNavBackendVehicleV2 vehicle;
-        MockNavBackendGpsIntervalV2 gps_interval;
-        MockNavBackendAudioV2 audio;
-        MockNavBackendInternationalizationV1 internationalization;
-        MockNavBackendClusterDisplayV1 cluster_display;
-        MockNavBackendDriverDistractionV1 driver_distraction;
-        MockNavBackendPointerV2 pointer;  /* V1 backends get a V1 copy */
+        OpenNaviBackendVisibilityV1 visibility;
+        OpenNaviBackendScreenV1 screen;
+        OpenNaviBackendGpsV1 gps;
+        OpenNaviBackendVehicleV2 vehicle;
+        OpenNaviBackendGpsIntervalV2 gps_interval;
+        OpenNaviBackendAudioV2 audio;
+        OpenNaviBackendInternationalizationV1 internationalization;
+        OpenNaviBackendClusterDisplayV1 cluster_display;
+        OpenNaviBackendDriverDistractionV1 driver_distraction;
+        OpenNaviBackendPointerV2 pointer;  /* V1 backends get a V1 copy */
     } data;
 } RenderEvent;
 
@@ -61,55 +61,55 @@ typedef enum {
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendVisibilityV1 value;
+    OpenNaviBackendVisibilityV1 value;
 } VisibilitySlot;
 
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendScreenV1 value;
+    OpenNaviBackendScreenV1 value;
 } ScreenSlot;
 
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendGpsV1 value;
+    OpenNaviBackendGpsV1 value;
 } GpsSlot;
 
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendVehicleV2 value;
+    OpenNaviBackendVehicleV2 value;
 } VehicleSlot;
 
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendGpsIntervalV2 value;
+    OpenNaviBackendGpsIntervalV2 value;
 } GpsIntervalSlot;
 
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendAudioV2 value;
+    OpenNaviBackendAudioV2 value;
 } AudioSlot;
 
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendInternationalizationV1 value;
+    OpenNaviBackendInternationalizationV1 value;
 } InternationalizationSlot;
 
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendClusterDisplayV1 value;
+    OpenNaviBackendClusterDisplayV1 value;
 } ClusterDisplaySlot;
 
 typedef struct {
     int pending;
     uint64_t sequence;
-    MockNavBackendDriverDistractionV1 value;
+    OpenNaviBackendDriverDistractionV1 value;
 } DriverDistractionSlot;
 
 typedef struct {
@@ -131,21 +131,21 @@ typedef struct {
     int frame_pending;
     uint64_t frame_event_sequence;
     uint64_t frame_sequence;
-    MockNavBackendV1 installed;
-    MockNavBackendV2 installed_v2;
-    MockNavBackendV3 installed_v3;
-    MockNavBackendV4 installed_v4;
-    MockNavBackendV5 installed_v5;
+    OpenNaviBackendV1 installed;
+    OpenNaviBackendV2 installed_v2;
+    OpenNaviBackendV3 installed_v3;
+    OpenNaviBackendV4 installed_v4;
+    OpenNaviBackendV5 installed_v5;
     uint32_t installed_version;
-    MockNavBackendV1 active;
-    MockNavBackendV2 active_v2;
-    MockNavBackendV3 active_v3;
-    MockNavBackendV4 active_v4;
-    MockNavBackendV5 active_v5;
+    OpenNaviBackendV1 active;
+    OpenNaviBackendV2 active_v2;
+    OpenNaviBackendV3 active_v3;
+    OpenNaviBackendV4 active_v4;
+    OpenNaviBackendV5 active_v5;
     uint32_t active_version;
-    MockNavBackendRenderTargetV1 target;
-    VisibilitySlot visibility[MOCK_RENDERER_DISPLAY_COUNT];
-    ScreenSlot screen[MOCK_RENDERER_DISPLAY_COUNT];
+    OpenNaviBackendRenderTargetV1 target;
+    VisibilitySlot visibility[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
+    ScreenSlot screen[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
     GpsSlot gps;
     VehicleSlot vehicle;
     GpsIntervalSlot gps_interval;
@@ -153,7 +153,7 @@ typedef struct {
     InternationalizationSlot internationalization;
     ClusterDisplaySlot cluster_display;
     DriverDistractionSlot driver_distraction;
-    RenderEvent pointer_queue[MOCK_POINTER_QUEUE_CAPACITY];
+    RenderEvent pointer_queue[OPEN_NAVI_POINTER_QUEUE_CAPACITY];
     unsigned int pointer_head;
     unsigned int pointer_count;
     uint32_t pointer_accepted;
@@ -180,19 +180,19 @@ static pthread_once_t g_condition_once = PTHREAD_ONCE_INIT;
 static int g_condition_init_result = -1;
 
 #if defined(__GNUC__)
-extern uint32_t mock_navicore_service_publish_cluster(
-    const MockNavBackendClusterV1 *cluster) __attribute__((weak));
-extern uint32_t mock_navicore_service_publish_audio_availability(
-    const MockNavBackendAudioAvailabilityV1 *audio) __attribute__((weak));
-extern uint32_t mock_navicore_service_publish_thread_status(
-    const MockNavBackendThreadStatusV1 *thread_status) __attribute__((weak));
+extern uint32_t open_navi_service_publish_cluster(
+    const OpenNaviBackendClusterV1 *cluster) __attribute__((weak));
+extern uint32_t open_navi_service_publish_audio_availability(
+    const OpenNaviBackendAudioAvailabilityV1 *audio) __attribute__((weak));
+extern uint32_t open_navi_service_publish_thread_status(
+    const OpenNaviBackendThreadStatusV1 *thread_status) __attribute__((weak));
 #else
-extern uint32_t mock_navicore_service_publish_cluster(
-    const MockNavBackendClusterV1 *cluster);
-extern uint32_t mock_navicore_service_publish_audio_availability(
-    const MockNavBackendAudioAvailabilityV1 *audio);
-extern uint32_t mock_navicore_service_publish_thread_status(
-    const MockNavBackendThreadStatusV1 *thread_status);
+extern uint32_t open_navi_service_publish_cluster(
+    const OpenNaviBackendClusterV1 *cluster);
+extern uint32_t open_navi_service_publish_audio_availability(
+    const OpenNaviBackendAudioAvailabilityV1 *audio);
+extern uint32_t open_navi_service_publish_thread_status(
+    const OpenNaviBackendThreadStatusV1 *thread_status);
 #endif
 
 static void initialize_condition(void)
@@ -263,7 +263,7 @@ static int event_available_locked(void)
         g_runtime.cluster_display.pending != 0 ||
         g_runtime.driver_distraction.pending != 0 ||
         g_runtime.frame_pending != 0) return 1;
-    for (display = 0u; display < MOCK_RENDERER_DISPLAY_COUNT; ++display) {
+    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
         if (g_runtime.visibility[display].pending != 0 ||
             g_runtime.screen[display].pending != 0) return 1;
     }
@@ -308,33 +308,33 @@ static int outbound_service_current(void *runtime_context)
 }
 
 static uint32_t service_publish_cluster(
-    void *runtime_context, const MockNavBackendClusterV1 *cluster)
+    void *runtime_context, const OpenNaviBackendClusterV1 *cluster)
 {
     if (!outbound_service_current(runtime_context))
-        return MOCK_NAV_BACKEND_SERVICE_STALE;
-    if (mock_navicore_service_publish_cluster == NULL)
-        return MOCK_NAV_BACKEND_SERVICE_UNAVAILABLE;
-    return mock_navicore_service_publish_cluster(cluster);
+        return OPEN_NAVI_BACKEND_SERVICE_STALE;
+    if (open_navi_service_publish_cluster == NULL)
+        return OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
+    return open_navi_service_publish_cluster(cluster);
 }
 
 static uint32_t service_publish_audio_availability(
-    void *runtime_context, const MockNavBackendAudioAvailabilityV1 *audio)
+    void *runtime_context, const OpenNaviBackendAudioAvailabilityV1 *audio)
 {
     if (!outbound_service_current(runtime_context))
-        return MOCK_NAV_BACKEND_SERVICE_STALE;
-    if (mock_navicore_service_publish_audio_availability == NULL)
-        return MOCK_NAV_BACKEND_SERVICE_UNAVAILABLE;
-    return mock_navicore_service_publish_audio_availability(audio);
+        return OPEN_NAVI_BACKEND_SERVICE_STALE;
+    if (open_navi_service_publish_audio_availability == NULL)
+        return OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
+    return open_navi_service_publish_audio_availability(audio);
 }
 
 static uint32_t service_publish_thread_status(
-    void *runtime_context, const MockNavBackendThreadStatusV1 *thread_status)
+    void *runtime_context, const OpenNaviBackendThreadStatusV1 *thread_status)
 {
     if (!outbound_service_current(runtime_context))
-        return MOCK_NAV_BACKEND_SERVICE_STALE;
-    if (mock_navicore_service_publish_thread_status == NULL)
-        return MOCK_NAV_BACKEND_SERVICE_UNAVAILABLE;
-    return mock_navicore_service_publish_thread_status(thread_status);
+        return OPEN_NAVI_BACKEND_SERVICE_STALE;
+    if (open_navi_service_publish_thread_status == NULL)
+        return OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
+    return open_navi_service_publish_thread_status(thread_status);
 }
 
 static int take_event(RenderEvent *event)
@@ -353,7 +353,7 @@ static int take_event(RenderEvent *event)
             return -1;
         }
         deadline.tv_nsec +=
-            (long)MOCK_PLATFORM_POLL_MILLISECONDS * 1000000L;
+            (long)OPEN_NAVI_PLATFORM_POLL_MILLISECONDS * 1000000L;
         if (deadline.tv_nsec >= 1000000000L) {
             ++deadline.tv_sec;
             deadline.tv_nsec -= 1000000000L;
@@ -378,7 +378,7 @@ static int take_event(RenderEvent *event)
         selected = g_runtime.pointer_queue[g_runtime.pointer_head].sequence;
         type = RENDER_EVENT_POINTER;
     }
-    for (display = 0u; display < MOCK_RENDERER_DISPLAY_COUNT; ++display) {
+    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
         if (g_runtime.visibility[display].pending != 0 &&
             g_runtime.visibility[display].sequence < selected) {
             selected = g_runtime.visibility[display].sequence;
@@ -437,7 +437,7 @@ static int take_event(RenderEvent *event)
     case RENDER_EVENT_POINTER:
         *event = g_runtime.pointer_queue[g_runtime.pointer_head];
         g_runtime.pointer_head =
-            (g_runtime.pointer_head + 1u) % MOCK_POINTER_QUEUE_CAPACITY;
+            (g_runtime.pointer_head + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
         --g_runtime.pointer_count;
         break;
     case RENDER_EVENT_VISIBILITY:
@@ -510,9 +510,9 @@ static void remove_pointer_offset_locked(unsigned int offset)
     unsigned int index;
     for (index = offset; index + 1u < g_runtime.pointer_count; ++index) {
         unsigned int destination =
-            (g_runtime.pointer_head + index) % MOCK_POINTER_QUEUE_CAPACITY;
+            (g_runtime.pointer_head + index) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
         unsigned int source =
-            (g_runtime.pointer_head + index + 1u) % MOCK_POINTER_QUEUE_CAPACITY;
+            (g_runtime.pointer_head + index + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
         g_runtime.pointer_queue[destination] = g_runtime.pointer_queue[source];
     }
     --g_runtime.pointer_count;
@@ -523,12 +523,12 @@ static int evict_oldest_gesture_pair_locked(void)
     unsigned int offset;
     for (offset = 0u; offset + 1u < g_runtime.pointer_count; ++offset) {
         unsigned int first = (g_runtime.pointer_head + offset) %
-                             MOCK_POINTER_QUEUE_CAPACITY;
-        unsigned int second = (first + 1u) % MOCK_POINTER_QUEUE_CAPACITY;
+                             OPEN_NAVI_POINTER_QUEUE_CAPACITY;
+        unsigned int second = (first + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
         if (g_runtime.pointer_queue[first].data.pointer.action ==
-                MOCK_NAV_BACKEND_POINTER_PRESS &&
+                OPEN_NAVI_BACKEND_POINTER_PRESS &&
             g_runtime.pointer_queue[second].data.pointer.action ==
-                MOCK_NAV_BACKEND_POINTER_RELEASE) {
+                OPEN_NAVI_BACKEND_POINTER_RELEASE) {
             remove_pointer_offset_locked(offset);
             remove_pointer_offset_locked(offset);
             increment_counter(&g_runtime.pointer_dropped);
@@ -549,8 +549,8 @@ static RenderEvent *coalescible_move_locked(uint32_t contact)
     for (back = 1u; back <= g_runtime.pointer_count; ++back) {
         RenderEvent *event = &g_runtime.pointer_queue[
             (g_runtime.pointer_head + g_runtime.pointer_count - back) %
-            MOCK_POINTER_QUEUE_CAPACITY];
-        if (event->data.pointer.action != MOCK_NAV_BACKEND_POINTER_MOVE)
+            OPEN_NAVI_POINTER_QUEUE_CAPACITY];
+        if (event->data.pointer.action != OPEN_NAVI_BACKEND_POINTER_MOVE)
             return NULL;
         if (event->data.pointer.contact_id == contact)
             return event;
@@ -558,23 +558,23 @@ static RenderEvent *coalescible_move_locked(uint32_t contact)
     return NULL;
 }
 
-static int enqueue_pointer(const MockNavBackendPointerV2 *pointer)
+static int enqueue_pointer(const OpenNaviBackendPointerV2 *pointer)
 {
     RenderEvent *event;
     unsigned int tail;
     int result = 0;
 
     if (pointer == NULL ||
-        (pointer->action != MOCK_NAV_BACKEND_POINTER_PRESS &&
-         pointer->action != MOCK_NAV_BACKEND_POINTER_RELEASE &&
-         pointer->action != MOCK_NAV_BACKEND_POINTER_MOVE)) return -2;
+        (pointer->action != OPEN_NAVI_BACKEND_POINTER_PRESS &&
+         pointer->action != OPEN_NAVI_BACKEND_POINTER_RELEASE &&
+         pointer->action != OPEN_NAVI_BACKEND_POINTER_MOVE)) return -2;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (g_runtime.accepting_state == 0 ||
         (g_runtime.state != RENDERER_STARTING &&
          g_runtime.state != RENDERER_RUNNING) || g_runtime.stop != 0) {
         increment_counter(&g_runtime.pointer_dropped);
         result = -1;
-    } else if (pointer->action == MOCK_NAV_BACKEND_POINTER_MOVE &&
+    } else if (pointer->action == OPEN_NAVI_BACKEND_POINTER_MOVE &&
                (event = coalescible_move_locked(pointer->contact_id)) != NULL) {
         /* Keep the queued move's sequence: take_event() serves the oldest
          * event first, and a move renumbered on every coalesce stays newer
@@ -585,20 +585,20 @@ static int enqueue_pointer(const MockNavBackendPointerV2 *pointer)
         increment_counter(&g_runtime.pointer_accepted);
         increment_counter(&g_runtime.pointer_move_coalesced);
         (void)pthread_cond_signal(&g_runtime.condition);
-    } else if (pointer->action == MOCK_NAV_BACKEND_POINTER_MOVE &&
+    } else if (pointer->action == OPEN_NAVI_BACKEND_POINTER_MOVE &&
                g_runtime.pointer_count >=
-                   MOCK_POINTER_QUEUE_CAPACITY - MOCK_POINTER_EDGE_RESERVE) {
+                   OPEN_NAVI_POINTER_QUEUE_CAPACITY - OPEN_NAVI_POINTER_EDGE_RESERVE) {
         increment_counter(&g_runtime.pointer_dropped);
         increment_counter(&g_runtime.pointer_move_dropped);
         result = -1;
     } else {
-        if (g_runtime.pointer_count == MOCK_POINTER_QUEUE_CAPACITY) {
+        if (g_runtime.pointer_count == OPEN_NAVI_POINTER_QUEUE_CAPACITY) {
             unsigned int offset;
             for (offset = 0u; offset < g_runtime.pointer_count; ++offset) {
                 if (g_runtime.pointer_queue[
                         (g_runtime.pointer_head + offset) %
-                        MOCK_POINTER_QUEUE_CAPACITY].data.pointer.action ==
-                    MOCK_NAV_BACKEND_POINTER_MOVE) break;
+                        OPEN_NAVI_POINTER_QUEUE_CAPACITY].data.pointer.action ==
+                    OPEN_NAVI_BACKEND_POINTER_MOVE) break;
             }
             if (offset == g_runtime.pointer_count) {
                 if (!evict_oldest_gesture_pair_locked()) {
@@ -614,7 +614,7 @@ static int enqueue_pointer(const MockNavBackendPointerV2 *pointer)
         }
         if (result == 0) {
             tail = (g_runtime.pointer_head + g_runtime.pointer_count) %
-                   MOCK_POINTER_QUEUE_CAPACITY;
+                   OPEN_NAVI_POINTER_QUEUE_CAPACITY;
             event = &g_runtime.pointer_queue[tail];
             memset(event, 0, sizeof(*event));
             event->sequence = next_event_sequence_locked();
@@ -632,9 +632,9 @@ static int enqueue_pointer(const MockNavBackendPointerV2 *pointer)
 static int drain_platform_pointer(void)
 {
     unsigned int drained;
-    for (drained = 0u; drained < MOCK_PLATFORM_DRAIN_LIMIT; ++drained) {
-        MockNavBackendPointerV2 pointer;
-        int result = mock_renderer_platform_poll_pointer(
+    for (drained = 0u; drained < OPEN_NAVI_PLATFORM_DRAIN_LIMIT; ++drained) {
+        OpenNaviBackendPointerV2 pointer;
+        int result = open_navi_renderer_platform_poll_pointer(
             &pointer, g_runtime.pointer_contacts, g_runtime.diagnostic,
             sizeof(g_runtime.diagnostic));
         if (result == 0) return 0;
@@ -664,10 +664,10 @@ static int drain_platform_pointer(void)
 
 static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
 {
-    MockNavBackendV1 backend = g_runtime.active;
-    MockNavBackendV2 backend_v2 = g_runtime.active_v2;
-    MockNavBackendV4 backend_v4 = g_runtime.active_v4;
-    MockNavBackendV5 backend_v5 = g_runtime.active_v5;
+    OpenNaviBackendV1 backend = g_runtime.active;
+    OpenNaviBackendV2 backend_v2 = g_runtime.active_v2;
+    OpenNaviBackendV4 backend_v4 = g_runtime.active_v4;
+    OpenNaviBackendV5 backend_v5 = g_runtime.active_v5;
     int request_render = event->type != RENDER_EVENT_FRAME;
 
     switch (event->type) {
@@ -687,38 +687,38 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
                                       &event->data.gps);
         break;
     case RENDER_EVENT_VEHICLE:
-        if ((g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V2 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V3 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5) &&
+        if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
             backend_v2.vehicle_changed != NULL) {
             (void)backend_v2.vehicle_changed(
                 backend.backend_context, &event->data.vehicle);
         }
         break;
     case RENDER_EVENT_GPS_INTERVAL:
-        if ((g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V2 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V3 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5) &&
+        if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
             backend_v2.gps_interval_changed != NULL) {
             (void)backend_v2.gps_interval_changed(
                 backend.backend_context, &event->data.gps_interval);
         }
         break;
     case RENDER_EVENT_AUDIO:
-        if ((g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V2 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V3 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5) &&
+        if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
             backend_v2.audio_changed != NULL) {
             (void)backend_v2.audio_changed(
                 backend.backend_context, &event->data.audio);
         }
         break;
     case RENDER_EVENT_INTERNATIONALIZATION:
-        if ((g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5) &&
+        if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
             backend_v4.internationalization_changed != NULL) {
             (void)backend_v4.internationalization_changed(
                 backend.backend_context,
@@ -726,15 +726,15 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
         }
         break;
     case RENDER_EVENT_CLUSTER_DISPLAY:
-        if ((g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-             g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5) &&
+        if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
             backend_v4.cluster_display_changed != NULL) {
             (void)backend_v4.cluster_display_changed(
                 backend.backend_context, &event->data.cluster_display);
         }
         break;
     case RENDER_EVENT_DRIVER_DISTRACTION:
-        if (g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5 &&
+        if (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 &&
             backend_v5.driver_distraction_changed != NULL) {
             (void)backend_v5.driver_distraction_changed(
                 backend.backend_context,
@@ -748,11 +748,11 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
                  * V1 pointer, the payload says V2 by version and size. */
                 (void)backend.pointer_changed(
                     backend.backend_context,
-                    (const MockNavBackendPointerV1 *)(const void *)&event->data.pointer);
+                    (const OpenNaviBackendPointerV1 *)(const void *)&event->data.pointer);
             } else if (event->data.pointer.contact_id == 0u) {
-                MockNavBackendPointerV1 v1;
+                OpenNaviBackendPointerV1 v1;
                 memset(&v1, 0, sizeof(v1));
-                v1.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+                v1.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
                 v1.struct_size = sizeof(v1);
                 v1.action = event->data.pointer.action;
                 v1.x = event->data.pointer.x;
@@ -764,19 +764,19 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
         break;
     case RENDER_EVENT_FRAME:
         if (backend.render_frame != NULL) {
-            MockNavBackendFrameV1 frame;
+            OpenNaviBackendFrameV1 frame;
             char diagnostic[257];
             memset(&frame, 0, sizeof(frame));
-            frame.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+            frame.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
             frame.struct_size = sizeof(frame);
             frame.sequence = ++g_runtime.frame_sequence;
             frame.monotonic_milliseconds = monotonic_milliseconds();
             diagnostic[0] = '\0';
-            if (mock_renderer_platform_begin_frame(
+            if (open_navi_renderer_platform_begin_frame(
                     diagnostic, sizeof(diagnostic)) == 0) {
                 int render_status = backend.render_frame(
                     backend.backend_context, &g_runtime.target, &frame);
-                (void)mock_renderer_platform_end_frame(
+                (void)open_navi_renderer_platform_end_frame(
                     render_status == 0, diagnostic, sizeof(diagnostic));
             }
         }
@@ -799,27 +799,27 @@ static int stop_requested(void)
 
 static void renderer_cleanup(int started, int surfaced)
 {
-    MockNavBackendV1 backend = g_runtime.active;
+    OpenNaviBackendV1 backend = g_runtime.active;
     if (surfaced != 0 && backend.surface_destroyed != NULL) {
         char diagnostic[257];
         diagnostic[0] = '\0';
-        int context_current = mock_renderer_platform_begin_frame(
+        int context_current = open_navi_renderer_platform_begin_frame(
             diagnostic, sizeof(diagnostic)) == 0;
         backend.surface_destroyed(backend.backend_context);
         if (context_current != 0) {
-            (void)mock_renderer_platform_end_frame(
+            (void)open_navi_renderer_platform_end_frame(
                 0, diagnostic, sizeof(diagnostic));
         }
     }
     if (started != 0 && backend.stop != NULL)
         backend.stop(backend.backend_context);
-    mock_renderer_platform_destroy();
+    open_navi_renderer_platform_destroy();
 }
 
 static void *renderer_thread(void *unused)
 {
-    MockNavBackendServicesV1 services;
-    MockNavBackendServicesV2 services_v2;
+    OpenNaviBackendServicesV1 services;
+    OpenNaviBackendServicesV2 services_v2;
     RenderEvent event;
     uintptr_t service_token;
     int status;
@@ -831,12 +831,12 @@ static void *renderer_thread(void *unused)
     service_token = g_runtime.active_service_token;
     (void)pthread_mutex_unlock(&g_runtime.lock);
     memset(&services, 0, sizeof(services));
-    services.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    services.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
     services.struct_size = sizeof(services);
     services.runtime_context = (void *)service_token;
     services.request_frame = request_frame;
     memset(&services_v2, 0, sizeof(services_v2));
-    services_v2.v1.abi_version = MOCK_NAV_BACKEND_ABI_V2;
+    services_v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
     services_v2.v1.struct_size = sizeof(services_v2);
     services_v2.v1.runtime_context = (void *)service_token;
     services_v2.v1.request_frame = request_frame;
@@ -845,13 +845,13 @@ static void *renderer_thread(void *unused)
         service_publish_audio_availability;
     services_v2.publish_thread_status = service_publish_thread_status;
 
-    status = mock_renderer_platform_create(&g_runtime.target,
+    status = open_navi_renderer_platform_create(&g_runtime.target,
                                            g_runtime.diagnostic,
                                            sizeof(g_runtime.diagnostic));
     if (status == 0 &&
-        (g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V3 ||
-         g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-         g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5)) {
+        (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
+         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5)) {
         status = g_runtime.active_v3.start_v2(
             g_runtime.active.backend_context, &services_v2);
         if (status == 0) started = 1;
@@ -863,44 +863,44 @@ static void *renderer_thread(void *unused)
         started = 1;
     }
     if (status == 0 &&
-        (g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V3 ||
-         g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-         g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5)) {
+        (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
+         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5)) {
         (void)pthread_mutex_lock(&g_runtime.lock);
         if (g_runtime.state == RENDERER_STARTING && g_runtime.stop == 0)
             g_runtime.outbound_services_active = 1;
         (void)pthread_mutex_unlock(&g_runtime.lock);
     }
-    if (status == 0 && stop_requested()) status = MOCK_RENDERER_CANCELLED;
+    if (status == 0 && stop_requested()) status = OPEN_NAVI_RENDERER_CANCELLED;
 
     if (status == 0 && g_runtime.active.surface_created != NULL) {
         char diagnostic[257];
         diagnostic[0] = '\0';
-        if (mock_renderer_platform_begin_frame(
+        if (open_navi_renderer_platform_begin_frame(
                 diagnostic, sizeof(diagnostic)) != 0) {
             status = -1;
         } else {
             status = g_runtime.active.surface_created(
                 g_runtime.active.backend_context, &g_runtime.target);
-            (void)mock_renderer_platform_end_frame(
+            (void)open_navi_renderer_platform_end_frame(
                 0, diagnostic, sizeof(diagnostic));
             if (status == 0) surfaced = 1;
         }
     } else if (status == 0) {
         surfaced = 1;
     }
-    if (status == 0 && stop_requested()) status = MOCK_RENDERER_CANCELLED;
+    if (status == 0 && stop_requested()) status = OPEN_NAVI_RENDERER_CANCELLED;
 
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (status == 0 && g_runtime.stop == 0 &&
         g_runtime.state == RENDERER_STARTING) {
         g_runtime.state = RENDERER_RUNNING;
         g_runtime.outbound_services_active =
-            g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V3 ||
-            g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-            g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5;
+            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
+            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5;
     } else {
-        if (status == 0) status = MOCK_RENDERER_CANCELLED;
+        if (status == 0) status = OPEN_NAVI_RENDERER_CANCELLED;
         g_runtime.stop = 1;
         g_runtime.active_service_token = (uintptr_t)0u;
         g_runtime.outbound_services_active = 0;
@@ -947,7 +947,7 @@ static void *renderer_thread(void *unused)
         g_runtime.stop = 1;
         g_runtime.active_service_token = (uintptr_t)0u;
         g_runtime.outbound_services_active = 0;
-        for (display = 0u; display < MOCK_RENDERER_DISPLAY_COUNT; ++display) {
+        for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
             g_runtime.visibility[display].pending = 0;
             g_runtime.screen[display].pending = 0;
         }
@@ -986,7 +986,7 @@ static void *renderer_thread(void *unused)
     return NULL;
 }
 
-int mock_renderer_set_pointer_contacts(int enabled)
+int open_navi_renderer_set_pointer_contacts(int enabled)
 {
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -998,7 +998,7 @@ int mock_renderer_set_pointer_contacts(int enabled)
     return result;
 }
 
-int mock_navicore_backend_install_v1(const MockNavBackendV1 *backend)
+int open_navi_backend_install_v1(const OpenNaviBackendV1 *backend)
 {
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1012,8 +1012,8 @@ int mock_navicore_backend_install_v1(const MockNavBackendV1 *backend)
         memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
         memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
         g_runtime.installed_version = 0u;
-    } else if (backend->abi_version != MOCK_NAV_BACKEND_ABI_V1 ||
-               backend->struct_size < sizeof(MockNavBackendV1)) {
+    } else if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V1 ||
+               backend->struct_size < sizeof(OpenNaviBackendV1)) {
         result = -2;
     } else {
         g_runtime.installed = *backend;
@@ -1022,13 +1022,13 @@ int mock_navicore_backend_install_v1(const MockNavBackendV1 *backend)
         memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
         memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
         memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
-        g_runtime.installed_version = MOCK_NAV_BACKEND_ABI_V1;
+        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V1;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
 
-int mock_navicore_backend_install_v2(const MockNavBackendV2 *backend)
+int open_navi_backend_install_v2(const OpenNaviBackendV2 *backend)
 {
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1042,8 +1042,8 @@ int mock_navicore_backend_install_v2(const MockNavBackendV2 *backend)
         memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
         memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
         g_runtime.installed_version = 0u;
-    } else if (backend->v1.abi_version != MOCK_NAV_BACKEND_ABI_V2 ||
-               backend->v1.struct_size < sizeof(MockNavBackendV2)) {
+    } else if (backend->v1.abi_version != OPEN_NAVI_BACKEND_ABI_V2 ||
+               backend->v1.struct_size < sizeof(OpenNaviBackendV2)) {
         result = -2;
     } else {
         g_runtime.installed = backend->v1;
@@ -1052,13 +1052,13 @@ int mock_navicore_backend_install_v2(const MockNavBackendV2 *backend)
         memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
         memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
         memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
-        g_runtime.installed_version = MOCK_NAV_BACKEND_ABI_V2;
+        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V2;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
 
-int mock_navicore_backend_install_v3(const MockNavBackendV3 *backend)
+int open_navi_backend_install_v3(const OpenNaviBackendV3 *backend)
 {
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1072,8 +1072,8 @@ int mock_navicore_backend_install_v3(const MockNavBackendV3 *backend)
         memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
         memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
         g_runtime.installed_version = 0u;
-    } else if (backend->v2.v1.abi_version != MOCK_NAV_BACKEND_ABI_V3 ||
-               backend->v2.v1.struct_size < sizeof(MockNavBackendV3) ||
+    } else if (backend->v2.v1.abi_version != OPEN_NAVI_BACKEND_ABI_V3 ||
+               backend->v2.v1.struct_size < sizeof(OpenNaviBackendV3) ||
                backend->start_v2 == NULL) {
         result = -2;
     } else {
@@ -1083,13 +1083,13 @@ int mock_navicore_backend_install_v3(const MockNavBackendV3 *backend)
         memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
         memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
         memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
-        g_runtime.installed_version = MOCK_NAV_BACKEND_ABI_V3;
+        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V3;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
 
-int mock_navicore_backend_install_v4(const MockNavBackendV4 *backend)
+int open_navi_backend_install_v4(const OpenNaviBackendV4 *backend)
 {
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1110,8 +1110,8 @@ int mock_navicore_backend_install_v4(const MockNavBackendV4 *backend)
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
         g_runtime.installed_version = 0u;
-    } else if (backend->v3.v2.v1.abi_version != MOCK_NAV_BACKEND_ABI_V4 ||
-               backend->v3.v2.v1.struct_size < sizeof(MockNavBackendV4) ||
+    } else if (backend->v3.v2.v1.abi_version != OPEN_NAVI_BACKEND_ABI_V4 ||
+               backend->v3.v2.v1.struct_size < sizeof(OpenNaviBackendV4) ||
                backend->v3.start_v2 == NULL) {
         result = -2;
     } else {
@@ -1128,13 +1128,13 @@ int mock_navicore_backend_install_v4(const MockNavBackendV4 *backend)
                sizeof(g_runtime.cluster_display));
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
-        g_runtime.installed_version = MOCK_NAV_BACKEND_ABI_V4;
+        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V4;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
 
-int mock_navicore_backend_install_v5(const MockNavBackendV5 *backend)
+int open_navi_backend_install_v5(const OpenNaviBackendV5 *backend)
 {
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1157,8 +1157,8 @@ int mock_navicore_backend_install_v5(const MockNavBackendV5 *backend)
                sizeof(g_runtime.driver_distraction));
         g_runtime.installed_version = 0u;
     } else if (backend->v4.v3.v2.v1.abi_version !=
-                   MOCK_NAV_BACKEND_ABI_V5 ||
-               backend->v4.v3.v2.v1.struct_size < sizeof(MockNavBackendV5) ||
+                   OPEN_NAVI_BACKEND_ABI_V5 ||
+               backend->v4.v3.v2.v1.struct_size < sizeof(OpenNaviBackendV5) ||
                backend->v4.v3.start_v2 == NULL) {
         result = -2;
     } else {
@@ -1176,19 +1176,19 @@ int mock_navicore_backend_install_v5(const MockNavBackendV5 *backend)
                sizeof(g_runtime.cluster_display));
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
-        g_runtime.installed_version = MOCK_NAV_BACKEND_ABI_V5;
+        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V5;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
 
-void mock_renderer_prepare_lifecycle(void)
+void open_navi_renderer_prepare_lifecycle(void)
 {
     unsigned int display;
     if (ensure_condition() != 0) return;
     (void)pthread_mutex_lock(&g_runtime.lock);
     g_runtime.accepting_state = 1;
-    for (display = 0u; display < MOCK_RENDERER_DISPLAY_COUNT; ++display) {
+    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
         g_runtime.visibility[display].pending = 0;
         g_runtime.screen[display].pending = 0;
     }
@@ -1220,12 +1220,12 @@ void mock_renderer_prepare_lifecycle(void)
     (void)pthread_mutex_unlock(&g_runtime.lock);
 }
 
-void mock_renderer_end_lifecycle(void)
+void open_navi_renderer_end_lifecycle(void)
 {
     unsigned int display;
     (void)pthread_mutex_lock(&g_runtime.lock);
     g_runtime.accepting_state = 0;
-    for (display = 0u; display < MOCK_RENDERER_DISPLAY_COUNT; ++display) {
+    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
         g_runtime.visibility[display].pending = 0;
         g_runtime.screen[display].pending = 0;
     }
@@ -1245,7 +1245,7 @@ void mock_renderer_end_lifecycle(void)
     (void)pthread_mutex_unlock(&g_runtime.lock);
 }
 
-int mock_renderer_create(char *diagnostic, size_t diagnostic_capacity)
+int open_navi_renderer_create(char *diagnostic, size_t diagnostic_capacity)
 {
     int create_result;
     int start_result;
@@ -1272,7 +1272,7 @@ int mock_renderer_create(char *diagnostic, size_t diagnostic_capacity)
     }
     if (g_runtime.accepting_state == 0) {
         g_runtime.accepting_state = 1;
-        for (display = 0u; display < MOCK_RENDERER_DISPLAY_COUNT; ++display) {
+        for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
             g_runtime.visibility[display].pending = 0;
             g_runtime.screen[display].pending = 0;
         }
@@ -1303,34 +1303,34 @@ int mock_renderer_create(char *diagnostic, size_t diagnostic_capacity)
     memset(&g_runtime.active_v4, 0, sizeof(g_runtime.active_v4));
     memset(&g_runtime.active_v5, 0, sizeof(g_runtime.active_v5));
     g_runtime.outbound_services_active = 0;
-    if (g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V5) {
+    if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5) {
         g_runtime.active = g_runtime.installed_v5.v4.v3.v2.v1;
         g_runtime.active_v2 = g_runtime.installed_v5.v4.v3.v2;
         g_runtime.active_v3 = g_runtime.installed_v5.v4.v3;
         g_runtime.active_v4 = g_runtime.installed_v5.v4;
         g_runtime.active_v5 = g_runtime.installed_v5;
-        g_runtime.active_version = MOCK_NAV_BACKEND_ABI_V5;
-    } else if (g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V4) {
+        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V5;
+    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V4) {
         g_runtime.active = g_runtime.installed_v4.v3.v2.v1;
         g_runtime.active_v2 = g_runtime.installed_v4.v3.v2;
         g_runtime.active_v3 = g_runtime.installed_v4.v3;
         g_runtime.active_v4 = g_runtime.installed_v4;
-        g_runtime.active_version = MOCK_NAV_BACKEND_ABI_V4;
-    } else if (g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V3) {
+        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V4;
+    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V3) {
         g_runtime.active = g_runtime.installed_v3.v2.v1;
         g_runtime.active_v2 = g_runtime.installed_v3.v2;
         g_runtime.active_v3 = g_runtime.installed_v3;
-        g_runtime.active_version = MOCK_NAV_BACKEND_ABI_V3;
-    } else if (g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V2) {
+        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V3;
+    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V2) {
         g_runtime.active = g_runtime.installed_v2.v1;
         g_runtime.active_v2 = g_runtime.installed_v2;
-        g_runtime.active_version = MOCK_NAV_BACKEND_ABI_V2;
-    } else if (g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V1) {
+        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V2;
+    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V1) {
         g_runtime.active = g_runtime.installed;
-        g_runtime.active_version = MOCK_NAV_BACKEND_ABI_V1;
+        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V1;
     } else {
-        g_runtime.active = *mock_default_backend_v1();
-        g_runtime.active_version = MOCK_NAV_BACKEND_ABI_V1;
+        g_runtime.active = *open_navi_default_backend_v1();
+        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V1;
     }
     g_runtime.active_service_token = next_service_token_locked();
     if (g_runtime.active_service_token == (uintptr_t)0u) {
@@ -1360,13 +1360,13 @@ int mock_renderer_create(char *diagnostic, size_t diagnostic_capacity)
                        ? g_runtime.diagnostic : "backend renderer live");
     (void)pthread_mutex_unlock(&g_runtime.lock);
     if (start_result != 0) {
-        mock_renderer_destroy();
+        open_navi_renderer_destroy();
         return start_result;
     }
     return 0;
 }
 
-void mock_renderer_destroy(void)
+void open_navi_renderer_destroy(void)
 {
     pthread_t thread;
     int join = 0;
@@ -1423,12 +1423,12 @@ void mock_renderer_destroy(void)
     }
 }
 
-int mock_renderer_notify_visibility(uint32_t display, uint32_t visibility,
+int open_navi_renderer_notify_visibility(uint32_t display, uint32_t visibility,
                                     uint32_t interactivity)
 {
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    if (display >= MOCK_RENDERER_DISPLAY_COUNT) {
+    if (display >= OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
         if (g_runtime.visibility_unsupported != UINT32_MAX)
             ++g_runtime.visibility_unsupported;
         result = -2;
@@ -1437,7 +1437,7 @@ int mock_renderer_notify_visibility(uint32_t display, uint32_t visibility,
         result = -1;
     } else {
         VisibilitySlot *slot = &g_runtime.visibility[display];
-        slot->value.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+        slot->value.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
         slot->value.struct_size = sizeof(slot->value);
         slot->value.display = display;
         slot->value.visibility = visibility;
@@ -1450,12 +1450,12 @@ int mock_renderer_notify_visibility(uint32_t display, uint32_t visibility,
     return result;
 }
 
-int mock_renderer_notify_screen(uint32_t display, uint32_t screen_type,
+int open_navi_renderer_notify_screen(uint32_t display, uint32_t screen_type,
                                 uint32_t animation)
 {
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    if (display >= MOCK_RENDERER_DISPLAY_COUNT) {
+    if (display >= OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
         if (g_runtime.screen_unsupported != UINT32_MAX)
             ++g_runtime.screen_unsupported;
         result = -2;
@@ -1464,7 +1464,7 @@ int mock_renderer_notify_screen(uint32_t display, uint32_t screen_type,
         result = -1;
     } else {
         ScreenSlot *slot = &g_runtime.screen[display];
-        slot->value.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+        slot->value.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
         slot->value.struct_size = sizeof(slot->value);
         slot->value.display = display;
         slot->value.screen_type = screen_type;
@@ -1477,7 +1477,7 @@ int mock_renderer_notify_screen(uint32_t display, uint32_t screen_type,
     return result;
 }
 
-int mock_renderer_notify_gps(const MockGpsSnapshot *snapshot)
+int open_navi_renderer_notify_gps(const OpenNaviGpsSnapshot *snapshot)
 {
     int result = 0;
     if (snapshot == NULL) return -2;
@@ -1486,9 +1486,9 @@ int mock_renderer_notify_gps(const MockGpsSnapshot *snapshot)
         g_runtime.state == RENDERER_STOPPING) {
         result = -1;
     } else {
-        MockNavBackendGpsV1 *gps = &g_runtime.gps.value;
+        OpenNaviBackendGpsV1 *gps = &g_runtime.gps.value;
         memset(gps, 0, sizeof(*gps));
-        gps->abi_version = MOCK_NAV_BACKEND_ABI_V1;
+        gps->abi_version = OPEN_NAVI_BACKEND_ABI_V1;
         gps->struct_size = sizeof(*gps);
         gps->latitude_e7 = snapshot->latitude_e7;
         gps->longitude_e7 = snapshot->longitude_e7;
@@ -1523,33 +1523,33 @@ static int renderer_v2_enabled_locked(void)
 {
     if (g_runtime.state == RENDERER_STARTING ||
         g_runtime.state == RENDERER_RUNNING) {
-        return g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V2 ||
-               g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V3 ||
-               g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-               g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5;
+        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5;
     }
-    return g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V2 ||
-           g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V3 ||
-           g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V4 ||
-           g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V5;
+    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V2 ||
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V3 ||
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5;
 }
 
 static int renderer_v4_enabled_locked(void)
 {
     if (g_runtime.state == RENDERER_STARTING ||
         g_runtime.state == RENDERER_RUNNING)
-        return g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V4 ||
-               g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5;
-    return g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V4 ||
-           g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V5;
+        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5;
+    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V4 ||
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5;
 }
 
 static int renderer_v5_enabled_locked(void)
 {
     if (g_runtime.state == RENDERER_STARTING ||
         g_runtime.state == RENDERER_RUNNING)
-        return g_runtime.active_version == MOCK_NAV_BACKEND_ABI_V5;
-    return g_runtime.installed_version == MOCK_NAV_BACKEND_ABI_V5;
+        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5;
+    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5;
 }
 
 static int notify_vehicle(uint32_t source_slot,
@@ -1557,7 +1557,7 @@ static int notify_vehicle(uint32_t source_slot,
                           uint32_t field,
                           uint32_t value)
 {
-    MockNavBackendVehicleV2 *vehicle;
+    OpenNaviBackendVehicleV2 *vehicle;
     uint32_t changed = 0u;
     int result = 0;
 
@@ -1569,15 +1569,15 @@ static int notify_vehicle(uint32_t source_slot,
         vehicle = &g_runtime.vehicle.value;
         if ((vehicle->valid_fields & field) == 0u) {
             changed = field;
-        } else if (field == MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_STATUS) {
+        } else if (field == OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_STATUS) {
             changed = vehicle->day_night_status != (uint8_t)value ? field : 0u;
-        } else if (field == MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_SETTING) {
+        } else if (field == OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING) {
             changed = vehicle->day_night_setting != (uint8_t)value ? field : 0u;
         } else {
             changed = vehicle->displayed_vehicle_speed_bits != value
                           ? field : 0u;
         }
-        vehicle->abi_version = MOCK_NAV_BACKEND_ABI_V2;
+        vehicle->abi_version = OPEN_NAVI_BACKEND_ABI_V2;
         vehicle->struct_size = sizeof(*vehicle);
         vehicle->valid_fields |= field;
         if (g_runtime.vehicle.pending == 0)
@@ -1586,9 +1586,9 @@ static int notify_vehicle(uint32_t source_slot,
             vehicle->changed_fields |= changed;
         vehicle->source_slot = source_slot;
         vehicle->request_handle = request_handle;
-        if (field == MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_STATUS)
+        if (field == OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_STATUS)
             vehicle->day_night_status = (uint8_t)value;
-        else if (field == MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_SETTING)
+        else if (field == OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING)
             vehicle->day_night_setting = (uint8_t)value;
         else
             vehicle->displayed_vehicle_speed_bits = value;
@@ -1600,35 +1600,35 @@ static int notify_vehicle(uint32_t source_slot,
     return result;
 }
 
-int mock_renderer_notify_vehicle_status(uint32_t source_slot,
+int open_navi_renderer_notify_vehicle_status(uint32_t source_slot,
                                         uint32_t request_handle,
                                         uint8_t value)
 {
     return notify_vehicle(source_slot, request_handle,
-                          MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_STATUS,
+                          OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_STATUS,
                           (uint32_t)value);
 }
 
-int mock_renderer_notify_vehicle_setting(uint32_t source_slot,
+int open_navi_renderer_notify_vehicle_setting(uint32_t source_slot,
                                          uint32_t request_handle,
                                          uint8_t value)
 {
     return notify_vehicle(source_slot, request_handle,
-                          MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_SETTING,
+                          OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING,
                           (uint32_t)value);
 }
 
-int mock_renderer_notify_vehicle_speed(uint32_t source_slot,
+int open_navi_renderer_notify_vehicle_speed(uint32_t source_slot,
                                        uint32_t speed_bits)
 {
     return notify_vehicle(source_slot, 0u,
-                          MOCK_NAV_BACKEND_VEHICLE_SPEED, speed_bits);
+                          OPEN_NAVI_BACKEND_VEHICLE_SPEED, speed_bits);
 }
 
-int mock_renderer_notify_gps_interval(uint32_t source_slot,
+int open_navi_renderer_notify_gps_interval(uint32_t source_slot,
                                       uint32_t interval_ms)
 {
-    MockNavBackendGpsIntervalV2 *gps_interval;
+    OpenNaviBackendGpsIntervalV2 *gps_interval;
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (g_runtime.accepting_state == 0 ||
@@ -1637,7 +1637,7 @@ int mock_renderer_notify_gps_interval(uint32_t source_slot,
     } else if (renderer_v2_enabled_locked() != 0) {
         gps_interval = &g_runtime.gps_interval.value;
         memset(gps_interval, 0, sizeof(*gps_interval));
-        gps_interval->abi_version = MOCK_NAV_BACKEND_ABI_V2;
+        gps_interval->abi_version = OPEN_NAVI_BACKEND_ABI_V2;
         gps_interval->struct_size = sizeof(*gps_interval);
         gps_interval->source_slot = source_slot;
         gps_interval->interval_ms = interval_ms;
@@ -1649,12 +1649,12 @@ int mock_renderer_notify_gps_interval(uint32_t source_slot,
     return result;
 }
 
-int mock_renderer_notify_audio(uint32_t source_slot,
+int open_navi_renderer_notify_audio(uint32_t source_slot,
                                uint32_t request_handle,
                                uint32_t audio_source,
                                uint8_t volume)
 {
-    MockNavBackendAudioV2 *audio;
+    OpenNaviBackendAudioV2 *audio;
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (g_runtime.accepting_state == 0 ||
@@ -1663,7 +1663,7 @@ int mock_renderer_notify_audio(uint32_t source_slot,
     } else if (renderer_v2_enabled_locked() != 0) {
         audio = &g_runtime.audio.value;
         memset(audio, 0, sizeof(*audio));
-        audio->abi_version = MOCK_NAV_BACKEND_ABI_V2;
+        audio->abi_version = OPEN_NAVI_BACKEND_ABI_V2;
         audio->struct_size = sizeof(*audio);
         audio->source_slot = source_slot;
         audio->request_handle = request_handle;
@@ -1677,11 +1677,11 @@ int mock_renderer_notify_audio(uint32_t source_slot,
     return result;
 }
 
-int mock_renderer_notify_internationalization(
+int open_navi_renderer_notify_internationalization(
     uint32_t source_slot, uint32_t request_handle,
     const uint8_t settings_raw[4], int settings_present)
 {
-    MockNavBackendInternationalizationV1 *event;
+    OpenNaviBackendInternationalizationV1 *event;
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (g_runtime.accepting_state == 0 ||
@@ -1690,7 +1690,7 @@ int mock_renderer_notify_internationalization(
     } else if (renderer_v4_enabled_locked() != 0) {
         event = &g_runtime.internationalization.value;
         memset(event, 0, sizeof(*event));
-        event->abi_version = MOCK_NAV_BACKEND_PAYLOAD_ABI_V1;
+        event->abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
         event->struct_size = sizeof(*event);
         event->source_slot = source_slot;
         event->request_handle = request_handle;
@@ -1711,11 +1711,11 @@ int mock_renderer_notify_internationalization(
     return result;
 }
 
-int mock_renderer_notify_cluster_display(uint32_t source_slot,
+int open_navi_renderer_notify_cluster_display(uint32_t source_slot,
                                          uint32_t request_handle,
                                          uint8_t enabled_raw)
 {
-    MockNavBackendClusterDisplayV1 *event;
+    OpenNaviBackendClusterDisplayV1 *event;
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (g_runtime.accepting_state == 0 ||
@@ -1724,7 +1724,7 @@ int mock_renderer_notify_cluster_display(uint32_t source_slot,
     } else if (renderer_v4_enabled_locked() != 0) {
         event = &g_runtime.cluster_display.value;
         memset(event, 0, sizeof(*event));
-        event->abi_version = MOCK_NAV_BACKEND_PAYLOAD_ABI_V1;
+        event->abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
         event->struct_size = sizeof(*event);
         event->source_slot = source_slot;
         event->request_handle = request_handle;
@@ -1737,11 +1737,11 @@ int mock_renderer_notify_cluster_display(uint32_t source_slot,
     return result;
 }
 
-int mock_renderer_notify_driver_distraction(uint32_t source_slot,
+int open_navi_renderer_notify_driver_distraction(uint32_t source_slot,
                                             uint32_t request_handle,
                                             uint32_t status_raw)
 {
-    MockNavBackendDriverDistractionV1 *event;
+    OpenNaviBackendDriverDistractionV1 *event;
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (g_runtime.accepting_state == 0 ||
@@ -1750,7 +1750,7 @@ int mock_renderer_notify_driver_distraction(uint32_t source_slot,
     } else if (renderer_v5_enabled_locked() != 0) {
         event = &g_runtime.driver_distraction.value;
         memset(event, 0, sizeof(*event));
-        event->abi_version = MOCK_NAV_BACKEND_PAYLOAD_ABI_V1;
+        event->abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
         event->struct_size = sizeof(*event);
         event->source_slot = source_slot;
         event->request_handle = request_handle;
@@ -1763,20 +1763,20 @@ int mock_renderer_notify_driver_distraction(uint32_t source_slot,
     return result;
 }
 
-#if defined(MOCK_NAVICORE_TESTING)
-int mock_renderer_test_submit_pointer(uint32_t action, int32_t x, int32_t y,
+#if defined(OPEN_NAVI_TESTING)
+int open_navi_renderer_test_submit_pointer(uint32_t action, int32_t x, int32_t y,
                                       uint32_t buttons)
 {
-    return mock_renderer_test_submit_contact(action, x, y, buttons, 0u, 1u);
+    return open_navi_renderer_test_submit_contact(action, x, y, buttons, 0u, 1u);
 }
 
-int mock_renderer_test_submit_contact(uint32_t action, int32_t x, int32_t y,
+int open_navi_renderer_test_submit_contact(uint32_t action, int32_t x, int32_t y,
                                       uint32_t buttons, uint32_t contact,
                                       uint32_t count)
 {
-    MockNavBackendPointerV2 pointer;
+    OpenNaviBackendPointerV2 pointer;
     memset(&pointer, 0, sizeof(pointer));
-    pointer.abi_version = MOCK_NAV_BACKEND_POINTER_ABI_V2;
+    pointer.abi_version = OPEN_NAVI_BACKEND_POINTER_ABI_V2;
     pointer.struct_size = sizeof(pointer);
     pointer.action = action;
     pointer.x = x;
@@ -1787,7 +1787,7 @@ int mock_renderer_test_submit_contact(uint32_t action, int32_t x, int32_t y,
     return enqueue_pointer(&pointer);
 }
 
-uint32_t mock_renderer_test_pointer_accepted(void)
+uint32_t open_navi_renderer_test_pointer_accepted(void)
 {
     uint32_t result;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1796,7 +1796,7 @@ uint32_t mock_renderer_test_pointer_accepted(void)
     return result;
 }
 
-uint32_t mock_renderer_test_pointer_dropped(void)
+uint32_t open_navi_renderer_test_pointer_dropped(void)
 {
     uint32_t result;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1805,7 +1805,7 @@ uint32_t mock_renderer_test_pointer_dropped(void)
     return result;
 }
 
-void mock_renderer_test_pointer_stats(MockRendererPointerQueueStats *stats_out)
+void open_navi_renderer_test_pointer_stats(OpenNaviRendererPointerQueueStats *stats_out)
 {
     if (stats_out == NULL) return;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1823,7 +1823,7 @@ void mock_renderer_test_pointer_stats(MockRendererPointerQueueStats *stats_out)
     (void)pthread_mutex_unlock(&g_runtime.lock);
 }
 
-uint32_t mock_renderer_test_visibility_unsupported(void)
+uint32_t open_navi_renderer_test_visibility_unsupported(void)
 {
     uint32_t result;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1832,7 +1832,7 @@ uint32_t mock_renderer_test_visibility_unsupported(void)
     return result;
 }
 
-uint32_t mock_renderer_test_screen_unsupported(void)
+uint32_t open_navi_renderer_test_screen_unsupported(void)
 {
     uint32_t result;
     (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1841,12 +1841,12 @@ uint32_t mock_renderer_test_screen_unsupported(void)
     return result;
 }
 
-int mock_renderer_test_pending_visibility(
-    uint32_t display, MockNavBackendVisibilityV1 *value_out)
+int open_navi_renderer_test_pending_visibility(
+    uint32_t display, OpenNaviBackendVisibilityV1 *value_out)
 {
     int pending = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    if (display < MOCK_RENDERER_DISPLAY_COUNT) {
+    if (display < OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
         pending = g_runtime.visibility[display].pending;
         if (pending != 0 && value_out != NULL)
             *value_out = g_runtime.visibility[display].value;
@@ -1855,12 +1855,12 @@ int mock_renderer_test_pending_visibility(
     return pending;
 }
 
-int mock_renderer_test_pending_screen(
-    uint32_t display, MockNavBackendScreenV1 *value_out)
+int open_navi_renderer_test_pending_screen(
+    uint32_t display, OpenNaviBackendScreenV1 *value_out)
 {
     int pending = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    if (display < MOCK_RENDERER_DISPLAY_COUNT) {
+    if (display < OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
         pending = g_runtime.screen[display].pending;
         if (pending != 0 && value_out != NULL)
             *value_out = g_runtime.screen[display].value;

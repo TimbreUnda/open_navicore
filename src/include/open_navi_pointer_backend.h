@@ -1,5 +1,5 @@
-#ifndef MOCK_POINTER_BACKEND_H
-#define MOCK_POINTER_BACKEND_H
+#ifndef OPEN_NAVI_POINTER_BACKEND_H
+#define OPEN_NAVI_POINTER_BACKEND_H
 
 #include <stdint.h>
 
@@ -8,48 +8,48 @@ extern "C" {
 #endif
 
 enum {
-    MOCK_LOGGING_OBSERVED_COUNT = 4,
-    MOCK_INTL_SETTINGS_SIZE = 4,
-    MOCK_VIN_SIZE = 17,
-    MOCK_TRANSPORT_OBSERVED_COUNT = 1,
-    MOCK_CONNECTION_STRING_LIMIT = 128,
-    MOCK_TEF_FILENAME_LIMIT = 512
+    OPEN_NAVI_LOGGING_OBSERVED_COUNT = 4,
+    OPEN_NAVI_INTL_SETTINGS_SIZE = 4,
+    OPEN_NAVI_VIN_SIZE = 17,
+    OPEN_NAVI_TRANSPORT_OBSERVED_COUNT = 1,
+    OPEN_NAVI_CONNECTION_STRING_LIMIT = 128,
+    OPEN_NAVI_TEF_FILENAME_LIMIT = 512
 };
 
 typedef struct {
     uint16_t language;
     uint8_t date_format;
     uint8_t time_format;
-} MockIntlSettingsInput;
+} OpenNaviIntlSettingsInput;
 
 typedef struct {
     uint8_t kind;
     uint8_t padding[7];
     uint32_t buffer_size;
     uint32_t field_0c;
-} MockTransportMeansObservedInput;
+} OpenNaviTransportMeansObservedInput;
 
 typedef struct {
     const char *imei;
     uint32_t field_04;
     const char *msisdn;
     const char *sim_iccid;
-} MockConnectionDeviceInfoInput;
+} OpenNaviConnectionDeviceInfoInput;
 
-void mock_pointer_backend_logging(uint32_t handle, uint32_t count,
+void open_navi_pointer_backend_logging(uint32_t handle, uint32_t count,
                                   const uint8_t *levels,
                                   const uint32_t *sizes);
-void mock_pointer_backend_internationalization(uint32_t handle,
-    const MockIntlSettingsInput *settings);
-void mock_pointer_backend_vin(uint32_t handle, const char *vin17);
-void mock_pointer_backend_transport(uint32_t handle, uint32_t count,
-    const MockTransportMeansObservedInput *items);
-void mock_pointer_backend_connection(
+void open_navi_pointer_backend_internationalization(uint32_t handle,
+    const OpenNaviIntlSettingsInput *settings);
+void open_navi_pointer_backend_vin(uint32_t handle, const char *vin17);
+void open_navi_pointer_backend_transport(uint32_t handle, uint32_t count,
+    const OpenNaviTransportMeansObservedInput *items);
+void open_navi_pointer_backend_connection(
     uint32_t handle, uint32_t service,
-    const MockConnectionDeviceInfoInput *info);
-void mock_pointer_backend_tef(uint32_t handle, uint32_t category,
+    const OpenNaviConnectionDeviceInfoInput *info);
+void open_navi_pointer_backend_tef(uint32_t handle, uint32_t category,
                               const char *filename);
-void mock_pointer_backend_reset(void);
+void open_navi_pointer_backend_reset(void);
 
 typedef struct {
     uint32_t generation;
@@ -98,10 +98,10 @@ typedef struct {
     uint8_t tef_present;
     uint32_t tef_length;
     char tef_filename[513];
-} MockPointerBackendTestState;
+} OpenNaviPointerBackendTestState;
 
-#if defined(MOCK_NAVICORE_TESTING)
-void mock_pointer_backend_test_state(MockPointerBackendTestState *state_out);
+#if defined(OPEN_NAVI_TESTING)
+void open_navi_pointer_backend_test_state(OpenNaviPointerBackendTestState *state_out);
 #endif
 
 #ifdef __cplusplus

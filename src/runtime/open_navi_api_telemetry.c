@@ -1,23 +1,23 @@
-#include "mock_api_telemetry.h"
-#include "mock_counter.h"
+#include "open_navi_api_telemetry.h"
+#include "open_navi_counter.h"
 
 #include <pthread.h>
 #include <string.h>
 
-#define MOCK_TELEMETRY_ADAPTERS 32u
-#define MOCK_TELEMETRY_SLOTS 128u
+#define OPEN_NAVI_TELEMETRY_ADAPTERS 32u
+#define OPEN_NAVI_TELEMETRY_SLOTS 128u
 
 typedef struct {
     uint32_t call_count;
     uint32_t argument_count;
     uint32_t argument[4];
-} MockApiTelemetryState;
+} OpenNaviApiTelemetryState;
 
 static pthread_mutex_t g_telemetry_lock = PTHREAD_MUTEX_INITIALIZER;
-static MockApiTelemetryState
-    g_telemetry[MOCK_TELEMETRY_ADAPTERS][MOCK_TELEMETRY_SLOTS];
+static OpenNaviApiTelemetryState
+    g_telemetry[OPEN_NAVI_TELEMETRY_ADAPTERS][OPEN_NAVI_TELEMETRY_SLOTS];
 
-void mock_api_telemetry_record(uint32_t adapter,
+void open_navi_api_telemetry_record(uint32_t adapter,
                                uint32_t slot,
                                uint32_t argument_count,
                                uint32_t argument0,
@@ -25,15 +25,15 @@ void mock_api_telemetry_record(uint32_t adapter,
                                uint32_t argument2,
                                uint32_t argument3)
 {
-    MockApiTelemetryState *state;
+    OpenNaviApiTelemetryState *state;
 
-    if (adapter >= MOCK_TELEMETRY_ADAPTERS ||
-        slot >= MOCK_TELEMETRY_SLOTS) {
+    if (adapter >= OPEN_NAVI_TELEMETRY_ADAPTERS ||
+        slot >= OPEN_NAVI_TELEMETRY_SLOTS) {
         return;
     }
     (void)pthread_mutex_lock(&g_telemetry_lock);
     state = &g_telemetry[adapter][slot];
-    mock_increment_saturating(&state->call_count);
+    open_navi_increment_saturating(&state->call_count);
     state->argument_count = argument_count <= 4u ? argument_count : 4u;
     state->argument[0] = argument0;
     state->argument[1] = argument1;
@@ -42,22 +42,22 @@ void mock_api_telemetry_record(uint32_t adapter,
     (void)pthread_mutex_unlock(&g_telemetry_lock);
 }
 
-void mock_api_telemetry_reset(void)
+void open_navi_api_telemetry_reset(void)
 {
     (void)pthread_mutex_lock(&g_telemetry_lock);
     memset(g_telemetry, 0, sizeof(g_telemetry));
     (void)pthread_mutex_unlock(&g_telemetry_lock);
 }
 
-#if defined(MOCK_NAVICORE_TESTING)
-int mock_api_telemetry_test_get(uint32_t adapter,
+#if defined(OPEN_NAVI_TESTING)
+int open_navi_api_telemetry_test_get(uint32_t adapter,
                                 uint32_t slot,
-                                MockApiTelemetryRecord *record_out)
+                                OpenNaviApiTelemetryRecord *record_out)
 {
     int present;
 
-    if (adapter >= MOCK_TELEMETRY_ADAPTERS ||
-        slot >= MOCK_TELEMETRY_SLOTS) {
+    if (adapter >= OPEN_NAVI_TELEMETRY_ADAPTERS ||
+        slot >= OPEN_NAVI_TELEMETRY_SLOTS) {
         return 0;
     }
     (void)pthread_mutex_lock(&g_telemetry_lock);

@@ -1,13 +1,13 @@
-#ifndef MOCK_NAV_BACKEND_H
-#define MOCK_NAV_BACKEND_H
+#ifndef OPEN_NAVI_BACKEND_H
+#define OPEN_NAVI_BACKEND_H
 
 #include <stddef.h>
 #include <stdint.h>
 
 #if defined(__GNUC__)
-#define MOCK_NAV_BACKEND_EXPORT __attribute__((visibility("default")))
+#define OPEN_NAVI_BACKEND_EXPORT __attribute__((visibility("default")))
 #else
-#define MOCK_NAV_BACKEND_EXPORT
+#define OPEN_NAVI_BACKEND_EXPORT
 #endif
 
 #ifdef __cplusplus
@@ -15,25 +15,25 @@ extern "C" {
 #endif
 
 enum {
-    MOCK_NAV_BACKEND_ABI_V1 = 1u,
-    MOCK_NAV_BACKEND_ABI_V2 = 2u,
-    MOCK_NAV_BACKEND_ABI_V3 = 3u,
-    MOCK_NAV_BACKEND_ABI_V4 = 4u,
-    MOCK_NAV_BACKEND_ABI_V5 = 5u,
-    MOCK_NAV_BACKEND_POINTER_PRESS = 1u,
-    MOCK_NAV_BACKEND_POINTER_RELEASE = 2u,
-    MOCK_NAV_BACKEND_POINTER_MOVE = 3u,
-    MOCK_NAV_BACKEND_GPS_SATELLITE_COUNT = 16u,
-    MOCK_NAV_BACKEND_GPS_SATELLITE_BYTES = 12u
+    OPEN_NAVI_BACKEND_ABI_V1 = 1u,
+    OPEN_NAVI_BACKEND_ABI_V2 = 2u,
+    OPEN_NAVI_BACKEND_ABI_V3 = 3u,
+    OPEN_NAVI_BACKEND_ABI_V4 = 4u,
+    OPEN_NAVI_BACKEND_ABI_V5 = 5u,
+    OPEN_NAVI_BACKEND_POINTER_PRESS = 1u,
+    OPEN_NAVI_BACKEND_POINTER_RELEASE = 2u,
+    OPEN_NAVI_BACKEND_POINTER_MOVE = 3u,
+    OPEN_NAVI_BACKEND_GPS_SATELLITE_COUNT = 16u,
+    OPEN_NAVI_BACKEND_GPS_SATELLITE_BYTES = 12u
 };
 
 enum {
-    MOCK_NAV_BACKEND_PAYLOAD_ABI_V1 = 1u,
-    MOCK_NAV_BACKEND_SERVICE_OK = 0u,
-    MOCK_NAV_BACKEND_SERVICE_UNAVAILABLE = 1u,
-    MOCK_NAV_BACKEND_SERVICE_STALE = 0xffff1001u,
-    MOCK_NAV_BACKEND_SERVICE_BAD_ABI = 0xffff1002u,
-    MOCK_NAV_BACKEND_SERVICE_BAD_VALUE = 0xffff1003u
+    OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1 = 1u,
+    OPEN_NAVI_BACKEND_SERVICE_OK = 0u,
+    OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE = 1u,
+    OPEN_NAVI_BACKEND_SERVICE_STALE = 0xffff1001u,
+    OPEN_NAVI_BACKEND_SERVICE_BAD_ABI = 0xffff1002u,
+    OPEN_NAVI_BACKEND_SERVICE_BAD_VALUE = 0xffff1003u
 };
 
 /* All structures are append-only. Consumers must inspect abi_version and
@@ -49,14 +49,14 @@ typedef struct {
     uintptr_t native_egl_display;
     uintptr_t native_egl_surface;
     uintptr_t native_egl_context;
-} MockNavBackendRenderTargetV1;
+} OpenNaviBackendRenderTargetV1;
 
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;
     uint64_t sequence;
     uint64_t monotonic_milliseconds;
-} MockNavBackendFrameV1;
+} OpenNaviBackendFrameV1;
 
 typedef struct {
     uint32_t abi_version;
@@ -78,12 +78,12 @@ typedef struct {
     uint8_t quality_status;
     uint8_t sync_counter;
     uint8_t reserved0[3];
-    uint8_t satellites[MOCK_NAV_BACKEND_GPS_SATELLITE_COUNT]
-                      [MOCK_NAV_BACKEND_GPS_SATELLITE_BYTES];
+    uint8_t satellites[OPEN_NAVI_BACKEND_GPS_SATELLITE_COUNT]
+                      [OPEN_NAVI_BACKEND_GPS_SATELLITE_BYTES];
     float travel_distance_raw;
     double altitude_change_raw;
     double noise_raw;
-} MockNavBackendGpsV1;
+} OpenNaviBackendGpsV1;
 
 typedef struct {
     uint32_t abi_version;
@@ -91,7 +91,7 @@ typedef struct {
     uint32_t display;
     uint32_t visibility;
     uint32_t interactivity;
-} MockNavBackendVisibilityV1;
+} OpenNaviBackendVisibilityV1;
 
 typedef struct {
     uint32_t abi_version;
@@ -99,7 +99,7 @@ typedef struct {
     uint32_t display;
     uint32_t screen_type;
     uint32_t animation;
-} MockNavBackendScreenV1;
+} OpenNaviBackendScreenV1;
 
 typedef struct {
     uint32_t abi_version;
@@ -108,16 +108,16 @@ typedef struct {
     int32_t x;
     int32_t y;
     uint32_t buttons;
-} MockNavBackendPointerV1;
+} OpenNaviBackendPointerV1;
 
 /* Multi-touch pointer: the exact V1 fields, then the contact. Delivered
- * through pointer_changed (abi_version MOCK_NAV_BACKEND_POINTER_ABI_V2,
+ * through pointer_changed (abi_version OPEN_NAVI_BACKEND_POINTER_ABI_V2,
  * struct_size the V2 size) only to a plugin that declares
- * MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS; every other backend receives V1
+ * OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS; every other backend receives V1
  * payloads for the first contact only. contact_id is a small slot number
  * (0 = the first finger down, 1 = a second one); contact_count is the
  * number of contacts down after this event. */
-enum { MOCK_NAV_BACKEND_POINTER_ABI_V2 = 2u, MOCK_NAV_BACKEND_POINTER_CONTACTS = 2u };
+enum { OPEN_NAVI_BACKEND_POINTER_ABI_V2 = 2u, OPEN_NAVI_BACKEND_POINTER_CONTACTS = 2u };
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;
@@ -127,14 +127,14 @@ typedef struct {
     uint32_t buttons;
     uint32_t contact_id;
     uint32_t contact_count;
-} MockNavBackendPointerV2;
+} OpenNaviBackendPointerV2;
 
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;
     void *runtime_context;
     int (*request_frame)(void *runtime_context);
-} MockNavBackendServicesV1;
+} OpenNaviBackendServicesV1;
 
 /* Pointer-bearing outbound payloads are borrowed only until the synchronous
  * service call returns.  Lengths are fixed-width so this in-process ABI is
@@ -142,7 +142,7 @@ typedef struct {
 typedef struct {
     const char *bytes;
     uint32_t byte_count;
-} MockNavBackendUtf8SpanV1;
+} OpenNaviBackendUtf8SpanV1;
 
 typedef struct {
     uint32_t abi_version;
@@ -166,15 +166,15 @@ typedef struct {
     uint8_t legal_speed_limit;
     uint8_t legal_speed_unit;
     uint8_t reserved0[2];
-    MockNavBackendUtf8SpanV1 current_road;
-    MockNavBackendUtf8SpanV1 next_road;
-} MockNavBackendClusterV1;
+    OpenNaviBackendUtf8SpanV1 current_road;
+    OpenNaviBackendUtf8SpanV1 next_road;
+} OpenNaviBackendClusterV1;
 
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;
     uint32_t availability_state;
-} MockNavBackendAudioAvailabilityV1;
+} OpenNaviBackendAudioAvailabilityV1;
 
 typedef struct {
     uint32_t abi_version;
@@ -183,20 +183,20 @@ typedef struct {
     uint32_t thread_status;
     const char *name_ascii;
     uint32_t name_byte_count;
-} MockNavBackendThreadStatusV1;
+} OpenNaviBackendThreadStatusV1;
 
 typedef struct {
-    MockNavBackendServicesV1 v1;
+    OpenNaviBackendServicesV1 v1;
     uint32_t (*publish_cluster)(
         void *runtime_context,
-        const MockNavBackendClusterV1 *cluster);
+        const OpenNaviBackendClusterV1 *cluster);
     uint32_t (*publish_audio_availability)(
         void *runtime_context,
-        const MockNavBackendAudioAvailabilityV1 *audio);
+        const OpenNaviBackendAudioAvailabilityV1 *audio);
     uint32_t (*publish_thread_status)(
         void *runtime_context,
-        const MockNavBackendThreadStatusV1 *thread_status);
-} MockNavBackendServicesV2;
+        const OpenNaviBackendThreadStatusV1 *thread_status);
+} OpenNaviBackendServicesV2;
 
 /* Backend callbacks are serialized on the renderer thread. The renderer has
  * made target's EGL context current while render_frame runs. No provider,
@@ -222,30 +222,30 @@ typedef struct {
     uint32_t struct_size;
     void *backend_context;
     int (*start)(void *backend_context,
-                 const MockNavBackendServicesV1 *services);
+                 const OpenNaviBackendServicesV1 *services);
     void (*stop)(void *backend_context);
     int (*surface_created)(
         void *backend_context,
-        const MockNavBackendRenderTargetV1 *target);
+        const OpenNaviBackendRenderTargetV1 *target);
     void (*surface_destroyed)(void *backend_context);
     int (*visibility_changed)(
         void *backend_context,
-        const MockNavBackendVisibilityV1 *visibility);
+        const OpenNaviBackendVisibilityV1 *visibility);
     int (*screen_changed)(void *backend_context,
-                          const MockNavBackendScreenV1 *screen);
+                          const OpenNaviBackendScreenV1 *screen);
     int (*gps_changed)(void *backend_context,
-                       const MockNavBackendGpsV1 *gps);
+                       const OpenNaviBackendGpsV1 *gps);
     int (*pointer_changed)(void *backend_context,
-                           const MockNavBackendPointerV1 *pointer);
+                           const OpenNaviBackendPointerV1 *pointer);
     int (*render_frame)(void *backend_context,
-                        const MockNavBackendRenderTargetV1 *target,
-                        const MockNavBackendFrameV1 *frame);
-} MockNavBackendV1;
+                        const OpenNaviBackendRenderTargetV1 *target,
+                        const OpenNaviBackendFrameV1 *frame);
+} OpenNaviBackendV1;
 
-enum MockNavBackendVehicleFieldV2 {
-    MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_STATUS = 1u << 0,
-    MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_SETTING = 1u << 1,
-    MOCK_NAV_BACKEND_VEHICLE_SPEED = 1u << 2
+enum OpenNaviBackendVehicleFieldV2 {
+    OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_STATUS = 1u << 0,
+    OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING = 1u << 1,
+    OPEN_NAVI_BACKEND_VEHICLE_SPEED = 1u << 2
 };
 
 /* V2 semantic payloads are owned snapshots delivered on the renderer thread.
@@ -264,14 +264,14 @@ typedef struct {
     uint8_t day_night_status;
     uint8_t day_night_setting;
     uint8_t reserved0[2];
-} MockNavBackendVehicleV2;
+} OpenNaviBackendVehicleV2;
 
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;
     uint32_t source_slot;
     uint32_t interval_ms;
-} MockNavBackendGpsIntervalV2;
+} OpenNaviBackendGpsIntervalV2;
 
 typedef struct {
     uint32_t abi_version;
@@ -281,7 +281,7 @@ typedef struct {
     uint32_t audio_source;
     uint8_t volume;
     uint8_t reserved0[3];
-} MockNavBackendAudioV2;
+} OpenNaviBackendAudioV2;
 
 /* Recovered stock-to-backend settings.  Raw numeric values are preserved:
  * no locale, date-format, time-format, or enable-state enum labels are
@@ -296,7 +296,7 @@ typedef struct {
     uint8_t time_format_raw;
     uint8_t settings_present;
     uint8_t reserved0[3];
-} MockNavBackendInternationalizationV1;
+} OpenNaviBackendInternationalizationV1;
 
 typedef struct {
     uint32_t abi_version;
@@ -305,7 +305,7 @@ typedef struct {
     uint32_t request_handle;
     uint8_t enabled_raw;
     uint8_t reserved0[3];
-} MockNavBackendClusterDisplayV1;
+} OpenNaviBackendClusterDisplayV1;
 
 typedef struct {
     uint32_t abi_version;
@@ -313,65 +313,65 @@ typedef struct {
     uint32_t source_slot;
     uint32_t request_handle;
     uint32_t distraction_status_raw;
-} MockNavBackendDriverDistractionV1;
+} OpenNaviBackendDriverDistractionV1;
 
-/* The first sizeof(MockNavBackendV1) bytes are an exact V1 callback prefix.
- * Set v1.abi_version to MOCK_NAV_BACKEND_ABI_V2 and v1.struct_size to the
+/* The first sizeof(OpenNaviBackendV1) bytes are an exact V1 callback prefix.
+ * Set v1.abi_version to OPEN_NAVI_BACKEND_ABI_V2 and v1.struct_size to the
  * complete V2 size. V1 registration and layout remain unchanged. */
 typedef struct {
-    MockNavBackendV1 v1;
+    OpenNaviBackendV1 v1;
     int (*vehicle_changed)(void *backend_context,
-                           const MockNavBackendVehicleV2 *vehicle);
+                           const OpenNaviBackendVehicleV2 *vehicle);
     int (*gps_interval_changed)(
         void *backend_context,
-        const MockNavBackendGpsIntervalV2 *gps_interval);
+        const OpenNaviBackendGpsIntervalV2 *gps_interval);
     int (*audio_changed)(void *backend_context,
-                         const MockNavBackendAudioV2 *audio);
-} MockNavBackendV2;
+                         const OpenNaviBackendAudioV2 *audio);
+} OpenNaviBackendV2;
 
 /* V3 preserves the complete V2 prefix.  V1/V2 backends continue to receive
- * an exact MockNavBackendServicesV1.  Only a V3 backend is started through
+ * an exact OpenNaviBackendServicesV1.  Only a V3 backend is started through
  * start_v2 and receives the outbound service tail. */
 typedef struct {
-    MockNavBackendV2 v2;
+    OpenNaviBackendV2 v2;
     int (*start_v2)(void *backend_context,
-                    const MockNavBackendServicesV2 *services);
-} MockNavBackendV3;
+                    const OpenNaviBackendServicesV2 *services);
+} OpenNaviBackendV3;
 
 /* V4 preserves the complete V3 prefix and adds two recovered input events.
  * Earlier install functions and descriptor layouts remain unchanged. */
 typedef struct {
-    MockNavBackendV3 v3;
+    OpenNaviBackendV3 v3;
     int (*internationalization_changed)(
         void *backend_context,
-        const MockNavBackendInternationalizationV1 *settings);
+        const OpenNaviBackendInternationalizationV1 *settings);
     int (*cluster_display_changed)(
         void *backend_context,
-        const MockNavBackendClusterDisplayV1 *display);
-} MockNavBackendV4;
+        const OpenNaviBackendClusterDisplayV1 *display);
+} OpenNaviBackendV4;
 
 /* V5 preserves the complete V4 prefix.  request_handle is zero for the
  * subscription form recovered at adapter 13 slot 4. */
 typedef struct {
-    MockNavBackendV4 v4;
+    OpenNaviBackendV4 v4;
     int (*driver_distraction_changed)(
         void *backend_context,
-        const MockNavBackendDriverDistractionV1 *distraction);
-} MockNavBackendV5;
+        const OpenNaviBackendDriverDistractionV1 *distraction);
+} OpenNaviBackendV5;
 
 /* Installs a copied backend descriptor for the next renderer lifecycle.
  * Registration is rejected while a renderer lifecycle exists. Passing NULL
  * restores the built-in magenta backend. */
-MOCK_NAV_BACKEND_EXPORT int mock_navicore_backend_install_v1(
-    const MockNavBackendV1 *backend);
-MOCK_NAV_BACKEND_EXPORT int mock_navicore_backend_install_v2(
-    const MockNavBackendV2 *backend);
-MOCK_NAV_BACKEND_EXPORT int mock_navicore_backend_install_v3(
-    const MockNavBackendV3 *backend);
-MOCK_NAV_BACKEND_EXPORT int mock_navicore_backend_install_v4(
-    const MockNavBackendV4 *backend);
-MOCK_NAV_BACKEND_EXPORT int mock_navicore_backend_install_v5(
-    const MockNavBackendV5 *backend);
+OPEN_NAVI_BACKEND_EXPORT int open_navi_backend_install_v1(
+    const OpenNaviBackendV1 *backend);
+OPEN_NAVI_BACKEND_EXPORT int open_navi_backend_install_v2(
+    const OpenNaviBackendV2 *backend);
+OPEN_NAVI_BACKEND_EXPORT int open_navi_backend_install_v3(
+    const OpenNaviBackendV3 *backend);
+OPEN_NAVI_BACKEND_EXPORT int open_navi_backend_install_v4(
+    const OpenNaviBackendV4 *backend);
+OPEN_NAVI_BACKEND_EXPORT int open_navi_backend_install_v5(
+    const OpenNaviBackendV5 *backend);
 
 #ifdef __cplusplus
 }

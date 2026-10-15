@@ -41,7 +41,7 @@ line (paths relative to the workspace root that holds this repository):
 
 ```sh
 make "$PWD/dist/libNaviCore.so" <vars>   # provider
-make osmand-backend <vars>               # dist/libMockNavBackendOsmAnd.so
+make osmand-backend <vars>               # dist/libOpenNaviBackendOsmAnd.so
 ```
 
 The provider rule is the absolute `$(CURDIR)/dist/libNaviCore.so`: a

@@ -1,5 +1,5 @@
-#ifndef MOCK_NAVICORE_H
-#define MOCK_NAVICORE_H
+#ifndef OPEN_NAVI_H
+#define OPEN_NAVI_H
 
 #include <stdint.h>
 
@@ -60,10 +60,10 @@ PANA_EXPORT uint32_t panaInitialize(const void *init_record);
 PANA_EXPORT void *panaGetSoftwareInfrastructure(void);
 PANA_EXPORT void panaDeinitialize(void);
 
-#if defined(MOCK_NAVICORE_TESTING)
-uint32_t mock_gps_test_call_count(void);
-uintptr_t mock_gps_test_last_record_address(void);
-uint32_t mock_hmi_test_transition_reply_count(void);
+#if defined(OPEN_NAVI_TESTING)
+uint32_t open_navi_gps_test_call_count(void);
+uintptr_t open_navi_gps_test_last_record_address(void);
+uint32_t open_navi_hmi_test_transition_reply_count(void);
 #endif
 
 #ifdef __cplusplus

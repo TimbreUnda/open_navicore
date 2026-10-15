@@ -12,7 +12,7 @@ printf '%s\n' "$header" | grep -q 'Data:.*little endian'
 printf '%s\n' "$header" | grep -q 'Type:.*DYN'
 printf '%s\n' "$header" | grep -q 'Machine:.*ARM'
 printf '%s\n' "$header" | grep -q 'Flags:.*Version5 EABI.*soft-float ABI'
-printf '%s\n' "$dynamic" | grep -q 'SONAME.*\[libMockNavBackendOsmAnd.so\]'
+printf '%s\n' "$dynamic" | grep -q 'SONAME.*\[libOpenNaviBackendOsmAnd.so\]'
 
 if printf '%s\n' "$dynamic" | grep -Eq '(RUNPATH|TEXTREL)'; then
     echo "OsmAnd plugin contains forbidden RUNPATH/TEXTREL" >&2
@@ -37,11 +37,11 @@ exports=$(printf '%s\n' "$symbols" | awk \
     '($5 == "GLOBAL" || $5 == "WEAK" || $5 == "UNIQUE") && \
      ($6 == "DEFAULT" || $6 == "PROTECTED") && $7 != "UND" && \
      $4 != "FILE" && $4 != "SECTION" { print $8 }' | sed 's/@.*//' | sort -u)
-test "$exports" = mock_nav_backend_query_v1 || {
+test "$exports" = open_navi_backend_query_v1 || {
     echo "unexpected OsmAnd exports: $exports" >&2
     exit 1
 }
 printf '%s\n' "$symbols" | awk \
     '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && \
-     $8 == "mock_nav_backend_query_v1" { found = 1 } END { exit !found }'
+     $8 == "open_navi_backend_query_v1" { found = 1 } END { exit !found }'
 echo "OsmAnd plugin ELF checks passed: $plugin"

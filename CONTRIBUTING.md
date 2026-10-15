@@ -60,8 +60,8 @@ Keep these evidence classes separate in code and documentation:
 The following are intentionally tracked because verification treats them as
 reviewable contracts:
 
-- `src/capture/generated/mock_raw_callback_slot_table.c`
-- `src/capture/generated/mock_raw_callback_slots_arm.S`
+- `src/capture/generated/open_navi_raw_callback_slot_table.c`
+- `src/capture/generated/open_navi_raw_callback_slots_arm.S`
 - `src/compat/qr39/provider_slots.def`
 - ABI and evidence CSV files under `contracts/` and `evidence/`
 - replay fixtures under `fixtures/`

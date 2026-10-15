@@ -1685,7 +1685,7 @@ void NavigationView::pointer(int action, int32_t x, int32_t y, int contact)
         pointer_queue_.push_back({action, x, y, contact});
         return;
     }
-    if (action == MOCK_NAV_BACKEND_POINTER_PRESS) {
+    if (action == OPEN_NAVI_BACKEND_POINTER_PRESS) {
         input_sequence_active_ = true;
     } else if (!input_sequence_active_) {
         trace_pointer("orphaned", static_cast<uint32_t>(action), x, y);
@@ -1695,7 +1695,7 @@ void NavigationView::pointer(int action, int32_t x, int32_t y, int contact)
         pointer_queue_.pop_front();
     pointer_queue_.push_back({action, x, y});
     trace_pointer("queued", static_cast<uint32_t>(action), x, y);
-    if (action == MOCK_NAV_BACKEND_POINTER_RELEASE)
+    if (action == OPEN_NAVI_BACKEND_POINTER_RELEASE)
         input_sequence_active_ = false;
 }
 
@@ -1879,9 +1879,9 @@ void NavigationView::pointer_cb(lv_indev_t* indev, lv_indev_data_t* data)
         self->pointer_queue_.pop_front();
         self->handle_map_gesture(self->last_pointer_);
     }
-    if (self->last_pointer_.action == MOCK_NAV_BACKEND_POINTER_PRESS)
+    if (self->last_pointer_.action == OPEN_NAVI_BACKEND_POINTER_PRESS)
         self->pointer_down_ = true;
-    if (self->last_pointer_.action == MOCK_NAV_BACKEND_POINTER_RELEASE)
+    if (self->last_pointer_.action == OPEN_NAVI_BACKEND_POINTER_RELEASE)
         self->pointer_down_ = false;
     data->point.x = self->last_pointer_.x;
     data->point.y = self->last_pointer_.y;
@@ -1907,13 +1907,13 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
         return;
     }
     if ((pinching_ || gesture_consumed_) &&
-        sample.action != MOCK_NAV_BACKEND_POINTER_PRESS) {
+        sample.action != OPEN_NAVI_BACKEND_POINTER_PRESS) {
         // The first finger of a pinch: moves the pinch; no drag or tap.
         drag_last_x_ = sample.x;
         drag_last_y_ = sample.y;
-        if (pinching_ && sample.action == MOCK_NAV_BACKEND_POINTER_MOVE)
+        if (pinching_ && sample.action == OPEN_NAVI_BACKEND_POINTER_MOVE)
             model_.move_pinch(sample.x, sample.y, second_x_, second_y_);
-        if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+        if (sample.action == OPEN_NAVI_BACKEND_POINTER_RELEASE) {
             if (pinching_)
                 model_.end_pinch();
             pinching_ = false;
@@ -1923,7 +1923,7 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
         }
         return;
     }
-    if (sample.action == MOCK_NAV_BACKEND_POINTER_PRESS) {
+    if (sample.action == OPEN_NAVI_BACKEND_POINTER_PRESS) {
         map_drag_ = false;
         map_dragging_ = false;
         long_pressed_ = false;
@@ -1950,7 +1950,7 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
     if (!map_drag_)
         return;
     if (long_pressed_) {
-        if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+        if (sample.action == OPEN_NAVI_BACKEND_POINTER_RELEASE) {
             map_drag_ = false;
             long_pressed_ = false;
             last_tap_valid_ = false;
@@ -1968,7 +1968,7 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
     } else {
         model_.move_drag(sample.x, sample.y);
     }
-    if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+    if (sample.action == OPEN_NAVI_BACKEND_POINTER_RELEASE) {
         if (map_dragging_) {
             model_.end_drag();
             last_tap_valid_ = false;
@@ -1998,7 +1998,7 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
 // one then does nothing until it lifts.
 void NavigationView::handle_second_contact(const PointerSample& sample)
 {
-    if (sample.action == MOCK_NAV_BACKEND_POINTER_PRESS) {
+    if (sample.action == OPEN_NAVI_BACKEND_POINTER_PRESS) {
         if (!map_drag_ || long_pressed_ || pinching_ || gesture_consumed_)
             return;
         if (map_dragging_)
@@ -2015,7 +2015,7 @@ void NavigationView::handle_second_contact(const PointerSample& sample)
         return;
     second_x_ = sample.x;
     second_y_ = sample.y;
-    if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+    if (sample.action == OPEN_NAVI_BACKEND_POINTER_RELEASE) {
         model_.end_pinch();
         pinching_ = false;
         gesture_consumed_ = true;

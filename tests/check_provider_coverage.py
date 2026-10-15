@@ -90,7 +90,7 @@ def parse_vtables(source):
     tables = {}
     pattern = re.compile(
         r"static const PanaGenericVirtual\s+(g_[A-Za-z0-9_]+)"
-        r"\[MOCK_DUMMY_VTABLE_SLOTS\]\s*=\s*\{(.*?)\};", re.S)
+        r"\[OPEN_NAVI_DUMMY_VTABLE_SLOTS\]\s*=\s*\{(.*?)\};", re.S)
     for match in pattern.finditer(source):
         body = re.sub(r"/\*.*?\*/", "", match.group(2), flags=re.S)
         entries = []
@@ -100,7 +100,7 @@ def parse_vtables(source):
                 continue
             shorthand = re.fullmatch(r"V(1|2|4|8|16|32|64)", token)
             if shorthand:
-                entries.extend(["mock_generic_virtual"] * int(shorthand.group(1)))
+                entries.extend(["open_navi_generic_virtual"] * int(shorthand.group(1)))
             else:
                 entries.append(token)
         if len(entries) != 128:
@@ -111,7 +111,7 @@ def parse_vtables(source):
 
 def parse_typechecks(source):
     pattern = re.compile(
-        r"MOCK_PROVIDER_TYPECHECK\(\s*(\d+)\s*,\s*(\d+)\s*,\s*"
+        r"OPEN_NAVI_PROVIDER_TYPECHECK\(\s*(\d+)\s*,\s*(\d+)\s*,\s*"
         r"([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*\);", re.S)
     result = {}
     for adapter, slot, symbol, c_type in pattern.findall(source):
@@ -131,7 +131,7 @@ def has_lifecycle_gate(source, symbol):
         r"\s*\([^;]*?\)\s*\{", source, re.S)
     if not definition:
         return False
-    return "mock_lifecycle_acquire" in source[definition.end():definition.end() + 1400]
+    return "open_navi_lifecycle_acquire" in source[definition.end():definition.end() + 1400]
 
 
 def expected_behavior(row_key, provider, pointer_keys):
@@ -178,7 +178,7 @@ def validate(rows, provider, pointer_keys, source, project_root):
         if symbol in symbols:
             fail(f"provider manifest: duplicate implementation symbol {symbol}")
         symbols.add(symbol)
-        if symbol == "mock_generic_virtual" or "..." in row["recovered_prototype"]:
+        if symbol == "open_navi_generic_virtual" or "..." in row["recovered_prototype"]:
             fail(f"provider manifest: generic/variadic implementation at {row_key}")
         if typechecks[row_key] != (symbol, row["c_type"]):
             fail(f"provider manifest: compiler typecheck mismatch at {row_key}")
@@ -212,7 +212,7 @@ def negative_self_test(rows, provider, pointer_keys, source, project_root):
     prototype[0]["recovered_prototype"] = "status(self,wrong)"
     cases.append(("prototype mismatch", prototype))
     generic = copy.deepcopy(rows)
-    generic[0]["implementation_symbol"] = "mock_generic_virtual"
+    generic[0]["implementation_symbol"] = "open_navi_generic_virtual"
     cases.append(("generic implementation", generic))
     for label, mutated in cases:
         try:

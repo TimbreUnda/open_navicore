@@ -132,17 +132,17 @@ def main():
 
     # Soft-float: VehicleData slot 8's float bits arrive in r1. Recovered
     # uint8_t provider words arrive in ordinary core registers.
-    for name, reg in (('mock_vehicle_speed', 'r1'),
-                      ('mock_vehicle_day_night_status', 'r1'),
-                      ('mock_vehicle_day_night_setting', 'r1'),
+    for name, reg in (('open_navi_vehicle_speed', 'r1'),
+                      ('open_navi_vehicle_day_night_status', 'r1'),
+                      ('open_navi_vehicle_day_night_setting', 'r1'),
                       ('nc_provider_vehicle_day_night_status_reply', 'r2'),
                       ('nc_provider_vehicle_day_night_setting_reply', 'r2'),
-                      ('mock_10_17', 'r3'),
-                      ('mock_audio_volume', 'r2')):
+                      ('open_navi_10_17', 'r3'),
+                      ('open_navi_audio_volume', 'r2')):
         c.expect(c.reads_register(name, reg), name, 'argument in %s not used' % reg)
 
     # Connectivity slot 3: the fourth word after self is the caller's sp[0].
-    c.stack_arguments('mock_20_3', 1)
+    c.stack_arguments('open_navi_20_3', 1)
     # HMI signalPressStateAnimation: incoming sp[0] (y) to outgoing sp[0].
     c.stack_arguments('nc_host_hmi_signal_press_state_animation', 1, {0: 0})
     c.expect(c.indirect_call('nc_host_hmi_signal_press_state_animation'),

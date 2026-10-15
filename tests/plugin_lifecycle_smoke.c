@@ -1,8 +1,8 @@
 #define _POSIX_C_SOURCE 200112L
 
-#include "mock_navicore.h"
-#include "mock_renderer.h"
-#include "mock_backend_loader.h"
+#include "open_navi.h"
+#include "open_navi_renderer.h"
+#include "open_navi_backend_loader.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -13,7 +13,7 @@
 #include <time.h>
 
 #ifndef EXPECT_TRACE_PATH
-#define EXPECT_TRACE_PATH "/tmp/mock-nav-reference-plugin.log"
+#define EXPECT_TRACE_PATH "/tmp/open-navi-reference-plugin.log"
 #endif
 
 enum { TEST_ADAPTERS = 256, TEST_SLOTS = 32 };
@@ -131,7 +131,7 @@ static void run_lifecycle(uint32_t number, int expect_plugin_render,
     assert(root->vptr->slot[4](root) == 0u);
     wait_hmi(number);
     if (expect_plugin_render != 0) wait_trace_line("render", number);
-    if (input_query_abi >= MOCK_NAV_PLUGIN_QUERY_ABI_V3) {
+    if (input_query_abi >= OPEN_NAVI_PLUGIN_QUERY_ABI_V3) {
         static const uint8_t settings[4] = {0x34u, 0x12u, 0xa5u, 0x5au};
         typedef uint32_t (*IntlCall)(void *, uint32_t, const void *);
         typedef uint32_t (*ClusterCall)(void *, uint32_t, uint8_t);
@@ -147,7 +147,7 @@ static void run_lifecycle(uint32_t number, int expect_plugin_render,
             "reference_cluster_display slot=6 handle=4358 enabled_raw=254",
             number);
     }
-    if (input_query_abi >= MOCK_NAV_PLUGIN_QUERY_ABI_V4) {
+    if (input_query_abi >= OPEN_NAVI_PLUGIN_QUERY_ABI_V4) {
         typedef uint32_t (*DistractionReply)(void *, uint32_t, uint32_t);
         typedef uint32_t (*DistractionInfo)(void *, uint32_t);
         void *diagnosis_navigation = NULL;
@@ -166,12 +166,12 @@ static void run_lifecycle(uint32_t number, int expect_plugin_render,
             "reference_driver_distraction slot=3 handle=4867 "
             "status_raw=2271560481", number);
     }
-    if (mock_renderer_stub_create_count() != number)
+    if (open_navi_renderer_stub_create_count() != number)
         (void)fprintf(stderr, "create count got=%u expected=%u\n",
-                      mock_renderer_stub_create_count(), number);
-    assert(mock_renderer_stub_create_count() == number);
+                      open_navi_renderer_stub_create_count(), number);
+    assert(open_navi_renderer_stub_create_count() == number);
     panaDeinitialize();
-    assert(mock_renderer_stub_destroy_count() == number);
+    assert(open_navi_renderer_stub_destroy_count() == number);
     assert(panaGetSoftwareInfrastructure() == NULL);
 }
 
@@ -251,7 +251,7 @@ static char *read_trace(void)
 
 int main(int argc, char **argv)
 {
-    MockBackendLoaderTestState state;
+    OpenNaviBackendLoaderTestState state;
     char *trace;
     uint32_t slot;
     uint32_t lifecycle;
@@ -282,7 +282,7 @@ int main(int argc, char **argv)
     for (slot = 0u; slot < TEST_ADAPTERS; ++slot)
         g_adapter_proxy[slot].vptr = g_vtable;
     g_adapter_proxy[1].vptr = g_hmi_vtable;
-    mock_renderer_stub_reset();
+    open_navi_renderer_stub_reset();
 
     for (lifecycle = 1u; lifecycle <= expected_lifecycles; ++lifecycle)
         run_lifecycle(lifecycle,
@@ -295,18 +295,18 @@ int main(int argc, char **argv)
                           ? expected_query_abi : 0u);
 
     memset(&state, 0, sizeof(state));
-    mock_backend_loader_test_state(&state);
+    open_navi_backend_loader_test_state(&state);
     assert(state.bootstrap_calls == expected_lifecycles);
     assert(state.load_attempts == 1u);
     assert(state.query_calls == (expected_valid ?
         (5u - expected_query_abi) :
-        (expected_reason == MOCK_BACKEND_FALLBACK_LOAD ||
-         expected_reason == MOCK_BACKEND_FALLBACK_SYMBOL ? 0u :
-         expected_reason == MOCK_BACKEND_FALLBACK_QUERY ? 4u : 1u)));
+        (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_LOAD ||
+         expected_reason == OPEN_NAVI_BACKEND_FALLBACK_SYMBOL ? 0u :
+         expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ? 4u : 1u)));
     assert(state.plugin_valid == expected_valid);
     if (expected_valid) assert(state.query_abi == expected_query_abi);
     assert(state.fallback_reason == expected_reason);
-    if (expected_reason == MOCK_BACKEND_FALLBACK_LOAD)
+    if (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_LOAD)
         assert(state.handle_pinned == 0u);
     else
         assert(state.handle_pinned == 1u);
@@ -317,7 +317,7 @@ int main(int argc, char **argv)
         assert(state.plugin_starts == expected_lifecycles);
         assert(state.plugin_stops ==
                (expected_start_failure ? 0u : expected_lifecycles));
-        if (expected_reason == MOCK_BACKEND_FALLBACK_NONE) {
+        if (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_NONE) {
             assert(state.default_starts == 0u);
             assert(state.plugin_surface_destroys == expected_lifecycles);
         } else {
@@ -334,37 +334,37 @@ int main(int argc, char **argv)
     }
 
     trace = read_trace();
-    if (expected_reason == MOCK_BACKEND_FALLBACK_LOAD ||
-        expected_reason == MOCK_BACKEND_FALLBACK_SYMBOL) {
+    if (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_LOAD ||
+        expected_reason == OPEN_NAVI_BACKEND_FALLBACK_SYMBOL) {
         assert(trace == NULL);
     } else {
         assert(trace != NULL);
         assert(count_line(trace, "query") ==
-               (expected_reason == MOCK_BACKEND_FALLBACK_QUERY ||
+               (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ||
                 expected_valid ?
-                    (expected_reason == MOCK_BACKEND_FALLBACK_QUERY
+                    (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY
                          ? 4u : 5u - expected_query_abi) : 1u));
         assert(count_line(trace, "query_v4") == 1u);
         assert(count_line(trace, "query_v3") ==
-               (expected_reason == MOCK_BACKEND_FALLBACK_QUERY ||
+               (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ||
                 (expected_valid && expected_query_abi <=
-                 MOCK_NAV_PLUGIN_QUERY_ABI_V3) ? 1u : 0u));
+                 OPEN_NAVI_PLUGIN_QUERY_ABI_V3) ? 1u : 0u));
         assert(count_line(trace, "query_v2") ==
-               (expected_reason == MOCK_BACKEND_FALLBACK_QUERY ||
+               (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ||
                 (expected_valid && expected_query_abi <=
-                 MOCK_NAV_PLUGIN_QUERY_ABI_V2) ? 1u : 0u));
+                 OPEN_NAVI_PLUGIN_QUERY_ABI_V2) ? 1u : 0u));
         assert(count_line(trace, "query_v1") ==
-               (expected_reason == MOCK_BACKEND_FALLBACK_QUERY ||
+               (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ||
                 (expected_valid && expected_query_abi ==
-                 MOCK_NAV_PLUGIN_QUERY_ABI_V1) ? 1u : 0u));
+                 OPEN_NAVI_PLUGIN_QUERY_ABI_V1) ? 1u : 0u));
         assert(count_line(trace, "query_unsupported") == 0u);
         if (expected_valid) {
             uint32_t cycle;
             assert(count_line(trace, "start") == expected_lifecycles);
             assert(count_line(trace, "start_v2") ==
-                   (expected_query_abi >= MOCK_NAV_PLUGIN_QUERY_ABI_V2
+                   (expected_query_abi >= OPEN_NAVI_PLUGIN_QUERY_ABI_V2
                         ? expected_lifecycles : 0u));
-            if (expected_query_abi >= MOCK_NAV_PLUGIN_QUERY_ABI_V2)
+            if (expected_query_abi >= OPEN_NAVI_PLUGIN_QUERY_ABI_V2)
                 assert(line_index(trace, "query_v4", 1u) <
                        line_index(trace, "start_v2", 1u));
             else
@@ -375,7 +375,7 @@ int main(int argc, char **argv)
                 assert(count_line(trace, "start_request=0") ==
                        expected_lifecycles);
                 assert(count_line(trace, "stale_request=-1") == expected_lifecycles);
-                if (expected_query_abi >= MOCK_NAV_PLUGIN_QUERY_ABI_V2) {
+                if (expected_query_abi >= OPEN_NAVI_PLUGIN_QUERY_ABI_V2) {
                     assert(count_line(trace, "stop_cluster_stale") ==
                            expected_lifecycles);
                     assert(count_line(trace, "stop_audio_stale") ==
@@ -384,7 +384,7 @@ int main(int argc, char **argv)
                            expected_lifecycles);
                 }
                 assert(count_line(trace, "stop") == expected_lifecycles);
-            } else if (expected_query_abi >= MOCK_NAV_PLUGIN_QUERY_ABI_V2) {
+            } else if (expected_query_abi >= OPEN_NAVI_PLUGIN_QUERY_ABI_V2) {
                 assert(count_line(trace, "failed_start_cluster_stale") ==
                        expected_lifecycles);
                 assert(count_line(trace, "failed_start_audio_stale") ==

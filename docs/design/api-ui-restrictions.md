@@ -63,10 +63,10 @@ stable safe-area contract.
 ### Touch and input
 
 The V1 pointer payload is `action`, `x`, `y` and `buttons`, with only press,
-release and move actions. `MockNavBackendPointerV2` appends `contact_id` (0 for
+release and move actions. `OpenNaviBackendPointerV2` appends `contact_id` (0 for
 the first finger, 1 for a second) and `contact_count`. A plugin receives V2
 payloads, for both contacts, only when it declares the optional
-`MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS` capability (accepted in every query
+`OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS` capability (accepted in every query
 version); every other backend still receives V1 payloads for the first contact
 only. Moves are coalesced per contact in the provider queue.
 

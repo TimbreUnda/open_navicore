@@ -232,7 +232,7 @@ Record the manifest and deployed provider/plugin/core set together.
 
 | Asset | Default target path |
 |---|---|
-| Backend | `/datastore/navicore-backend/libMockNavBackendOsmAnd.so` |
+| Backend | `/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so` |
 | Core | `/datastore/navicore-backend/libOsmAndCore_shared.so` |
 | Resources and embedded default style | `/datastore/navicore-backend/libOsmAndCore_ResourcesBundle_shared.so` |
 | Map | `/datastore/navicore-backend/maps/kyiv.obf` |

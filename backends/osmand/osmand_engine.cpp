@@ -55,22 +55,22 @@ enum class Phase { Empty, Resources, CoreEntering, CoreReady,
 
 class OsmAndEngine final : public Engine {
 public:
-    bool initialize(const Config&, const MockNavBackendRenderTargetV1&,
+    bool initialize(const Config&, const OpenNaviBackendRenderTargetV1&,
                     std::shared_ptr<Wakeup>) override;
-    FrameResult frame(const MockNavBackendRenderTargetV1&) override;
-    int gps(const MockNavBackendGpsV1&) override;
-    void visibility(const MockNavBackendVisibilityV1& event) override;
-    void screen(const MockNavBackendScreenV1& event) override;
-    void vehicle(const MockNavBackendVehicleV2& event) override;
-    void internationalization(const MockNavBackendInternationalizationV1& event) override;
-    void cluster_display(const MockNavBackendClusterDisplayV1& event) override;
-    void driver_distraction(const MockNavBackendDriverDistractionV1& event) override;
-    void set_outbound(const MockNavBackendServicesV2* services) override { outbound_ = services; }
-    int pointer(const MockNavBackendPointerV2&) override;
+    FrameResult frame(const OpenNaviBackendRenderTargetV1&) override;
+    int gps(const OpenNaviBackendGpsV1&) override;
+    void visibility(const OpenNaviBackendVisibilityV1& event) override;
+    void screen(const OpenNaviBackendScreenV1& event) override;
+    void vehicle(const OpenNaviBackendVehicleV2& event) override;
+    void internationalization(const OpenNaviBackendInternationalizationV1& event) override;
+    void cluster_display(const OpenNaviBackendClusterDisplayV1& event) override;
+    void driver_distraction(const OpenNaviBackendDriverDistractionV1& event) override;
+    void set_outbound(const OpenNaviBackendServicesV2* services) override { outbound_ = services; }
+    int pointer(const OpenNaviBackendPointerV2&) override;
     ReleaseResult release(ReleaseMode) override;
 
 private:
-    void resize(const MockNavBackendRenderTargetV1&);
+    void resize(const OpenNaviBackendRenderTargetV1&);
     // fit: frame the whole route (new route); false keeps the camera
     // (a recalculated route during guidance).
     void show_route(const ui::RouteAlternative&, bool fit = true);
@@ -99,7 +99,7 @@ private:
     void sync_vector_guidance(const ui::GuidanceState* state);
     std::chrono::steady_clock::time_point vector_last_frame_{};
     std::chrono::steady_clock::time_point vector_reported_at_{};
-    bool render_vector_map(const MockNavBackendRenderTargetV1& target);
+    bool render_vector_map(const OpenNaviBackendRenderTargetV1& target);
     std::unique_ptr<ui::NavigationModel> navigation_;
     std::unique_ptr<ui::NavigationView> view_;
     std::unique_ptr<NavigationWorker> navigation_worker_;
@@ -132,15 +132,15 @@ private:
     // Platform inputs, raw (meanings not qualified): kept for the
     // developer menu and traced when they change; nothing acts on them.
     template <typename T> struct Raw { T value{}; bool has = false; };
-    Raw<MockNavBackendVisibilityV1> visibility_in_;
-    Raw<MockNavBackendScreenV1> screen_in_;
-    Raw<MockNavBackendVehicleV2> vehicle_in_;
-    Raw<MockNavBackendInternationalizationV1> language_in_;
-    Raw<MockNavBackendClusterDisplayV1> cluster_display_in_;
-    Raw<MockNavBackendDriverDistractionV1> distraction_in_;
+    Raw<OpenNaviBackendVisibilityV1> visibility_in_;
+    Raw<OpenNaviBackendScreenV1> screen_in_;
+    Raw<OpenNaviBackendVehicleV2> vehicle_in_;
+    Raw<OpenNaviBackendInternationalizationV1> language_in_;
+    Raw<OpenNaviBackendClusterDisplayV1> cluster_display_in_;
+    Raw<OpenNaviBackendDriverDistractionV1> distraction_in_;
     // Instrument cluster: the guidance state in the recovered cluster
     // fields, published on change (at most twice a second).
-    const MockNavBackendServicesV2* outbound_ = nullptr;
+    const OpenNaviBackendServicesV2* outbound_ = nullptr;
     void publish_cluster();
     ClusterPayload cluster_last_;
     bool cluster_published_ = false;
@@ -184,7 +184,7 @@ private:
     bool overview_pending_ = false;
     bool route_shown_ = false;  // the vector map draws a route
     double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
-    MockNavBackendGpsV1 latest_gps_{};
+    OpenNaviBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
     bool gps_state_observed_ = false;
     bool last_logged_gps_valid_ = false;
@@ -221,7 +221,7 @@ bool failure(const char* message)
     return false;
 }
 
-bool valid_coordinates(const MockNavBackendGpsV1& gps)
+bool valid_coordinates(const OpenNaviBackendGpsV1& gps)
 {
     constexpr int32_t latitude_limit = 900000000;
     constexpr int32_t longitude_limit = 1800000000;
@@ -289,7 +289,7 @@ bool seeded_destinations(const std::string& query,
 }
 
 bool OsmAndEngine::initialize(const Config& config,
-                             const MockNavBackendRenderTargetV1& target,
+                             const OpenNaviBackendRenderTargetV1& target,
                              std::shared_ptr<Wakeup> wakeup)
 {
     config_ = config;
@@ -430,7 +430,7 @@ bool OsmAndEngine::initialize(const Config& config,
     return true;
 }
 
-void OsmAndEngine::resize(const MockNavBackendRenderTargetV1& target)
+void OsmAndEngine::resize(const OpenNaviBackendRenderTargetV1& target)
 {
     renderer_->setWindowSize(OsmAnd::PointI(
         static_cast<int32_t>(target.width), static_cast<int32_t>(target.height)));
@@ -837,19 +837,19 @@ std::string printf_string(const char* format, ...)
 }
 } // namespace
 
-void OsmAndEngine::visibility(const MockNavBackendVisibilityV1& event)
+void OsmAndEngine::visibility(const OpenNaviBackendVisibilityV1& event)
 {
     visibility_in_ = {event, true};
     trace_result("input=visibility", event.visibility, event.interactivity);
 }
 
-void OsmAndEngine::screen(const MockNavBackendScreenV1& event)
+void OsmAndEngine::screen(const OpenNaviBackendScreenV1& event)
 {
     screen_in_ = {event, true};
     trace_result("input=screen_type", event.screen_type, event.animation);
 }
 
-void OsmAndEngine::vehicle(const MockNavBackendVehicleV2& event)
+void OsmAndEngine::vehicle(const OpenNaviBackendVehicleV2& event)
 {
     const auto before = vehicle_in_;
     vehicle_in_ = {event, true};
@@ -859,19 +859,19 @@ void OsmAndEngine::vehicle(const MockNavBackendVehicleV2& event)
         trace_result("input=day_night_setting", event.day_night_setting, event.valid_fields);
 }
 
-void OsmAndEngine::internationalization(const MockNavBackendInternationalizationV1& event)
+void OsmAndEngine::internationalization(const OpenNaviBackendInternationalizationV1& event)
 {
     language_in_ = {event, true};
     trace_result("input=language", event.language_raw, event.settings_present);
 }
 
-void OsmAndEngine::cluster_display(const MockNavBackendClusterDisplayV1& event)
+void OsmAndEngine::cluster_display(const OpenNaviBackendClusterDisplayV1& event)
 {
     cluster_display_in_ = {event, true};
     trace_result("input=cluster_display", event.enabled_raw, 0u);
 }
 
-void OsmAndEngine::driver_distraction(const MockNavBackendDriverDistractionV1& event)
+void OsmAndEngine::driver_distraction(const OpenNaviBackendDriverDistractionV1& event)
 {
     const bool changed = !distraction_in_.has ||
         distraction_in_.value.distraction_status_raw != event.distraction_status_raw;
@@ -1032,7 +1032,7 @@ void OsmAndEngine::update_dev_menu()
         "status %u · setting %u · fields 0x%x", v.day_night_status, v.day_night_setting,
         v.valid_fields))});
     platform.rows.push_back({"Car speed", raw(vehicle_in_.has &&
-        (v.valid_fields & MOCK_NAV_BACKEND_VEHICLE_SPEED) != 0,
+        (v.valid_fields & OPEN_NAVI_BACKEND_VEHICLE_SPEED) != 0,
         printf_string("%.1f (GPS %.1f km/h)", displayed_speed, vehicle.valid ? vehicle.speed_mps * 3.6 : 0.0))});
     platform.rows.push_back({"Visibility", raw(visibility_in_.has, printf_string(
         "%u · interactive %u · screen %u", visibility_in_.value.visibility,
@@ -1350,7 +1350,7 @@ bool OsmAndEngine::ensure_navigation_worker()
     }
 }
 
-FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
+FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
 {
     using Clock = std::chrono::steady_clock;
     const auto frame_started = Clock::now();
@@ -1621,7 +1621,7 @@ void OsmAndEngine::sync_vector_guidance(const ui::GuidanceState* state)
                               state->maneuver.geometry_index);
 }
 
-bool OsmAndEngine::render_vector_map(const MockNavBackendRenderTargetV1& target)
+bool OsmAndEngine::render_vector_map(const OpenNaviBackendRenderTargetV1& target)
 {
     // Reused every frame so the blocked list keeps its capacity.
     auto& view = vector_view_;
@@ -1751,7 +1751,7 @@ void OsmAndEngine::advance_benchmark_autostart()
     }
 }
 
-int OsmAndEngine::gps(const MockNavBackendGpsV1& event)
+int OsmAndEngine::gps(const OpenNaviBackendGpsV1& event)
 {
     latest_gps_ = event;
     has_valid_position_ = valid_coordinates(event);
@@ -1768,7 +1768,7 @@ int OsmAndEngine::gps(const MockNavBackendGpsV1& event)
     return navigation_wakeup_ ? navigation_wakeup_->request() : 0;
 }
 
-int OsmAndEngine::pointer(const MockNavBackendPointerV2& event)
+int OsmAndEngine::pointer(const OpenNaviBackendPointerV2& event)
 {
     if (phase_ != Phase::Ready || !view_)
         return -1;

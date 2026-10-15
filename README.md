@@ -180,7 +180,7 @@ current implementation parity.
 - [x] Recover all application callback ABIs
 - [x] Establish a versioned rendering/data backend seam
 - [x] Validate initialization and HMI lifecycle on a bench unit
-- [ ] Rename internal `mock_*` implementation identifiers in ABI-safe stages
+- [ ] Rename internal `open_navi_*` implementation identifiers in ABI-safe stages
 - [x] Add an OsmAnd rendering backend
 - [x] Validate the initial OsmAnd Kyiv-map backend on the bench radio
 - [ ] Map remaining raw vehicle and cluster enum semantics

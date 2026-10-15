@@ -1,4 +1,4 @@
-#include "mock_default_backend.h"
+#include "open_navi_default_backend.h"
 
 #include <assert.h>
 #include <GLES2/gl2.h>
@@ -88,9 +88,9 @@ static void reset(void)
 
 int main(void)
 {
-    const MockNavBackendV1 *backend = mock_default_backend_v1();
-    MockNavBackendRenderTargetV1 target;
-    MockNavBackendFrameV1 frame;
+    const OpenNaviBackendV1 *backend = open_navi_default_backend_v1();
+    OpenNaviBackendRenderTargetV1 target;
+    OpenNaviBackendFrameV1 frame;
     memset(&target, 0, sizeof(target));
     memset(&frame, 0, sizeof(frame));
     target.width = 800u;

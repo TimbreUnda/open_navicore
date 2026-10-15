@@ -9,7 +9,7 @@ Two independent pieces, two paths:
 
 | Piece | On the unit | Takes effect | How |
 |---|---|---|---|
-| Backend plugin (OsmAnd, UI, map) | `/datastore/navicore-backend/libMockNavBackendOsmAnd.so` | when `nv_navigation` restarts | `deploy/backend/deploy_backend.sh` |
+| Backend plugin (OsmAnd, UI, map) | `/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so` | when `nv_navigation` restarts | `deploy/backend/deploy_backend.sh` |
 | Provider + config (`navigation.ifs`) | `/datastore/navicore/navigation.ifs`, mounted at boot by the boot overlay | next boot (one reboot) | `cmake --build build/navigation-ifs --target deploy-navigation` |
 
 Most changes are backend-only (UI, map, camera, guidance). Rebuild and
@@ -32,7 +32,7 @@ the ABI) or the config change.
 ## 1. Backend
 
 ```sh
-deploy/backend/deploy_backend.sh dist/libMockNavBackendOsmAnd.so <suffix> --running
+deploy/backend/deploy_backend.sh dist/libOpenNaviBackendOsmAnd.so <suffix> --running
 ```
 
 `<suffix>` names the one-time backup (`.pre-<suffix>`), e.g. a short commit

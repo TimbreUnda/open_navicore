@@ -1,12 +1,12 @@
-#include "mock_renderer.h"
-#include "mock_renderer_platform.h"
-#include "mock_screen_input.h"
+#include "open_navi_renderer.h"
+#include "open_navi_renderer_platform.h"
+#include "open_navi_screen_input.h"
 
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
-enum { MOCK_STUB_INPUT_CAPACITY = 128 };
+enum { OPEN_NAVI_STUB_INPUT_CAPACITY = 128 };
 
 static unsigned int g_create_count;
 static unsigned int g_destroy_count;
@@ -15,29 +15,29 @@ static int g_create_result;
 static int g_begin_result;
 static int g_context_current;
 static pthread_mutex_t g_input_lock = PTHREAD_MUTEX_INITIALIZER;
-static MockScreenRawEvent g_input_queue[MOCK_STUB_INPUT_CAPACITY];
+static OpenNaviScreenRawEvent g_input_queue[OPEN_NAVI_STUB_INPUT_CAPACITY];
 static unsigned int g_input_head;
 static unsigned int g_input_count;
 static int g_identity_coordinates = 1;
 static int g_forced_poll_result;
 static int g_repeating_poll_result;
-static MockScreenInputState g_input_state;
+static OpenNaviScreenInputState g_input_state;
 static const uintptr_t g_input_window = (uintptr_t)0x4e41564du;
 
 #if defined(__GNUC__)
 __attribute__((weak))
 #endif
-void mock_renderer_test_observe(enum mock_renderer_test_event event)
+void open_navi_renderer_test_observe(enum open_navi_renderer_test_event event)
 {
     (void)event;
 }
 
-int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
+int open_navi_renderer_platform_create(OpenNaviBackendRenderTargetV1 *target,
                                   char *diagnostic,
                                   size_t diagnostic_capacity)
 {
     ++g_create_count;
-    mock_renderer_test_observe(MOCK_RENDERER_TEST_CREATE);
+    open_navi_renderer_test_observe(OPEN_NAVI_RENDERER_TEST_CREATE);
     if (g_create_result != 0) {
         if (diagnostic != NULL && diagnostic_capacity != 0u)
             (void)snprintf(diagnostic, diagnostic_capacity,
@@ -45,14 +45,14 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
         return g_create_result;
     }
     memset(target, 0, sizeof(*target));
-    target->abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    target->abi_version = OPEN_NAVI_BACKEND_ABI_V1;
     target->struct_size = sizeof(*target);
     target->width = 800u;
     target->height = 480u;
     target->native_pointer_bytes = sizeof(void *);
     target->native_screen_window = g_input_window;
     (void)pthread_mutex_lock(&g_input_lock);
-    mock_screen_input_reset(&g_input_state, g_input_window,
+    open_navi_screen_input_reset(&g_input_state, g_input_window,
                             g_identity_coordinates, 800u, 480u);
     g_input_head = 0u;
     g_input_count = 0u;
@@ -64,17 +64,17 @@ int mock_renderer_platform_create(MockNavBackendRenderTargetV1 *target,
     return 0;
 }
 
-void mock_renderer_platform_destroy(void)
+void open_navi_renderer_platform_destroy(void)
 {
     g_context_current = 0;
     if (g_live != 0) {
         g_live = 0;
         ++g_destroy_count;
-        mock_renderer_test_observe(MOCK_RENDERER_TEST_DESTROY);
+        open_navi_renderer_test_observe(OPEN_NAVI_RENDERER_TEST_DESTROY);
     }
 }
 
-int mock_renderer_platform_begin_frame(char *diagnostic,
+int open_navi_renderer_platform_begin_frame(char *diagnostic,
                                        size_t diagnostic_capacity)
 {
     (void)diagnostic;
@@ -84,7 +84,7 @@ int mock_renderer_platform_begin_frame(char *diagnostic,
     return 0;
 }
 
-int mock_renderer_platform_end_frame(int present, char *diagnostic,
+int open_navi_renderer_platform_end_frame(int present, char *diagnostic,
                                      size_t diagnostic_capacity)
 {
     (void)present;
@@ -95,12 +95,12 @@ int mock_renderer_platform_end_frame(int present, char *diagnostic,
     return 0;
 }
 
-int mock_renderer_platform_poll_pointer(MockNavBackendPointerV2 *pointer_out,
+int open_navi_renderer_platform_poll_pointer(OpenNaviBackendPointerV2 *pointer_out,
                                         int contacts,
                                         char *diagnostic,
                                         size_t diagnostic_capacity)
 {
-    MockScreenRawEvent raw;
+    OpenNaviScreenRawEvent raw;
     int result;
     (void)diagnostic;
     (void)diagnostic_capacity;
@@ -121,19 +121,19 @@ int mock_renderer_platform_poll_pointer(MockNavBackendPointerV2 *pointer_out,
         return 0;
     }
     raw = g_input_queue[g_input_head];
-    g_input_head = (g_input_head + 1u) % MOCK_STUB_INPUT_CAPACITY;
+    g_input_head = (g_input_head + 1u) % OPEN_NAVI_STUB_INPUT_CAPACITY;
     --g_input_count;
     g_input_state.multi_contact = contacts != 0 ? 1u : 0u;
-    result = mock_screen_input_platform_result(
-        mock_screen_input_decode(&g_input_state, &raw, pointer_out));
+    result = open_navi_screen_input_platform_result(
+        open_navi_screen_input_decode(&g_input_state, &raw, pointer_out));
     (void)pthread_mutex_unlock(&g_input_lock);
     return result;
 }
 
-unsigned int mock_renderer_stub_create_count(void) { return g_create_count; }
-unsigned int mock_renderer_stub_destroy_count(void) { return g_destroy_count; }
+unsigned int open_navi_renderer_stub_create_count(void) { return g_create_count; }
+unsigned int open_navi_renderer_stub_destroy_count(void) { return g_destroy_count; }
 
-void mock_renderer_stub_reset(void)
+void open_navi_renderer_stub_reset(void)
 {
     g_create_count = 0u;
     g_destroy_count = 0u;
@@ -149,35 +149,35 @@ void mock_renderer_stub_reset(void)
     g_repeating_poll_result = 0;
     memset(&g_input_state, 0, sizeof(g_input_state));
     (void)pthread_mutex_unlock(&g_input_lock);
-    (void)mock_navicore_backend_install_v1(NULL);
+    (void)open_navi_backend_install_v1(NULL);
 }
 
-void mock_renderer_stub_set_create_result(int result)
+void open_navi_renderer_stub_set_create_result(int result)
 {
     g_create_result = result;
 }
 
-void mock_renderer_stub_set_begin_result(int result)
+void open_navi_renderer_stub_set_begin_result(int result)
 {
     g_begin_result = result;
 }
 
-int mock_renderer_stub_context_current(void)
+int open_navi_renderer_stub_context_current(void)
 {
     return g_context_current;
 }
 
-int mock_renderer_stub_queue_raw_input(const MockRendererStubRawEvent *event)
+int open_navi_renderer_stub_queue_raw_input(const OpenNaviRendererStubRawEvent *event)
 {
     unsigned int tail;
-    MockScreenRawEvent *raw;
+    OpenNaviScreenRawEvent *raw;
     if (event == NULL) return -2;
     (void)pthread_mutex_lock(&g_input_lock);
-    if (g_input_count == MOCK_STUB_INPUT_CAPACITY) {
+    if (g_input_count == OPEN_NAVI_STUB_INPUT_CAPACITY) {
         (void)pthread_mutex_unlock(&g_input_lock);
         return -1;
     }
-    tail = (g_input_head + g_input_count) % MOCK_STUB_INPUT_CAPACITY;
+    tail = (g_input_head + g_input_count) % OPEN_NAVI_STUB_INPUT_CAPACITY;
     raw = &g_input_queue[tail];
     memset(raw, 0, sizeof(*raw));
     raw->type = event->type;
@@ -197,12 +197,12 @@ int mock_renderer_stub_queue_raw_input(const MockRendererStubRawEvent *event)
     return 0;
 }
 
-uintptr_t mock_renderer_stub_input_window(void)
+uintptr_t open_navi_renderer_stub_input_window(void)
 {
     return g_input_window;
 }
 
-void mock_renderer_stub_set_identity_coordinates(int enabled)
+void open_navi_renderer_stub_set_identity_coordinates(int enabled)
 {
     (void)pthread_mutex_lock(&g_input_lock);
     g_identity_coordinates = enabled != 0;
@@ -210,21 +210,21 @@ void mock_renderer_stub_set_identity_coordinates(int enabled)
     (void)pthread_mutex_unlock(&g_input_lock);
 }
 
-void mock_renderer_stub_set_poll_result(int result)
+void open_navi_renderer_stub_set_poll_result(int result)
 {
     (void)pthread_mutex_lock(&g_input_lock);
     g_forced_poll_result = result;
     (void)pthread_mutex_unlock(&g_input_lock);
 }
 
-void mock_renderer_stub_set_repeating_poll_result(int result)
+void open_navi_renderer_stub_set_repeating_poll_result(int result)
 {
     (void)pthread_mutex_lock(&g_input_lock);
     g_repeating_poll_result = result;
     (void)pthread_mutex_unlock(&g_input_lock);
 }
 
-void mock_renderer_stub_input_stats(MockRendererStubInputStats *stats_out)
+void open_navi_renderer_stub_input_stats(OpenNaviRendererStubInputStats *stats_out)
 {
     if (stats_out == NULL) return;
     (void)pthread_mutex_lock(&g_input_lock);

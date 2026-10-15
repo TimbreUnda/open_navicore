@@ -4,7 +4,7 @@ set -eu
 matrix=${1:?callback matrix path required}
 manifest=${2:?coverage manifest path required}
 source_file=${3:?emission source path required}
-temporary=$(mktemp -d /tmp/mock-callback-coverage.XXXXXX)
+temporary=$(mktemp -d /tmp/open-navi-callback-coverage.XXXXXX)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 
 tail -n +2 "$matrix" | awk -F, '{ print $1 "/" $3 }' | sort >"$temporary/matrix"
@@ -37,8 +37,8 @@ while IFS= read -r symbol; do
     grep -q "${symbol}(" src/include/host_callbacks.h
     grep -q "$symbol" src/compat/qr39/host_callbacks.c
 done <"$temporary/typed"
-grep -o 'mock_pas_[a-zA-Z0-9_]*' "$source_file" |
-    grep -v '^mock_pas_callbacks$' | sort -u >"$temporary/used"
+grep -o 'open_navi_pas_[a-zA-Z0-9_]*' "$source_file" |
+    grep -v '^open_navi_pas_callbacks$' | sort -u >"$temporary/used"
 comm -23 "$temporary/used" "$temporary/typed" >"$temporary/untyped-used"
 test ! -s "$temporary/untyped-used"
 if grep -Eq '\(\([^)]*\(\*\)[^)]*\)[a-zA-Z_]*vtable\[[0-9]' "$source_file"; then

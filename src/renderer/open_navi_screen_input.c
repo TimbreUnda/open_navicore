@@ -1,4 +1,4 @@
-#include "mock_screen_input.h"
+#include "open_navi_screen_input.h"
 
 #include <limits.h>
 #include <string.h>
@@ -8,7 +8,7 @@ static void saturating_increment(uint32_t *value)
     if (*value != UINT32_MAX) ++*value;
 }
 
-void mock_screen_input_reset(MockScreenInputState *state,
+void open_navi_screen_input_reset(OpenNaviScreenInputState *state,
                              uintptr_t target_window,
                              int identity_coordinates,
                              uint32_t target_width,
@@ -21,8 +21,8 @@ void mock_screen_input_reset(MockScreenInputState *state,
     state->identity_coordinates = identity_coordinates != 0;
 }
 
-static int coordinates_with(MockScreenInputState *state,
-                            const MockScreenRawEvent *raw,
+static int coordinates_with(OpenNaviScreenInputState *state,
+                            const OpenNaviScreenRawEvent *raw,
                             uint32_t action,
                             int32_t *x_out,
                             int32_t *y_out,
@@ -30,8 +30,8 @@ static int coordinates_with(MockScreenInputState *state,
                             int32_t last_x,
                             int32_t last_y);
 
-static int coordinates(MockScreenInputState *state,
-                       const MockScreenRawEvent *raw,
+static int coordinates(OpenNaviScreenInputState *state,
+                       const OpenNaviScreenRawEvent *raw,
                        uint32_t action,
                        int32_t *x_out,
                        int32_t *y_out)
@@ -42,8 +42,8 @@ static int coordinates(MockScreenInputState *state,
 }
 
 /* A release without a usable position reuses the contact's last one. */
-static int coordinates_with(MockScreenInputState *state,
-                            const MockScreenRawEvent *raw,
+static int coordinates_with(OpenNaviScreenInputState *state,
+                            const OpenNaviScreenRawEvent *raw,
                             uint32_t action,
                             int32_t *x_out,
                             int32_t *y_out,
@@ -72,7 +72,7 @@ static int coordinates_with(MockScreenInputState *state,
     } else {
         saturating_increment(&state->property_errors);
     }
-    if (action == MOCK_NAV_BACKEND_POINTER_RELEASE && last_valid != 0u) {
+    if (action == OPEN_NAVI_BACKEND_POINTER_RELEASE && last_valid != 0u) {
         *x_out = last_x;
         *y_out = last_y;
         return 1;
@@ -81,12 +81,12 @@ static int coordinates_with(MockScreenInputState *state,
     return 0;
 }
 
-static void emit(MockNavBackendPointerV2 *pointer_out, uint32_t action,
+static void emit(OpenNaviBackendPointerV2 *pointer_out, uint32_t action,
                  int32_t x, int32_t y, uint32_t buttons, uint32_t contact,
                  uint32_t count)
 {
     memset(pointer_out, 0, sizeof(*pointer_out));
-    pointer_out->abi_version = MOCK_NAV_BACKEND_POINTER_ABI_V2;
+    pointer_out->abi_version = OPEN_NAVI_BACKEND_POINTER_ABI_V2;
     pointer_out->struct_size = sizeof(*pointer_out);
     pointer_out->action = action;
     pointer_out->x = x;
@@ -98,31 +98,31 @@ static void emit(MockNavBackendPointerV2 *pointer_out, uint32_t action,
 
 /* Second touch contact (multi_contact only): a touch whose id is not the
  * first contact's while that one is down, or the tracked second id. */
-static int decode_second(MockScreenInputState *state,
-                         const MockScreenRawEvent *raw,
-                         MockNavBackendPointerV2 *pointer_out)
+static int decode_second(OpenNaviScreenInputState *state,
+                         const OpenNaviScreenRawEvent *raw,
+                         OpenNaviBackendPointerV2 *pointer_out)
 {
     uint32_t action;
     int32_t x;
     int32_t y;
     const int known = state->second_active != 0u &&
                       state->second_touch_id == raw->touch_id;
-    if (raw->type == MOCK_SCREEN_RAW_TOUCH) {
+    if (raw->type == OPEN_NAVI_SCREEN_RAW_TOUCH) {
         if (state->second_active != 0u && !known) {
             saturating_increment(&state->secondary_touch);
             return 0;
         }
-        action = known ? MOCK_NAV_BACKEND_POINTER_MOVE
-                       : MOCK_NAV_BACKEND_POINTER_PRESS;
-    } else if (raw->type == MOCK_SCREEN_RAW_MOVE ||
-               raw->type == MOCK_SCREEN_RAW_RELEASE) {
+        action = known ? OPEN_NAVI_BACKEND_POINTER_MOVE
+                       : OPEN_NAVI_BACKEND_POINTER_PRESS;
+    } else if (raw->type == OPEN_NAVI_SCREEN_RAW_MOVE ||
+               raw->type == OPEN_NAVI_SCREEN_RAW_RELEASE) {
         if (!known) {
             saturating_increment(&state->secondary_touch);
             return 0;
         }
-        action = raw->type == MOCK_SCREEN_RAW_MOVE
-                     ? MOCK_NAV_BACKEND_POINTER_MOVE
-                     : MOCK_NAV_BACKEND_POINTER_RELEASE;
+        action = raw->type == OPEN_NAVI_SCREEN_RAW_MOVE
+                     ? OPEN_NAVI_BACKEND_POINTER_MOVE
+                     : OPEN_NAVI_BACKEND_POINTER_RELEASE;
     } else {
         saturating_increment(&state->ignored);
         return 0;
@@ -131,10 +131,10 @@ static int decode_second(MockScreenInputState *state,
                           state->second_position_valid,
                           state->second_last_x, state->second_last_y))
         return 0;
-    if (action == MOCK_NAV_BACKEND_POINTER_PRESS) {
+    if (action == OPEN_NAVI_BACKEND_POINTER_PRESS) {
         state->second_active = 1u;
         state->second_touch_id = raw->touch_id;
-    } else if (action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+    } else if (action == OPEN_NAVI_BACKEND_POINTER_RELEASE) {
         state->second_active = 0u;
     }
     state->second_last_x = x;
@@ -146,9 +146,9 @@ static int decode_second(MockScreenInputState *state,
     return 1;
 }
 
-int mock_screen_input_decode(MockScreenInputState *state,
-                             const MockScreenRawEvent *raw,
-                             MockNavBackendPointerV2 *pointer_out)
+int open_navi_screen_input_decode(OpenNaviScreenInputState *state,
+                             const OpenNaviScreenRawEvent *raw,
+                             OpenNaviBackendPointerV2 *pointer_out)
 {
     uint32_t action;
     uint8_t event_class;
@@ -161,17 +161,17 @@ int mock_screen_input_decode(MockScreenInputState *state,
         return 0;
     }
 
-    if (raw->type == MOCK_SCREEN_RAW_POINTER) {
-        event_class = MOCK_SCREEN_INPUT_CLASS_POINTER;
-    } else if (raw->type == MOCK_SCREEN_RAW_TOUCH ||
-               raw->type == MOCK_SCREEN_RAW_MOVE ||
-               raw->type == MOCK_SCREEN_RAW_RELEASE) {
-        event_class = MOCK_SCREEN_INPUT_CLASS_TOUCH;
+    if (raw->type == OPEN_NAVI_SCREEN_RAW_POINTER) {
+        event_class = OPEN_NAVI_SCREEN_INPUT_CLASS_POINTER;
+    } else if (raw->type == OPEN_NAVI_SCREEN_RAW_TOUCH ||
+               raw->type == OPEN_NAVI_SCREEN_RAW_MOVE ||
+               raw->type == OPEN_NAVI_SCREEN_RAW_RELEASE) {
+        event_class = OPEN_NAVI_SCREEN_INPUT_CLASS_TOUCH;
     } else {
         saturating_increment(&state->ignored);
         return 0;
     }
-    if (state->input_class != MOCK_SCREEN_INPUT_CLASS_NONE &&
+    if (state->input_class != OPEN_NAVI_SCREEN_INPUT_CLASS_NONE &&
         state->input_class != event_class) {
         /* V1 exposes one pointer. Keep the first class that produced a valid
          * press for this generation. In particular, ignored pointer button
@@ -180,17 +180,17 @@ int mock_screen_input_decode(MockScreenInputState *state,
         return 0;
     }
 
-    if (event_class == MOCK_SCREEN_INPUT_CLASS_POINTER) {
+    if (event_class == OPEN_NAVI_SCREEN_INPUT_CLASS_POINTER) {
         if (raw->buttons_valid == 0u) {
             saturating_increment(&state->property_errors);
             return 0;
         }
         if (state->pointer_buttons == 0u && raw->buttons != 0u)
-            action = MOCK_NAV_BACKEND_POINTER_PRESS;
+            action = OPEN_NAVI_BACKEND_POINTER_PRESS;
         else if (state->pointer_buttons != 0u && raw->buttons == 0u)
-            action = MOCK_NAV_BACKEND_POINTER_RELEASE;
+            action = OPEN_NAVI_BACKEND_POINTER_RELEASE;
         else if (state->pointer_buttons != 0u)
-            action = MOCK_NAV_BACKEND_POINTER_MOVE;
+            action = OPEN_NAVI_BACKEND_POINTER_MOVE;
         else {
             saturating_increment(&state->ignored);
             return 0;
@@ -207,55 +207,55 @@ int mock_screen_input_decode(MockScreenInputState *state,
               state->second_touch_id == raw->touch_id) ||
              (state->touch_active != 0u &&
               state->active_touch_id != raw->touch_id))) {
-            if (state->input_class != MOCK_SCREEN_INPUT_CLASS_TOUCH) {
+            if (state->input_class != OPEN_NAVI_SCREEN_INPUT_CLASS_TOUCH) {
                 saturating_increment(&state->secondary_touch);
                 return 0;
             }
             return decode_second(state, raw, pointer_out);
         }
-        if (raw->type == MOCK_SCREEN_RAW_TOUCH) {
+        if (raw->type == OPEN_NAVI_SCREEN_RAW_TOUCH) {
             if (state->touch_active != 0u &&
                 state->active_touch_id != raw->touch_id) {
                 saturating_increment(&state->secondary_touch);
                 return 0;
             }
             action = state->touch_active != 0u
-                         ? MOCK_NAV_BACKEND_POINTER_MOVE
-                         : MOCK_NAV_BACKEND_POINTER_PRESS;
-        } else if (raw->type == MOCK_SCREEN_RAW_MOVE) {
+                         ? OPEN_NAVI_BACKEND_POINTER_MOVE
+                         : OPEN_NAVI_BACKEND_POINTER_PRESS;
+        } else if (raw->type == OPEN_NAVI_SCREEN_RAW_MOVE) {
             if (state->touch_active == 0u ||
                 state->active_touch_id != raw->touch_id) {
                 saturating_increment(&state->secondary_touch);
                 return 0;
             }
-            action = MOCK_NAV_BACKEND_POINTER_MOVE;
-        } else if (raw->type == MOCK_SCREEN_RAW_RELEASE) {
+            action = OPEN_NAVI_BACKEND_POINTER_MOVE;
+        } else if (raw->type == OPEN_NAVI_SCREEN_RAW_RELEASE) {
             if (state->touch_active == 0u ||
                 state->active_touch_id != raw->touch_id) {
                 saturating_increment(&state->secondary_touch);
                 return 0;
             }
-            action = MOCK_NAV_BACKEND_POINTER_RELEASE;
+            action = OPEN_NAVI_BACKEND_POINTER_RELEASE;
         } else {
             saturating_increment(&state->ignored);
             return 0;
         }
         if (!coordinates(state, raw, action, &x, &y)) return 0;
-        if (action == MOCK_NAV_BACKEND_POINTER_PRESS) {
+        if (action == OPEN_NAVI_BACKEND_POINTER_PRESS) {
             state->touch_active = 1u;
             state->active_touch_id = raw->touch_id;
-        } else if (action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+        } else if (action == OPEN_NAVI_BACKEND_POINTER_RELEASE) {
             state->touch_active = 0u;
         }
     }
 
-    if (action == MOCK_NAV_BACKEND_POINTER_PRESS &&
-        state->input_class == MOCK_SCREEN_INPUT_CLASS_NONE)
+    if (action == OPEN_NAVI_BACKEND_POINTER_PRESS &&
+        state->input_class == OPEN_NAVI_SCREEN_INPUT_CLASS_NONE)
         state->input_class = event_class;
 
     emit(pointer_out, action, x, y, raw->buttons_valid != 0u ? raw->buttons : 0u,
          0u,
-         event_class == MOCK_SCREEN_INPUT_CLASS_TOUCH
+         event_class == OPEN_NAVI_SCREEN_INPUT_CLASS_TOUCH
              ? (uint32_t)state->touch_active + state->second_active
              : (state->pointer_buttons != 0u ? 1u : 0u));
     state->last_x = x;
@@ -265,7 +265,7 @@ int mock_screen_input_decode(MockScreenInputState *state,
     return 1;
 }
 
-int mock_screen_input_platform_result(int decode_result)
+int open_navi_screen_input_platform_result(int decode_result)
 {
     return decode_result == 0 ? 2 : decode_result;
 }

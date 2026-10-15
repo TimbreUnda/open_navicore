@@ -12,7 +12,7 @@ New code should include:
 #include <open_navicore/cluster.h>
 ```
 
-The historical `mock_*.h` paths remain forwarding headers for source
+The historical `open_navi_*.h` paths remain forwarding headers for source
 compatibility. Existing C type names, query/install symbols, structure layouts,
 version values, and plugin discovery strings are unchanged. The new include
 layout is an organizational boundary, not a new binary ABI.

@@ -1,11 +1,11 @@
 #define _POSIX_C_SOURCE 200112L
-#include "mock_navicore.h"
-#include "mock_api_telemetry.h"
-#include "mock_callback_backend.h"
-#include "mock_gps_backend.h"
-#include "mock_pointer_backend.h"
-#include "mock_renderer.h"
-#include "mock_scalar_backend.h"
+#include "open_navi.h"
+#include "open_navi_api_telemetry.h"
+#include "open_navi_callback_backend.h"
+#include "open_navi_gps_backend.h"
+#include "open_navi_pointer_backend.h"
+#include "open_navi_renderer.h"
+#include "open_navi_scalar_backend.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -45,7 +45,7 @@ typedef uint32_t (*TestHandlePointerVirtual)(void *, uint32_t, const void *);
 typedef uint32_t (*TestCountPointerVirtual)(void *, uint32_t, uint32_t,
                                             const void *);
 typedef uint32_t (*TestConnectionVirtual)(
-    void *, uint32_t, uint32_t, const MockConnectionDeviceInfoInput *);
+    void *, uint32_t, uint32_t, const OpenNaviConnectionDeviceInfoInput *);
 typedef uint32_t (*TestTefVirtual)(void *, uint32_t, uint32_t, const char *);
 typedef uint32_t (*TestStatic0)(void *);
 typedef uint32_t (*TestStatic1)(void *, uintptr_t);
@@ -98,7 +98,7 @@ static void exercise_generated_static_slots(PanaRootObject *root,
                                              void **interfaces,
                                              uint32_t expected_status)
 {
-#define MOCK_STATIC_SLOT(adapter, slot, words) do {                           \
+#define OPEN_NAVI_STATIC_SLOT(adapter, slot, words) do {                           \
         void *object = static_slot_object(#adapter, root, interfaces);         \
         const PanaGenericVirtual *vtable =                                    \
             *(const PanaGenericVirtual * const *)object;                      \
@@ -106,7 +106,7 @@ static void exercise_generated_static_slots(PanaRootObject *root,
                expected_status);                                             \
     } while (0);
 #include "../src/compat/qr39/provider_slots.def"
-#undef MOCK_STATIC_SLOT
+#undef OPEN_NAVI_STATIC_SLOT
 }
 
 static int is_typed_provider_slot(uint32_t adapter, uint32_t slot)
@@ -149,10 +149,10 @@ static void assert_telemetry(uint32_t adapter,
                              uint32_t argument2,
                              uint32_t argument3)
 {
-    MockApiTelemetryRecord record;
+    OpenNaviApiTelemetryRecord record;
 
     memset(&record, 0xa5, sizeof(record));
-    assert(mock_api_telemetry_test_get(adapter, slot, &record) == 1);
+    assert(open_navi_api_telemetry_test_get(adapter, slot, &record) == 1);
     assert(record.call_count == calls);
     assert(record.argument_count == argument_count);
     assert(record.argument[0] == argument0);
@@ -261,9 +261,9 @@ static void put_double_le(uint8_t *destination, double value)
     put_le64(destination, bits);
 }
 
-void mock_renderer_test_observe(enum mock_renderer_test_event event)
+void open_navi_renderer_test_observe(enum open_navi_renderer_test_event event)
 {
-    record_event(event == MOCK_RENDERER_TEST_CREATE ? 406u : 500u);
+    record_event(event == OPEN_NAVI_RENDERER_TEST_CREATE ? 406u : 500u);
 }
 
 static uint32_t test_proxy_noop(void *self, ...)
@@ -399,9 +399,9 @@ static uint32_t test_adapter_slot3(void *self, ...)
 static void *test_cluster_send_thread(void *opaque)
 {
     uint32_t *result = (uint32_t *)opaque;
-    uint8_t record[MOCK_CLUSTER_RECORD_SIZE];
+    uint8_t record[OPEN_NAVI_CLUSTER_RECORD_SIZE];
     memset(record, 0x3c, sizeof(record));
-    *result = mock_callback_send_cluster(record);
+    *result = open_navi_callback_send_cluster(record);
     return NULL;
 }
 
@@ -596,20 +596,20 @@ int main(void)
     PanaGenericVirtual si_vtable[15];
     PanaGenericVirtual hmi_vtable[15];
     PanaGenericVirtual adapter_ready_vtable[26];
-    uint8_t gps_record[MOCK_GPS_RECORD_SIZE];
-    MockGpsSnapshot gps_snapshot;
-    MockGpsSnapshot gps_snapshot_after_mutation;
-    MockScalarBackendTestState scalar_state;
-    MockPointerBackendTestState pointer_state;
-    MockCallbackTestState callback_state;
-    uint8_t cluster_record[MOCK_CLUSTER_RECORD_SIZE];
+    uint8_t gps_record[OPEN_NAVI_GPS_RECORD_SIZE];
+    OpenNaviGpsSnapshot gps_snapshot;
+    OpenNaviGpsSnapshot gps_snapshot_after_mutation;
+    OpenNaviScalarBackendTestState scalar_state;
+    OpenNaviPointerBackendTestState pointer_state;
+    OpenNaviCallbackTestState callback_state;
+    uint8_t cluster_record[OPEN_NAVI_CLUSTER_RECORD_SIZE];
     char thread_name[100];
     uint8_t logging_levels[4];
     uint32_t logging_sizes[4];
     uint8_t intl_settings[4];
     char vin17[17];
     uint8_t transport_item[16];
-    MockConnectionDeviceInfoInput connection_info;
+    OpenNaviConnectionDeviceInfoInput connection_info;
     char imei[128];
     char msisdn[128];
     char tef_filename[512];
@@ -624,7 +624,7 @@ int main(void)
     struct { const PanaGenericVirtual *vptr; } si_proxy;
     struct { const PanaGenericVirtual *vptr; } hmi_proxy;
 
-    mock_renderer_stub_reset();
+    open_navi_renderer_stub_reset();
     memset(&client, 0xa5, sizeof(client));
     assert(panaVersionCheck(server, &client, &compatibility) == 0u);
     assert(client.api_major == 24u);
@@ -694,47 +694,47 @@ int main(void)
            *(const PanaGenericVirtual **)first_interfaces[14]);
     assert(*(const PanaGenericVirtual **)first_interfaces[14] !=
            *(const PanaGenericVirtual **)first_interfaces[15]);
-    assert(mock_gps_test_call_count() == 0u);
-    assert(mock_gps_test_last_record_address() == (uintptr_t)0u);
-    assert(mock_gps_backend_test_generation() == 0u);
-    assert(mock_gps_backend_test_latest(&gps_snapshot) == 0);
+    assert(open_navi_gps_test_call_count() == 0u);
+    assert(open_navi_gps_test_last_record_address() == (uintptr_t)0u);
+    assert(open_navi_gps_backend_test_generation() == 0u);
+    assert(open_navi_gps_backend_test_latest(&gps_snapshot) == 0);
     memset(gps_record, 0, sizeof(gps_record));
-    put_le16(gps_record + MOCK_GPS_ALTITUDE_RAW_OFFSET, 0x1234u);
-    gps_record[MOCK_GPS_FIX_TYPE_OFFSET] = 3u;
-    put_le16(gps_record + MOCK_GPS_HEADING_RAW_OFFSET, 0xabcdu);
-    put_le16(gps_record + MOCK_GPS_HDOP_RAW_OFFSET, 0x1122u);
-    put_le32(gps_record + MOCK_GPS_ACCURACY_RAW_OFFSET, 0x89abcdefu);
-    put_le32(gps_record + MOCK_GPS_LATITUDE_E7_OFFSET,
+    put_le16(gps_record + OPEN_NAVI_GPS_ALTITUDE_RAW_OFFSET, 0x1234u);
+    gps_record[OPEN_NAVI_GPS_FIX_TYPE_OFFSET] = 3u;
+    put_le16(gps_record + OPEN_NAVI_GPS_HEADING_RAW_OFFSET, 0xabcdu);
+    put_le16(gps_record + OPEN_NAVI_GPS_HDOP_RAW_OFFSET, 0x1122u);
+    put_le32(gps_record + OPEN_NAVI_GPS_ACCURACY_RAW_OFFSET, 0x89abcdefu);
+    put_le32(gps_record + OPEN_NAVI_GPS_LATITUDE_E7_OFFSET,
              (uint32_t)(int32_t)-123456789);
-    put_le32(gps_record + MOCK_GPS_LONGITUDE_E7_OFFSET,
+    put_le32(gps_record + OPEN_NAVI_GPS_LONGITUDE_E7_OFFSET,
              (uint32_t)(int32_t)-987654321);
-    gps_record[MOCK_GPS_SATS_USED_OFFSET] = 9u;
-    gps_record[MOCK_GPS_SATS_IN_VIEW_OFFSET] = 14u;
-    put_le16(gps_record + MOCK_GPS_PDOP_RAW_OFFSET, 0x3344u);
-    for (adapter = 0u; adapter < MOCK_GPS_SATELLITE_COUNT; ++adapter) {
-        for (slot = 0u; slot < MOCK_GPS_SATELLITE_SIZE; ++slot) {
-            gps_record[MOCK_GPS_SATELLITES_OFFSET +
-                       adapter * MOCK_GPS_SATELLITE_SIZE + slot] =
+    gps_record[OPEN_NAVI_GPS_SATS_USED_OFFSET] = 9u;
+    gps_record[OPEN_NAVI_GPS_SATS_IN_VIEW_OFFSET] = 14u;
+    put_le16(gps_record + OPEN_NAVI_GPS_PDOP_RAW_OFFSET, 0x3344u);
+    for (adapter = 0u; adapter < OPEN_NAVI_GPS_SATELLITE_COUNT; ++adapter) {
+        for (slot = 0u; slot < OPEN_NAVI_GPS_SATELLITE_SIZE; ++slot) {
+            gps_record[OPEN_NAVI_GPS_SATELLITES_OFFSET +
+                       adapter * OPEN_NAVI_GPS_SATELLITE_SIZE + slot] =
                 (uint8_t)(adapter * 16u + slot);
         }
     }
-    put_le16(gps_record + MOCK_GPS_SPEED_RAW_MASKED_OFFSET, 0x8f01u);
-    put_le16(gps_record + MOCK_GPS_VDOP_RAW_OFFSET, 0x5566u);
-    gps_record[MOCK_GPS_QUALITY_STATUS_OFFSET] = 0xa5u;
-    gps_record[MOCK_GPS_SYNC_COUNTER_OFFSET] = 0x5au;
-    put_le16(gps_record + MOCK_GPS_ELLIPSOID_ALTITUDE_RAW_OFFSET, 0x7788u);
-    put_le16(gps_record + MOCK_GPS_UNKNOWN_100_OFFSET, 0x99aau);
-    put_float_le(gps_record + MOCK_GPS_TRAVEL_DISTANCE_RAW_OFFSET, 1234.5f);
-    put_double_le(gps_record + MOCK_GPS_ALTITUDE_CHANGE_RAW_OFFSET, -42.25);
-    put_double_le(gps_record + MOCK_GPS_NOISE_RAW_OFFSET, 0.03125);
+    put_le16(gps_record + OPEN_NAVI_GPS_SPEED_RAW_MASKED_OFFSET, 0x8f01u);
+    put_le16(gps_record + OPEN_NAVI_GPS_VDOP_RAW_OFFSET, 0x5566u);
+    gps_record[OPEN_NAVI_GPS_QUALITY_STATUS_OFFSET] = 0xa5u;
+    gps_record[OPEN_NAVI_GPS_SYNC_COUNTER_OFFSET] = 0x5au;
+    put_le16(gps_record + OPEN_NAVI_GPS_ELLIPSOID_ALTITUDE_RAW_OFFSET, 0x7788u);
+    put_le16(gps_record + OPEN_NAVI_GPS_UNKNOWN_100_OFFSET, 0x99aau);
+    put_float_le(gps_record + OPEN_NAVI_GPS_TRAVEL_DISTANCE_RAW_OFFSET, 1234.5f);
+    put_double_le(gps_record + OPEN_NAVI_GPS_ALTITUDE_CHANGE_RAW_OFFSET, -42.25);
+    put_double_le(gps_record + OPEN_NAVI_GPS_NOISE_RAW_OFFSET, 0.03125);
     assert(((TestGPSDataVirtual)
                (*(const PanaGenericVirtual **)first_interfaces[9])[4])(
                first_interfaces[9], gps_record) == 0u);
-    assert(mock_gps_test_call_count() == 1u);
-    assert(mock_gps_test_last_record_address() ==
+    assert(open_navi_gps_test_call_count() == 1u);
+    assert(open_navi_gps_test_last_record_address() ==
            (uintptr_t)gps_record);
-    assert(mock_gps_backend_test_generation() == 1u);
-    assert(mock_gps_backend_test_latest(&gps_snapshot) == 1);
+    assert(open_navi_gps_backend_test_generation() == 1u);
+    assert(open_navi_gps_backend_test_latest(&gps_snapshot) == 1);
     assert(gps_snapshot.altitude_raw == 0x1234u);
     assert(gps_snapshot.fix_type == 3u);
     assert(gps_snapshot.heading_raw == 0xabcdu);
@@ -757,26 +757,26 @@ int main(void)
     assert(gps_snapshot.noise_raw == 0.03125);
 
     memset(gps_record, 0xff, sizeof(gps_record));
-    assert(mock_gps_backend_test_latest(&gps_snapshot_after_mutation) == 1);
+    assert(open_navi_gps_backend_test_latest(&gps_snapshot_after_mutation) == 1);
     assert(memcmp(&gps_snapshot, &gps_snapshot_after_mutation,
                   sizeof(gps_snapshot)) == 0);
     assert(((TestGPSDataVirtual)
                (*(const PanaGenericVirtual **)first_interfaces[9])[4])(
                first_interfaces[9], NULL) == 0u);
-    assert(mock_gps_test_call_count() == 2u);
-    assert(mock_gps_test_last_record_address() == (uintptr_t)0u);
-    assert(mock_gps_backend_test_generation() == 1u);
-    assert(mock_gps_backend_test_latest(&gps_snapshot_after_mutation) == 1);
+    assert(open_navi_gps_test_call_count() == 2u);
+    assert(open_navi_gps_test_last_record_address() == (uintptr_t)0u);
+    assert(open_navi_gps_backend_test_generation() == 1u);
+    assert(open_navi_gps_backend_test_latest(&gps_snapshot_after_mutation) == 1);
     assert(memcmp(&gps_snapshot, &gps_snapshot_after_mutation,
                   sizeof(gps_snapshot)) == 0);
     assert((*(const PanaGenericVirtual **)first_interfaces[14])[4](
                first_interfaces[14]) == 0u);
-    assert(mock_gps_test_call_count() == 2u);
+    assert(open_navi_gps_test_call_count() == 2u);
 
     /* Typed scalar slots route only to their adapter-specific backend state.
      * Exercise both captured values and structurally valid representatives. */
     memset(&scalar_state, 0xa5, sizeof(scalar_state));
-    mock_scalar_backend_test_state(&scalar_state);
+    open_navi_scalar_backend_test_state(&scalar_state);
     assert(scalar_state.vehicle_generation == 0u);
     assert(scalar_state.gps_interval_generation == 0u);
     assert(scalar_state.audio_generation == 0u);
@@ -807,7 +807,7 @@ int main(void)
     assert(((TestAudioVirtual)
                (*(const PanaGenericVirtual **)first_interfaces[10])[19])(
                first_interfaces[10], 0xdeadbeefu, 0xffu) == 0u);
-    mock_scalar_backend_test_state(&scalar_state);
+    open_navi_scalar_backend_test_state(&scalar_state);
     memcpy(&speed_bits, &scalar_state.displayed_vehicle_speed,
            sizeof(speed_bits));
     assert(scalar_state.day_night_status == 0xfeu);
@@ -827,7 +827,7 @@ int main(void)
     assert(scalar_state.audio_calls == 2u);
     assert((*(const PanaGenericVirtual **)first_interfaces[14])[4](
                first_interfaces[14], 0x1234u) == 0u);
-    mock_scalar_backend_test_state(&scalar_state);
+    open_navi_scalar_backend_test_state(&scalar_state);
     assert(scalar_state.vehicle_generation == 5u);
     assert(scalar_state.gps_interval_generation == 2u);
     assert(scalar_state.audio_generation == 2u);
@@ -945,7 +945,7 @@ int main(void)
     assert_telemetry(30u, 4u, 1u, 1u, 0x3004u, 0u, 0u, 0u);
     assert_telemetry(31u, 3u, 1u, 1u, 0xf3u, 0u, 0u, 0u);
     assert_telemetry(31u, 5u, 1u, 1u, 0xf5u, 0u, 0u, 0u);
-    mock_scalar_backend_test_state(&scalar_state);
+    open_navi_scalar_backend_test_state(&scalar_state);
     assert(scalar_state.day_night_status == 0xf3u);
     assert(scalar_state.day_night_setting == 0xf5u);
     assert(scalar_state.audio_source == 0xfeed0011u);
@@ -967,7 +967,7 @@ int main(void)
            *(const PanaGenericVirtual **)first_interfaces[14]);
     assert(*(const PanaGenericVirtual **)first_interfaces[19] !=
            *(const PanaGenericVirtual **)first_interfaces[14]);
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.generation == 0u);
 
     logging_levels[0] = 1u;
@@ -984,7 +984,7 @@ int main(void)
                logging_levels, logging_sizes) == 0u);
     memset(logging_levels, 0xff, sizeof(logging_levels));
     memset(logging_sizes, 0xff, sizeof(logging_sizes));
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.logging_present == 1u);
     assert(pointer_state.logging_supported == 1u);
     assert(pointer_state.logging_levels[3] == 4u);
@@ -994,7 +994,7 @@ int main(void)
                first_interfaces[6], 0x6004u, 3u,
                (const uint8_t *)(uintptr_t)1u,
                (const uint32_t *)(uintptr_t)1u) == 0u);
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.logging_supported == 0u);
     assert(pointer_state.logging_present == 0u);
     assert(((TestLoggingVirtual)
@@ -1009,7 +1009,7 @@ int main(void)
                (*(const PanaGenericVirtual **)first_interfaces[7])[3])(
                first_interfaces[7], 0x7003u, intl_settings) == 0u);
     memset(intl_settings, 0, sizeof(intl_settings));
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.intl_present == 1u);
     assert(pointer_state.intl_language == 0x1234u);
     assert(pointer_state.intl_date_format == 0xfeu);
@@ -1025,7 +1025,7 @@ int main(void)
                (*(const PanaGenericVirtual **)first_interfaces[8])[12])(
                first_interfaces[8], 0x8012u, vin17) == 0u);
     memset(vin17, 'Z', sizeof(vin17));
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.vin_present == 1u);
     assert(pointer_state.vin[0] == 'A');
     assert(pointer_state.vin[16] == 'Q');
@@ -1042,7 +1042,7 @@ int main(void)
                (*(const PanaGenericVirtual **)first_interfaces[19])[3])(
                first_interfaces[19], 0x1903u, 1u, transport_item) == 0u);
     memset(transport_item, 0, sizeof(transport_item));
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.transport_supported == 1u);
     assert(pointer_state.transport_present == 1u);
     assert(pointer_state.transport_kind == 1u);
@@ -1052,7 +1052,7 @@ int main(void)
                (*(const PanaGenericVirtual **)first_interfaces[19])[3])(
                first_interfaces[19], 0x1904u, 2u,
                (const void *)(uintptr_t)1u) == 0u);
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.transport_supported == 0u);
     assert(pointer_state.transport_present == 0u);
     assert(((TestCountPointerVirtual)
@@ -1075,7 +1075,7 @@ int main(void)
     memset(msisdn, 'Y', sizeof(msisdn));
     connection_info.field_04 = 0u;
     connection_info.imei = NULL;
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.connection_info_present == 1u);
     assert(pointer_state.connection_field_04 == 0xabcdef04u);
     assert(pointer_state.imei_present == 1u);
@@ -1096,7 +1096,7 @@ int main(void)
                first_interfaces[25], 0x2521u, 0xffffffffu,
                tef_filename) == 0u);
     memset(tef_filename, 'X', sizeof(tef_filename));
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.tef_present == 1u);
     assert(pointer_state.tef_length == 512u);
     assert(pointer_state.tef_filename[0] == 'T');
@@ -1105,7 +1105,7 @@ int main(void)
     assert(((TestTefVirtual)
                (*(const PanaGenericVirtual **)first_interfaces[25])[21])(
                first_interfaces[25], 0x2522u, 0u, NULL) == 0u);
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.generation == 14u);
     assert(pointer_state.logging_calls == 3u);
     assert(pointer_state.intl_calls == 2u);
@@ -1117,7 +1117,7 @@ int main(void)
     /* Generic neighbor slots do not affect pointer telemetry. */
     assert((*(const PanaGenericVirtual **)first_interfaces[6])[4](
                first_interfaces[6], 0x1234u) == 0u);
-    mock_pointer_backend_test_state(&pointer_state);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.generation == 14u);
 
     for (slot = 0u; slot < 15u; ++slot) {
@@ -1162,76 +1162,76 @@ int main(void)
     }
     root->host_proxy = &si_proxy;
 
-    mock_callback_test_set_next_handle(UINT32_MAX);
-    assert(mock_callback_allocate_handle() == UINT32_MAX);
-    assert(mock_callback_allocate_handle() == 1u);
-    mock_callback_backend_reset();
+    open_navi_callback_test_set_next_handle(UINT32_MAX);
+    assert(open_navi_callback_allocate_handle() == UINT32_MAX);
+    assert(open_navi_callback_allocate_handle() == 1u);
+    open_navi_callback_backend_reset();
 
     /* Availability is committed only after PAS accepts the callback. A
      * missing proxy and a nonzero status must both leave the state retryable. */
     ((TestAdapterObject *)first_interfaces[10])->host_proxy = NULL;
-    assert(mock_callback_signal_audio_availability(2u) == 1u);
+    assert(open_navi_callback_signal_audio_availability(2u) == 1u);
     assert(callback_count == 0u);
     ((TestAdapterObject *)first_interfaces[10])->host_proxy =
         &adapter_ready_proxies[10];
     audio_callback_status = 5u;
-    assert(mock_callback_signal_audio_availability(2u) == 5u);
+    assert(open_navi_callback_signal_audio_availability(2u) == 5u);
     assert(callback_count == 1u);
-    mock_callback_test_state(&callback_state);
+    open_navi_callback_test_state(&callback_state);
     assert(callback_state.audio_transitions == 0u);
     audio_callback_status = 0u;
-    assert(mock_callback_signal_audio_availability(2u) == 0u);
+    assert(open_navi_callback_signal_audio_availability(2u) == 0u);
     assert(callback_count == 2u);
-    mock_callback_test_state(&callback_state);
+    open_navi_callback_test_state(&callback_state);
     assert(callback_state.audio_transitions == 1u);
-    assert(mock_callback_signal_audio_availability(2u) == 0u);
+    assert(open_navi_callback_signal_audio_availability(2u) == 0u);
     assert(callback_count == 2u);
-    assert(mock_callback_signal_audio_availability(3u) == 0u);
+    assert(open_navi_callback_signal_audio_availability(3u) == 0u);
     assert(callback_count == 3u);
-    assert(mock_callback_audio_begin(4u, &older_audio_attempt) != 0);
-    assert(mock_callback_audio_begin(5u, &newer_audio_attempt) != 0);
-    mock_callback_audio_complete(5u, newer_audio_attempt, 1);
-    mock_callback_audio_complete(4u, older_audio_attempt, 1);
-    assert(mock_callback_signal_audio_availability(5u) == 0u);
+    assert(open_navi_callback_audio_begin(4u, &older_audio_attempt) != 0);
+    assert(open_navi_callback_audio_begin(5u, &newer_audio_attempt) != 0);
+    open_navi_callback_audio_complete(5u, newer_audio_attempt, 1);
+    open_navi_callback_audio_complete(4u, older_audio_attempt, 1);
+    assert(open_navi_callback_signal_audio_availability(5u) == 0u);
     assert(callback_count == 3u);
     memset(cluster_record, 0x5a, sizeof(cluster_record));
     cluster_callback_status = 9u;
-    assert(mock_callback_send_cluster(cluster_record) == 9u);
-    mock_callback_test_state(&callback_state);
+    assert(open_navi_callback_send_cluster(cluster_record) == 9u);
+    open_navi_callback_test_state(&callback_state);
     assert(callback_state.cluster_generation == 0u);
     cluster_callback_status = 0u;
-    assert(mock_callback_send_cluster(cluster_record) == 0u);
+    assert(open_navi_callback_send_cluster(cluster_record) == 0u);
     memset(cluster_record, 0, sizeof(cluster_record));
     memset(thread_name, 'N', sizeof(thread_name));
     thread_name[1] = (char)0xc3;
     thread_name[sizeof(thread_name)-1u] = '\0';
-    assert(mock_callback_signal_thread_status(77u,thread_name,3u) == 0u);
-    mock_callback_set_voice_state(9u,7u);
+    assert(open_navi_callback_signal_thread_status(77u,thread_name,3u) == 0u);
+    open_navi_callback_set_voice_state(9u,7u);
     assert((*(const PanaGenericVirtual **)first_interfaces[25])[19](
                first_interfaces[25],0x252519u) == 0u);
     assert(voice_reply_count == 1u);
     assert(voice_reply_handle == 0x252519u);
     assert(voice_reply_result == 9u && voice_reply_status == 7u);
-    mock_callback_test_state(&callback_state);
+    open_navi_callback_test_state(&callback_state);
     assert(callback_state.audio_transitions == 3u);
     assert(callback_state.cluster_generation == 1u);
     assert(callback_state.cluster_record[0] == 0x5au);
-    assert(callback_state.cluster_record[MOCK_CLUSTER_RECORD_SIZE-1u] == 0x5au);
+    assert(callback_state.cluster_record[OPEN_NAVI_CLUSTER_RECORD_SIZE-1u] == 0x5au);
     assert(callback_state.thread_generation == 1u);
-    assert(strlen(callback_state.thread_name) == MOCK_THREAD_NAME_LIMIT);
+    assert(strlen(callback_state.thread_name) == OPEN_NAVI_THREAD_NAME_LIMIT);
     assert(callback_state.thread_name[1] == '?');
-    assert(thread_callback_length == MOCK_THREAD_NAME_LIMIT);
-    assert(callback_state.thread_name[MOCK_THREAD_NAME_LIMIT] == '\0');
+    assert(thread_callback_length == OPEN_NAVI_THREAD_NAME_LIMIT);
+    assert(callback_state.thread_name[OPEN_NAVI_THREAD_NAME_LIMIT] == '\0');
     assert(callback_state.correlation_successes == 1u);
     assert(callback_state.optional_failures == 1u);
-    mock_callback_record_status(13u,5u,5u,MOCK_CALLBACK_OPTIONAL);
-    mock_callback_record_status(8u,5u,6u,MOCK_CALLBACK_CRITICAL);
-    mock_callback_test_state(&callback_state);
+    open_navi_callback_record_status(13u,5u,5u,OPEN_NAVI_CALLBACK_OPTIONAL);
+    open_navi_callback_record_status(8u,5u,6u,OPEN_NAVI_CALLBACK_CRITICAL);
+    open_navi_callback_test_state(&callback_state);
     /* Raw PAS telemetry is accepted only while a callback transport lease is
      * held.  Direct backend calls cannot attach stale status to this epoch. */
     assert(callback_state.optional_failures == 1u);
     assert(callback_state.critical_failures == 1u);
-    mock_callback_backend_reset();
+    open_navi_callback_backend_reset();
 
     /* Match the observed stock registration state at signalStart.  SI
      * adapterReady is nested synchronously inside that call. */
@@ -1286,7 +1286,7 @@ int main(void)
     assert(((TestAudioVirtual)
                (*(const PanaGenericVirtual **)first_interfaces[8])[3])(
                first_interfaces[8],request_handle,1u) == 0u);
-    mock_callback_test_state(&callback_state);
+    open_navi_callback_test_state(&callback_state);
     assert(callback_state.correlation_successes >= 1u);
     assert(subscription_count == 1u);
     assert(subscription_value == -1);
@@ -1338,8 +1338,8 @@ int main(void)
     assert(transition_reply_handles[3] == 7u);
     assert(root->vptr->slot[4](root) == 0u);
     test_delay(300u);
-    assert(mock_renderer_stub_create_count() == 1u);
-    assert(mock_renderer_stub_destroy_count() == 0u);
+    assert(open_navi_renderer_stub_create_count() == 1u);
+    assert(open_navi_renderer_stub_destroy_count() == 0u);
     assert(navigation_ready_count == 3u);
     assert(hmi_ready_count == 1u);
     assert(transition_reply_count == 4u);
@@ -1390,23 +1390,23 @@ int main(void)
     assert(root->host_proxy == NULL);
     assert(((TestAdapterObject *)first_interfaces[17])->host_proxy == NULL);
     memset(cluster_record, 0, sizeof(cluster_record));
-    assert(mock_callback_send_cluster(cluster_record) == 1u);
-    mock_scalar_backend_test_state(&scalar_state);
+    assert(open_navi_callback_send_cluster(cluster_record) == 1u);
+    open_navi_scalar_backend_test_state(&scalar_state);
     assert(scalar_state.vehicle_generation == 0u);
     assert(scalar_state.gps_interval_generation == 0u);
     assert(scalar_state.audio_generation == 0u);
     assert(scalar_state.day_night_status_calls == 0u);
     assert(scalar_state.gps_interval_calls == 0u);
     assert(scalar_state.audio_calls == 0u);
-    assert(mock_api_telemetry_test_get(8u, 3u, NULL) == 0);
-    assert(mock_api_telemetry_test_get(20u, 3u, NULL) == 0);
-    assert(mock_api_telemetry_test_get(31u, 5u, NULL) == 0);
-    mock_pointer_backend_test_state(&pointer_state);
+    assert(open_navi_api_telemetry_test_get(8u, 3u, NULL) == 0);
+    assert(open_navi_api_telemetry_test_get(20u, 3u, NULL) == 0);
+    assert(open_navi_api_telemetry_test_get(31u, 5u, NULL) == 0);
+    open_navi_pointer_backend_test_state(&pointer_state);
     assert(pointer_state.generation == 0u);
     assert(pointer_state.logging_calls == 0u);
     assert(pointer_state.connection_calls == 0u);
     assert(pointer_state.tef_calls == 0u);
-    mock_callback_test_state(&callback_state);
+    open_navi_callback_test_state(&callback_state);
     assert(callback_state.allocated_count == 0u);
     assert(callback_state.pending_count == 0u);
     assert(callback_state.callback_count == 0u);
@@ -1415,8 +1415,8 @@ int main(void)
     assert(callback_state.audio_transitions == 0u);
     assert(callback_state.cluster_generation == 0u);
     assert(callback_state.thread_generation == 0u);
-    assert(mock_renderer_stub_create_count() == 1u);
-    assert(mock_renderer_stub_destroy_count() == 1u);
+    assert(open_navi_renderer_stub_create_count() == 1u);
+    assert(open_navi_renderer_stub_destroy_count() == 1u);
 
     /* Synchronous production during adapterReady makes the ninth request
      * deterministically encounter the full eight-entry FIFO. */
@@ -1449,8 +1449,8 @@ int main(void)
         assert(window_handles[slot] == state_handles[slot]);
     }
     panaDeinitialize();
-    assert(mock_renderer_stub_create_count() == 2u);
-    assert(mock_renderer_stub_destroy_count() == 2u);
+    assert(open_navi_renderer_stub_create_count() == 2u);
+    assert(open_navi_renderer_stub_destroy_count() == 2u);
 
     /* Shutdown during the worker's scheduling defer joins it and prevents any
      * asynchronous host callback after deinitialization returns. */
@@ -1474,13 +1474,13 @@ int main(void)
     assert(navigation_ready_count == 0u);
     assert(hmi_ready_count == 0u);
     assert(transition_reply_count == 0u);
-    assert(mock_renderer_stub_create_count() == 2u);
-    assert(mock_renderer_stub_destroy_count() == 2u);
+    assert(open_navi_renderer_stub_create_count() == 2u);
+    assert(open_navi_renderer_stub_destroy_count() == 2u);
 
     /* A graphics failure is logged by the provider but does not truncate the
      * protocol worker or manufacture a renderer teardown. */
     reset_observations(2u);
-    mock_renderer_stub_set_create_result(-7);
+    open_navi_renderer_stub_set_create_result(-7);
     assert(panaInitialize(&initialization) == 0u);
     root->host_proxy = &si_proxy;
     ((TestAdapterObject *)first_interfaces[1])->host_proxy = &hmi_proxy;
@@ -1497,14 +1497,14 @@ int main(void)
     assert(hmi_ready_count == 1u);
     assert(subscription_count == 1u);
     assert(navigation_ready_count == 3u);
-    assert(mock_renderer_stub_create_count() == 3u);
-    assert(mock_renderer_stub_destroy_count() == 2u);
+    assert(open_navi_renderer_stub_create_count() == 3u);
+    assert(open_navi_renderer_stub_destroy_count() == 2u);
     exercise_generated_static_slots(root, first_interfaces, 0u);
     panaDeinitialize();
     exercise_generated_static_slots(root, first_interfaces, 1u);
-    assert(mock_renderer_stub_create_count() == 3u);
-    assert(mock_renderer_stub_destroy_count() == 2u);
-    mock_renderer_stub_set_create_result(0);
+    assert(open_navi_renderer_stub_create_count() == 3u);
+    assert(open_navi_renderer_stub_destroy_count() == 2u);
+    open_navi_renderer_stub_set_create_result(0);
 
     panaDeinitialize();
     return 0;

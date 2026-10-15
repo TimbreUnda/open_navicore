@@ -1,6 +1,6 @@
 #include <open_navicore/cluster.h>
 
-#include "mock_callback_backend.h"
+#include "open_navi_callback_backend.h"
 
 #include <pthread.h>
 #include <string.h>
@@ -9,74 +9,74 @@ typedef struct {
     uint16_t bit;
     uint16_t offset;
     uint16_t size;
-} MockClusterField;
+} OpenNaviClusterField;
 
-typedef struct MockClusterPublishFrame {
-    struct MockClusterPublishFrame *previous;
+typedef struct OpenNaviClusterPublishFrame {
+    struct OpenNaviClusterPublishFrame *previous;
     uint64_t epoch;
     uint64_t sequence;
     uint8_t *record;
-} MockClusterPublishFrame;
+} OpenNaviClusterPublishFrame;
 
-static const MockClusterField g_fields[] = {
-    { MOCK_CLUSTER_ROUTE_GUIDANCE_STATE, 0x000, 1 },
-    { MOCK_CLUSTER_NAVIGATION_STATUS, 0x001, 1 },
-    { MOCK_CLUSTER_DISTANCE_DESTINATION, 0x104, 0x21 },
-    { MOCK_CLUSTER_ETA, 0x128, 2 },
-    { MOCK_CLUSTER_RTA, 0x12a, 2 },
-    { MOCK_CLUSTER_DISTANCE_MANEUVER, 0x12c, 0x21 },
-    { MOCK_CLUSTER_CURRENT_ROAD, 0x150, 0x3fc },
-    { MOCK_CLUSTER_LANE_ACTIVE, 0x64c, 4 },
-    { MOCK_CLUSTER_NEXT_ROAD, 0x650, 0x3fc },
-    { MOCK_CLUSTER_BAR_PERCENT, 0xa4c, 1 },
-    { MOCK_CLUSTER_COMPASS, 0xa4d, 1 },
-    { MOCK_CLUSTER_SPEED_LIMIT, 0xa54, 2 },
-    { MOCK_CLUSTER_LEGAL_LIMIT, 0xa5a, 2 }
+static const OpenNaviClusterField g_fields[] = {
+    { OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE, 0x000, 1 },
+    { OPEN_NAVI_CLUSTER_NAVIGATION_STATUS, 0x001, 1 },
+    { OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION, 0x104, 0x21 },
+    { OPEN_NAVI_CLUSTER_ETA, 0x128, 2 },
+    { OPEN_NAVI_CLUSTER_RTA, 0x12a, 2 },
+    { OPEN_NAVI_CLUSTER_DISTANCE_MANEUVER, 0x12c, 0x21 },
+    { OPEN_NAVI_CLUSTER_CURRENT_ROAD, 0x150, 0x3fc },
+    { OPEN_NAVI_CLUSTER_LANE_ACTIVE, 0x64c, 4 },
+    { OPEN_NAVI_CLUSTER_NEXT_ROAD, 0x650, 0x3fc },
+    { OPEN_NAVI_CLUSTER_BAR_PERCENT, 0xa4c, 1 },
+    { OPEN_NAVI_CLUSTER_COMPASS, 0xa4d, 1 },
+    { OPEN_NAVI_CLUSTER_SPEED_LIMIT, 0xa54, 2 },
+    { OPEN_NAVI_CLUSTER_LEGAL_LIMIT, 0xa5a, 2 }
 };
 
 static pthread_mutex_t g_cluster_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_cluster_condition = PTHREAD_COND_INITIALIZER;
-static uint8_t g_previous[MOCK_CLUSTER_RECORD_SIZE];
+static uint8_t g_previous[OPEN_NAVI_CLUSTER_RECORD_SIZE];
 static int g_has_previous;
 static uint64_t g_history_epoch;
 static uint64_t g_next_sequence;
 static uint64_t g_committed_sequence;
 static pthread_t g_publish_owner;
 static int g_publish_owner_valid;
-static MockClusterPublishFrame *g_publish_top;
+static OpenNaviClusterPublishFrame *g_publish_top;
 
 #if defined(__GNUC__)
-extern int mock_navicore_producer_begin(uint64_t *epoch_out)
+extern int open_navi_producer_begin(uint64_t *epoch_out)
     __attribute__((weak));
-extern int mock_navicore_producer_current(uint64_t epoch)
+extern int open_navi_producer_current(uint64_t epoch)
     __attribute__((weak));
-extern void mock_navicore_producer_end(uint64_t epoch)
+extern void open_navi_producer_end(uint64_t epoch)
     __attribute__((weak));
 #else
-extern int mock_navicore_producer_begin(uint64_t *epoch_out);
-extern int mock_navicore_producer_current(uint64_t epoch);
-extern void mock_navicore_producer_end(uint64_t epoch);
+extern int open_navi_producer_begin(uint64_t *epoch_out);
+extern int open_navi_producer_current(uint64_t epoch);
+extern void open_navi_producer_end(uint64_t epoch);
 #endif
 
 static int producer_begin(uint64_t *epoch)
 {
-    if (mock_navicore_producer_begin == NULL) {
+    if (open_navi_producer_begin == NULL) {
         *epoch = 0u;
         return 1;
     }
-    return mock_navicore_producer_begin(epoch);
+    return open_navi_producer_begin(epoch);
 }
 
 static int producer_current(uint64_t epoch)
 {
-    return mock_navicore_producer_current == NULL ||
-           mock_navicore_producer_current(epoch);
+    return open_navi_producer_current == NULL ||
+           open_navi_producer_current(epoch);
 }
 
 static void producer_end(uint64_t epoch)
 {
-    if (mock_navicore_producer_end != NULL) {
-        mock_navicore_producer_end(epoch);
+    if (open_navi_producer_end != NULL) {
+        open_navi_producer_end(epoch);
     }
 }
 
@@ -110,11 +110,11 @@ static uint32_t decode_utf8(const uint8_t *bytes, size_t length,
 
     if (first < 0x80u) {
         if (first == 0u) {
-            return MOCK_CLUSTER_INVALID_TEXT;
+            return OPEN_NAVI_CLUSTER_INVALID_TEXT;
         }
         *code_point = first;
         ++*cursor;
-        return MOCK_CLUSTER_OK;
+        return OPEN_NAVI_CLUSTER_OK;
     }
     if (first >= 0xc2u && first <= 0xdfu) {
         value = first & 0x1fu;
@@ -126,29 +126,29 @@ static uint32_t decode_utf8(const uint8_t *bytes, size_t length,
         value = first & 0x07u;
         count = 4u;
     } else {
-        return MOCK_CLUSTER_INVALID_TEXT;
+        return OPEN_NAVI_CLUSTER_INVALID_TEXT;
     }
     if (length - *cursor < count) {
-        return MOCK_CLUSTER_INVALID_TEXT;
+        return OPEN_NAVI_CLUSTER_INVALID_TEXT;
     }
     for (index = 1u; index < count; ++index) {
         uint8_t continuation = bytes[*cursor + index];
         if ((continuation & 0xc0u) != 0x80u) {
-            return MOCK_CLUSTER_INVALID_TEXT;
+            return OPEN_NAVI_CLUSTER_INVALID_TEXT;
         }
         value = (value << 6) | (uint32_t)(continuation & 0x3fu);
     }
     if ((count == 3u && value < 0x800u) ||
         (count == 4u && value < 0x10000u) ||
         (value >= 0xd800u && value <= 0xdfffu) || value > 0x10ffffu) {
-        return MOCK_CLUSTER_INVALID_TEXT;
+        return OPEN_NAVI_CLUSTER_INVALID_TEXT;
     }
     *cursor += count;
     *code_point = value;
-    return MOCK_CLUSTER_OK;
+    return OPEN_NAVI_CLUSTER_OK;
 }
 
-static uint32_t encode_text(const MockClusterText *text,
+static uint32_t encode_text(const OpenNaviClusterText *text,
                             uint8_t *destination, size_t storage_code_units,
                             size_t max_scalars, size_t max_utf16_units)
 {
@@ -158,25 +158,25 @@ static uint32_t encode_text(const MockClusterText *text,
     size_t utf16_units = 0u;
 
     if (text->length != 0u && text->bytes == NULL) {
-        return MOCK_CLUSTER_INVALID_ARGUMENT;
+        return OPEN_NAVI_CLUSTER_INVALID_ARGUMENT;
     }
-    if (text->encoding != MOCK_CLUSTER_TEXT_UTF8 &&
-        text->encoding != MOCK_CLUSTER_TEXT_ASCII) {
-        return MOCK_CLUSTER_INVALID_VALUE;
+    if (text->encoding != OPEN_NAVI_CLUSTER_TEXT_UTF8 &&
+        text->encoding != OPEN_NAVI_CLUSTER_TEXT_ASCII) {
+        return OPEN_NAVI_CLUSTER_INVALID_VALUE;
     }
     bytes = (const uint8_t *)text->bytes;
     while (cursor < text->length) {
         uint32_t code_point;
         uint32_t status;
 
-        if (text->encoding == MOCK_CLUSTER_TEXT_ASCII) {
+        if (text->encoding == OPEN_NAVI_CLUSTER_TEXT_ASCII) {
             if (bytes[cursor] == 0u || bytes[cursor] > 0x7fu) {
-                return MOCK_CLUSTER_INVALID_TEXT;
+                return OPEN_NAVI_CLUSTER_INVALID_TEXT;
             }
             code_point = bytes[cursor++];
         } else {
             status = decode_utf8(bytes, text->length, &cursor, &code_point);
-            if (status != MOCK_CLUSTER_OK) {
+            if (status != OPEN_NAVI_CLUSTER_OK) {
                 return status;
             }
         }
@@ -184,7 +184,7 @@ static uint32_t encode_text(const MockClusterText *text,
             utf16_units + (code_point > 0xffffu ? 2u : 1u) >
                 max_utf16_units ||
             output + 1u >= storage_code_units) {
-            return MOCK_CLUSTER_TEXT_TOO_LONG;
+            return OPEN_NAVI_CLUSTER_TEXT_TOO_LONG;
         }
         write_le32(destination + output * 4u, code_point);
         utf16_units += code_point > 0xffffu ? 2u : 1u;
@@ -192,7 +192,7 @@ static uint32_t encode_text(const MockClusterText *text,
     }
     /* The caller zeroed the whole record, so the next code unit is the
      * required terminator and all unused capacity remains deterministic. */
-    return MOCK_CLUSTER_OK;
+    return OPEN_NAVI_CLUSTER_OK;
 }
 
 static void encode_decimal(uint8_t *destination, uint32_t value,
@@ -225,116 +225,116 @@ static int valid_range(uint8_t value, uint8_t low, uint8_t high)
     return value >= low && value <= high;
 }
 
-uint32_t mock_cluster_backend_serialize(
-    const MockClusterNavigationState *state,
+uint32_t open_navi_cluster_backend_serialize(
+    const OpenNaviClusterNavigationState *state,
     uint16_t changed_attributes,
-    uint8_t record_out[MOCK_CLUSTER_RECORD_SIZE])
+    uint8_t record_out[OPEN_NAVI_CLUSTER_RECORD_SIZE])
 {
     uint16_t valid;
     uint32_t status;
 
     if (state == NULL || record_out == NULL) {
-        return MOCK_CLUSTER_INVALID_ARGUMENT;
+        return OPEN_NAVI_CLUSTER_INVALID_ARGUMENT;
     }
     valid = state->valid_attributes;
-    memset(record_out, 0, MOCK_CLUSTER_RECORD_SIZE);
+    memset(record_out, 0, OPEN_NAVI_CLUSTER_RECORD_SIZE);
     if (((valid | changed_attributes) &
-         (uint16_t)~MOCK_CLUSTER_SEMANTIC_SUPPORTED_MASK) != 0u) {
-        return MOCK_CLUSTER_UNSUPPORTED_FIELD;
+         (uint16_t)~OPEN_NAVI_CLUSTER_SEMANTIC_SUPPORTED_MASK) != 0u) {
+        return OPEN_NAVI_CLUSTER_UNSUPPORTED_FIELD;
     }
 
-    if ((valid & MOCK_CLUSTER_ROUTE_GUIDANCE_STATE) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE) != 0u) {
         if (!valid_range(state->route_guidance_state, 1u, 7u)) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         record_out[0x000] = state->route_guidance_state;
     }
-    if ((valid & MOCK_CLUSTER_NAVIGATION_STATUS) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_NAVIGATION_STATUS) != 0u) {
         if (!valid_range(state->navigation_status, 1u, 8u)) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         record_out[0x001] = state->navigation_status;
     }
-    if ((valid & MOCK_CLUSTER_DISTANCE_DESTINATION) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION) != 0u) {
         if (!valid_range(state->distance_destination_unit, 1u, 5u)) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         if (state->distance_destination > UINT16_MAX) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         encode_decimal(record_out + 0x104,
                        state->distance_destination, 0);
         record_out[0x124] = state->distance_destination_unit;
     }
-    if ((valid & MOCK_CLUSTER_ETA) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_ETA) != 0u) {
         record_out[0x128] = state->eta_hour;
         record_out[0x129] = state->eta_minute;
     }
-    if ((valid & MOCK_CLUSTER_RTA) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_RTA) != 0u) {
         record_out[0x12a] = state->rta_hour;
         record_out[0x12b] = state->rta_minute;
     }
-    if ((valid & MOCK_CLUSTER_DISTANCE_MANEUVER) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_DISTANCE_MANEUVER) != 0u) {
         if (!valid_range(state->distance_maneuver_unit, 1u, 5u)) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         if (state->distance_maneuver_tenths > UINT16_MAX) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         encode_decimal(record_out + 0x12c,
                        state->distance_maneuver_tenths, 1);
         record_out[0x14c] = state->distance_maneuver_unit;
     }
-    if ((valid & MOCK_CLUSTER_CURRENT_ROAD) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_CURRENT_ROAD) != 0u) {
         status = encode_text(&state->current_road, record_out + 0x150,
-                             MOCK_CLUSTER_ROAD_CODE_UNITS,
-                             MOCK_CLUSTER_ROAD_MAX_SCALARS,
-                             MOCK_CLUSTER_ROAD_MAX_UTF16_UNITS);
-        if (status != MOCK_CLUSTER_OK) {
+                             OPEN_NAVI_CLUSTER_ROAD_CODE_UNITS,
+                             OPEN_NAVI_CLUSTER_ROAD_MAX_SCALARS,
+                             OPEN_NAVI_CLUSTER_ROAD_MAX_UTF16_UNITS);
+        if (status != OPEN_NAVI_CLUSTER_OK) {
             return status;
         }
     }
-    if ((valid & MOCK_CLUSTER_LANE_ACTIVE) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_LANE_ACTIVE) != 0u) {
         write_le32(record_out + 0x64c, state->lane_active != 0u ? 1u : 0u);
     }
-    if ((valid & MOCK_CLUSTER_NEXT_ROAD) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_NEXT_ROAD) != 0u) {
         status = encode_text(&state->next_road, record_out + 0x650,
-                             MOCK_CLUSTER_ROAD_CODE_UNITS,
-                             MOCK_CLUSTER_ROAD_MAX_SCALARS,
-                             MOCK_CLUSTER_ROAD_MAX_UTF16_UNITS);
-        if (status != MOCK_CLUSTER_OK) {
+                             OPEN_NAVI_CLUSTER_ROAD_CODE_UNITS,
+                             OPEN_NAVI_CLUSTER_ROAD_MAX_SCALARS,
+                             OPEN_NAVI_CLUSTER_ROAD_MAX_UTF16_UNITS);
+        if (status != OPEN_NAVI_CLUSTER_OK) {
             return status;
         }
     }
-    if ((valid & MOCK_CLUSTER_BAR_PERCENT) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_BAR_PERCENT) != 0u) {
         if (state->bar_percent > 100u) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         record_out[0xa4c] = state->bar_percent;
     }
-    if ((valid & MOCK_CLUSTER_COMPASS) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_COMPASS) != 0u) {
         if (!valid_range(state->compass, 1u, 8u)) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         record_out[0xa4d] = state->compass;
     }
-    if ((valid & MOCK_CLUSTER_SPEED_LIMIT) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_SPEED_LIMIT) != 0u) {
         if (!valid_range(state->speed_unit, 1u, 2u)) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         record_out[0xa54] = state->speed_limit;
         record_out[0xa55] = state->speed_unit;
     }
-    if ((valid & MOCK_CLUSTER_LEGAL_LIMIT) != 0u) {
+    if ((valid & OPEN_NAVI_CLUSTER_LEGAL_LIMIT) != 0u) {
         if (!valid_range(state->legal_speed_unit, 1u, 2u)) {
-            return MOCK_CLUSTER_INVALID_VALUE;
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         record_out[0xa5a] = state->legal_speed_limit;
         record_out[0xa5b] = state->legal_speed_unit;
     }
     write_le16(record_out + 0xa56, changed_attributes);
     write_le16(record_out + 0xa58, valid);
-    return MOCK_CLUSTER_OK;
+    return OPEN_NAVI_CLUSTER_OK;
 }
 
 static uint16_t calculate_changed(const uint8_t *current,
@@ -349,7 +349,7 @@ static uint16_t calculate_changed(const uint8_t *current,
     size_t index;
 
     for (index = 0u; index < sizeof(g_fields) / sizeof(g_fields[0]); ++index) {
-        const MockClusterField *field = &g_fields[index];
+        const OpenNaviClusterField *field = &g_fields[index];
         int current_has = (current_valid & field->bit) != 0u;
         int previous_has = (previous_valid & field->bit) != 0u;
 
@@ -363,12 +363,12 @@ static uint16_t calculate_changed(const uint8_t *current,
     return changed;
 }
 
-uint32_t mock_cluster_backend_publish(const MockClusterNavigationState *state)
+uint32_t open_navi_cluster_backend_publish(const OpenNaviClusterNavigationState *state)
 {
-    uint8_t record[MOCK_CLUSTER_RECORD_SIZE];
+    uint8_t record[OPEN_NAVI_CLUSTER_RECORD_SIZE];
     uint16_t changed;
     uint32_t status;
-    MockClusterPublishFrame frame;
+    OpenNaviClusterPublishFrame frame;
     pthread_t self;
     const uint8_t *baseline;
     int has_baseline;
@@ -378,8 +378,8 @@ uint32_t mock_cluster_backend_publish(const MockClusterNavigationState *state)
         return 1u;
     }
 
-    status = mock_cluster_backend_serialize(state, 0u, record);
-    if (status != MOCK_CLUSTER_OK) {
+    status = open_navi_cluster_backend_serialize(state, 0u, record);
+    if (status != OPEN_NAVI_CLUSTER_OK) {
         producer_end(lifecycle_epoch);
         return status;
     }
@@ -425,7 +425,7 @@ uint32_t mock_cluster_backend_publish(const MockClusterNavigationState *state)
     g_publish_top = &frame;
     (void)pthread_mutex_unlock(&g_cluster_lock);
 
-    status = mock_callback_send_cluster(record);
+    status = open_navi_callback_send_cluster(record);
 
     (void)pthread_mutex_lock(&g_cluster_lock);
     if (status == 0u && producer_current(lifecycle_epoch) &&
@@ -451,7 +451,7 @@ uint32_t mock_cluster_backend_publish(const MockClusterNavigationState *state)
     return status;
 }
 
-void mock_cluster_backend_reset(void)
+void open_navi_cluster_backend_reset(void)
 {
     (void)pthread_mutex_lock(&g_cluster_lock);
     ++g_history_epoch;

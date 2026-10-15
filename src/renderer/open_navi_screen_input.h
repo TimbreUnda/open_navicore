@@ -1,21 +1,21 @@
-#ifndef MOCK_SCREEN_INPUT_H
-#define MOCK_SCREEN_INPUT_H
+#ifndef OPEN_NAVI_SCREEN_INPUT_H
+#define OPEN_NAVI_SCREEN_INPUT_H
 
 #include <stdint.h>
 
 #include <open_navicore/backend.h>
 
-enum MockScreenRawType {
-    MOCK_SCREEN_RAW_POINTER = 1,
-    MOCK_SCREEN_RAW_TOUCH = 2,
-    MOCK_SCREEN_RAW_MOVE = 3,
-    MOCK_SCREEN_RAW_RELEASE = 4
+enum OpenNaviScreenRawType {
+    OPEN_NAVI_SCREEN_RAW_POINTER = 1,
+    OPEN_NAVI_SCREEN_RAW_TOUCH = 2,
+    OPEN_NAVI_SCREEN_RAW_MOVE = 3,
+    OPEN_NAVI_SCREEN_RAW_RELEASE = 4
 };
 
-enum MockScreenInputClass {
-    MOCK_SCREEN_INPUT_CLASS_NONE = 0,
-    MOCK_SCREEN_INPUT_CLASS_POINTER = 1,
-    MOCK_SCREEN_INPUT_CLASS_TOUCH = 2
+enum OpenNaviScreenInputClass {
+    OPEN_NAVI_SCREEN_INPUT_CLASS_NONE = 0,
+    OPEN_NAVI_SCREEN_INPUT_CLASS_POINTER = 1,
+    OPEN_NAVI_SCREEN_INPUT_CLASS_TOUCH = 2
 };
 
 typedef struct {
@@ -31,7 +31,7 @@ typedef struct {
     uint8_t source_valid;
     uint8_t buttons_valid;
     uint8_t touch_id_valid;
-} MockScreenRawEvent;
+} OpenNaviScreenRawEvent;
 
 typedef struct {
     uintptr_t target_window;
@@ -63,20 +63,20 @@ typedef struct {
     uint32_t second_touch_id;
     int32_t second_last_x;
     int32_t second_last_y;
-} MockScreenInputState;
+} OpenNaviScreenInputState;
 
-void mock_screen_input_reset(MockScreenInputState *state,
+void open_navi_screen_input_reset(OpenNaviScreenInputState *state,
                              uintptr_t target_window,
                              int identity_coordinates,
                              uint32_t target_width,
                              uint32_t target_height);
 /* pointer_out is a V2 payload (V1 fields plus the contact). Without
  * multi_contact every accepted event is contact 0. */
-int mock_screen_input_decode(MockScreenInputState *state,
-                             const MockScreenRawEvent *raw,
-                             MockNavBackendPointerV2 *pointer_out);
+int open_navi_screen_input_decode(OpenNaviScreenInputState *state,
+                             const OpenNaviScreenRawEvent *raw,
+                             OpenNaviBackendPointerV2 *pointer_out);
 /* Convert a decoder result to the renderer-platform poll contract. A decoder
  * result of zero still means that one raw event was consumed. */
-int mock_screen_input_platform_result(int decode_result);
+int open_navi_screen_input_platform_result(int decode_result);
 
 #endif

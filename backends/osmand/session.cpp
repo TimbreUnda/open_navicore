@@ -30,7 +30,7 @@ Session::~Session()
         (void)engine_.release();
 }
 
-int Session::start(const MockNavBackendServicesV1& services, Config config) noexcept
+int Session::start(const OpenNaviBackendServicesV1& services, Config config) noexcept
 {
     if (state_ != State::Stopped)
         return -1;
@@ -41,11 +41,11 @@ int Session::start(const MockNavBackendServicesV1& services, Config config) noex
     return 0;
 }
 
-int Session::start_v2(const MockNavBackendServicesV2& services, Config config) noexcept
+int Session::start_v2(const OpenNaviBackendServicesV2& services, Config config) noexcept
 {
     // The V1 prefix carries request_frame; the session keeps the V1 view.
-    MockNavBackendServicesV1 v1 = services.v1;
-    v1.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    OpenNaviBackendServicesV1 v1 = services.v1;
+    v1.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
     v1.struct_size = sizeof(v1);
     const int result = start(v1, std::move(config));
     if (result == 0) {
@@ -74,27 +74,27 @@ int Session::record(Latest<T>& latest, const T& event,
     return 0;
 }
 
-int Session::input(const MockNavBackendVisibilityV1& event) noexcept
+int Session::input(const OpenNaviBackendVisibilityV1& event) noexcept
 {
     return record(visibility_, event, &Engine::visibility);
 }
-int Session::input(const MockNavBackendScreenV1& event) noexcept
+int Session::input(const OpenNaviBackendScreenV1& event) noexcept
 {
     return record(screen_, event, &Engine::screen);
 }
-int Session::input(const MockNavBackendVehicleV2& event) noexcept
+int Session::input(const OpenNaviBackendVehicleV2& event) noexcept
 {
     return record(vehicle_, event, &Engine::vehicle);
 }
-int Session::input(const MockNavBackendInternationalizationV1& event) noexcept
+int Session::input(const OpenNaviBackendInternationalizationV1& event) noexcept
 {
     return record(internationalization_, event, &Engine::internationalization);
 }
-int Session::input(const MockNavBackendClusterDisplayV1& event) noexcept
+int Session::input(const OpenNaviBackendClusterDisplayV1& event) noexcept
 {
     return record(cluster_display_, event, &Engine::cluster_display);
 }
-int Session::input(const MockNavBackendDriverDistractionV1& event) noexcept
+int Session::input(const OpenNaviBackendDriverDistractionV1& event) noexcept
 {
     return record(driver_distraction_, event, &Engine::driver_distraction);
 }
@@ -142,7 +142,7 @@ void Session::release(ReleaseMode mode) noexcept
     }
 }
 
-int Session::attach(const MockNavBackendRenderTargetV1& target) noexcept
+int Session::attach(const OpenNaviBackendRenderTargetV1& target) noexcept
 {
     if (state_ != State::Started ||
         generation_ == std::numeric_limits<uint64_t>::max())
@@ -174,7 +174,7 @@ int Session::attach(const MockNavBackendRenderTargetV1& target) noexcept
     return -1;
 }
 
-int Session::gps(const MockNavBackendGpsV1& event) noexcept
+int Session::gps(const OpenNaviBackendGpsV1& event) noexcept
 {
     if (state_ != State::Started && state_ != State::Attached)
         return -1;
@@ -206,7 +206,7 @@ void Session::pending(PendingStage stage) noexcept
         trace("warning=1024_more_pending_frames_check_core_stage_diagnostics");
 }
 
-FrameResult Session::frame(const MockNavBackendRenderTargetV1& target) noexcept
+FrameResult Session::frame(const OpenNaviBackendRenderTargetV1& target) noexcept
 {
     if (state_ != State::Attached)
         return {FrameOutcome::Fault};
@@ -237,7 +237,7 @@ FrameResult Session::frame(const MockNavBackendRenderTargetV1& target) noexcept
     return result;
 }
 
-int Session::pointer(const MockNavBackendPointerV2& event) noexcept
+int Session::pointer(const OpenNaviBackendPointerV2& event) noexcept
 {
     if (state_ != State::Attached || !engine_)
         return -1;

@@ -7,17 +7,17 @@ set(ONC_PROVIDER_INCLUDES ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR}/compat
 add_library(provider SHARED
   compat/qr39/navicore_compat.c
   compat/qr39/host_callbacks.c
-  runtime/mock_api_telemetry.c
-  runtime/mock_callback_backend.c
-  runtime/mock_cluster_backend.c
-  runtime/mock_gps_backend.c
-  runtime/mock_pointer_backend.c
-  runtime/mock_scalar_backend.c
-  backend/mock_backend_loader.c
-  backend/mock_default_backend.c
-  renderer/mock_renderer.c
-  renderer/mock_screen_input.c
-  platform/qnx/mock_renderer_qnx.c)
+  runtime/open_navi_api_telemetry.c
+  runtime/open_navi_callback_backend.c
+  runtime/open_navi_cluster_backend.c
+  runtime/open_navi_gps_backend.c
+  runtime/open_navi_pointer_backend.c
+  runtime/open_navi_scalar_backend.c
+  backend/open_navi_backend_loader.c
+  backend/open_navi_default_backend.c
+  renderer/open_navi_renderer.c
+  renderer/open_navi_screen_input.c
+  platform/qnx/open_navi_renderer_qnx.c)
 target_include_directories(provider PRIVATE ${ONC_ROOT}/include include compat/qr39 runtime backend
                            renderer)
 target_compile_options(provider PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS} ${ONC_THUMB}

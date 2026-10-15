@@ -5,7 +5,7 @@ This is a standalone open ARM/QNX replacement provider for the QR39.5/QR39.6
 `libNaviCore.so`.
 
 The recovered ABI is documented in
-[`analysis/mock_navicore_abi.md`](../analysis/mock_navicore_abi.md). The mock
+[`analysis/open_navi_abi.md`](../analysis/open_navi_abi.md). The mock
 implements its four unmangled C exports:
 
 - `panaVersionCheck(ServerVersionHeadUnit, client_out, compatibility_out)`
@@ -22,8 +22,8 @@ make test
 ```
 
 The QNX 6.6 ARMv7 little-endian artifacts are `dist/libNaviCore.so` and the
-standalone `dist/mock_navicore_smoke` loader test.
-Intermediate files default to `/tmp/mock-navicore-build`. The SDK locations
+standalone `dist/open_navi_smoke` loader test.
+Intermediate files default to `/tmp/open-navi-navicore-build`. The SDK locations
 can be overridden with `QNX_SDK`, `HOST_LIBS`, `BUILD_DIR`, and `DIST_DIR`.
 
 `make verify` checks ELF32/ARM/little-endian metadata, EABI5 soft-float flags,
@@ -132,14 +132,14 @@ record pointers and returns success synchronously. Static analysis of
 `SI_GPSData::OnLocationUpdateEvent` proves the input is a `0x120`-byte
 little-endian record. Slot 4 copies exactly those bytes to a local array before
 parsing; neither the parser nor backend receives or retains the caller pointer.
-The normalized `MockGpsSnapshot` includes raw altitude, fix, heading, dilution,
+The normalized `OpenNaviGpsSnapshot` includes raw altitude, fix, heading, dilution,
 accuracy, satellite, speed, quality, counter, distance, altitude-change, and
 noise fields at the recovered offsets. Latitude and longitude are signed
 degrees scaled by `1e7`; all other quantities deliberately keep `_raw` names
 because their engineering units and masks are not yet proven. The sixteen
 12-byte satellite entries remain opaque byte arrays.
 
-`mock_gps_backend_submit()` retains diagnostic latest-value state. The same
+`open_navi_gps_backend_submit()` retains diagnostic latest-value state. The same
 owned normalized snapshot is also queued to the versioned map backend seam
 described below. The diagnostic implementation copies the value into
 bounded mutex-protected latest-snapshot state and advances a saturating
@@ -172,10 +172,10 @@ instructions load the provider object into `r0`, execute `vmov r1,s14`, load
 vtable byte offset `0x20`, and `blx` it. Thus this QNX soft-float boundary
 carries the float's exact 32-bit representation in `r1`; the typed C method and
 backend preserve both its float value and diagnostic bit pattern. Disassembly
-of the QNX ARM mock object independently shows `mock_vehicle_speed` moving
+of the QNX ARM mock object independently shows `open_navi_vehicle_speed` moving
 incoming `r1` unchanged into the backend call.
 
-`mock_scalar_backend` synchronously copies these values under a mutex and is
+`open_navi_scalar_backend` synchronously copies these values under a mutex and is
 the isolated future seam for OsmAnd theme, feedback pacing, and prompt-volume
 logic. Per-method saturating call counts and per-domain generations are kept.
 No engineering meaning or range validation is imposed beyond the proven C
@@ -184,7 +184,7 @@ fixed-word acceptance layer rather than a variadic stub. Scalar state resets
 on initialization and deinitialization.
 
 All other `scalar_input` rows from the 36-row v11 provider matrix are also
-typed. Each writes a bounded `mock_api_telemetry` entry keyed by adapter and
+typed. Each writes a bounded `open_navi_api_telemetry` entry keyed by adapter and
 slot: saturating call count, promoted argument count, and the latest four raw
 32-bit argument words. Narrow arguments are zero-extended, no scalar ranges are
 rejected, and no callback is synthesized. The high-value vehicle, GPS interval,
@@ -219,7 +219,7 @@ six pointer-bearing rows now have exact typed entry points. GPS location slot
 
 ## Owned pointer-input seam
 
-`mock_pointer_backend` synchronously converts all six recovered pointer APIs
+`open_navi_pointer_backend` synchronously converts all six recovered pointer APIs
 into owned state under a mutex. It retains no caller or nested pointer, keeps a
 saturating per-method call count plus aggregate generation, and resets on both
 initialization and deinitialization. NULL inputs are accepted as an absent
@@ -324,14 +324,14 @@ Additional backend-driven APIs expose only contracts supported by real state:
   repeating the same state is suppressed only after PAS accepts it. A missing
   callback or nonzero status leaves the state retryable, and attempt tokens
   prevent an older concurrent completion from replacing a newer state.
-- `mock_cluster_backend_publish()` builds the recovered `0xa5c` cluster record,
+- `open_navi_cluster_backend_publish()` builds the recovered `0xa5c` cluster record,
   calculates field-granular changes against the last accepted publication,
   and synchronously forwards it through InstrumentCluster slot 3. A rejected
   callback does not advance publication history.
 - A provider Voice slot-19 request is answered through callback slot 23 with
   that exact incoming handle and the backend's current result/guidance state;
   no timer or captured handle is replayed.
-- `mock_callback_signal_thread_status()` forwards root slot 10 with a terminated
+- `open_navi_callback_signal_thread_status()` forwards root slot 10 with a terminated
   wide name converted from at most 63 input bytes and stores an owned bounded
   diagnostic copy.
 
@@ -346,7 +346,7 @@ navigation state, numeric destination and maneuver distances plus recovered
 units, ETA/RTA bytes, bounded road text, lane-active state, bar fill, compass,
 and both speed-limit fields. Its semantic supported mask deliberately rejects
 route-symbol bit 2, lane bit 7, and unknown bit 12 because their encodings or
-meaning remain unresolved. The lower-level `mock_callback_send_cluster()`
+meaning remain unresolved. The lower-level `open_navi_callback_send_cluster()`
 remains the explicit expert passthrough for a caller that already owns a fully
 verified exact OEM record; it performs no semantic repair.
 
@@ -379,7 +379,7 @@ the last successful commit. Thus a newer successful nested publication cannot
 be overwritten by an older outer completion, while a newer failed nested
 attempt does not suppress an older eventual success. Reset moves to a new epoch
 and invalidates every older in-flight request. The serialization-only
-`mock_cluster_backend_serialize()` seam takes an explicit changed mask, does
+`open_navi_cluster_backend_serialize()` seam takes an explicit changed mask, does
 not publish, and does not modify history.
 
 Cluster transport acquisition and semantic history commit are covered by one
@@ -406,7 +406,7 @@ rules.
 
 ## Reverse callback catalog coverage
 
-`mock_pas_callbacks` is the typed NaviCore-to-PAS dispatch catalog. Its methods
+`open_navi_pas_callbacks` is the typed NaviCore-to-PAS dispatch catalog. Its methods
 take an explicit registered proxy and use a distinct recovered adapter/slot
 signature; catalog presence never causes an emission. Existing startup,
 HMI-reply, audio-transition, cluster, voice-provider-reply, and real thread
@@ -565,7 +565,7 @@ string bounds are invented in the provider wrapper. The stock callback owns
 validation and returns its status directly.
 
 Formerly unclassified slot 3 is now proven to be root
-`SI_SoftwareInfrastructure` slot 3. `mock_pas_root_3` exposes its exact no-arg
+`SI_SoftwareInfrastructure` slot 3. `open_navi_pas_root_3` exposes its exact no-arg
 callback ABI, but the public method name remains unknown and the mock does not
 emit it.
 
@@ -604,7 +604,7 @@ protocol sequence.
 ## Versioned map-backend seam
 
 [`include/open_navicore/backend.h`](include/open_navicore/backend.h) is the stable C
-boundary used by the optional in-process OsmAnd adapter. `MockNavBackendV1`
+boundary used by the optional in-process OsmAnd adapter. `OpenNaviBackendV1`
 and every payload start with `abi_version` and `struct_size`; descriptors are
 copied at registration, and all event payloads are owned copies. The v1
 contract covers backend start/stop, render-surface availability and geometry,
@@ -612,8 +612,8 @@ visibility/interactivity, screen changes, normalized GPS, pointer press,
 release and move, and deterministic frame callbacks. The render target includes the
 native Screen window and EGL display/surface/context handles.
 
-`MockNavBackendV2` is a separate registration contract; the V1 structure and
-`mock_navicore_backend_install_v1()` ABI are unchanged. Its first 48 target
+`OpenNaviBackendV2` is a separate registration contract; the V1 structure and
+`open_navi_backend_install_v1()` ABI are unchanged. Its first 48 target
 bytes are the exact V1 callback prefix, followed by renderer-thread callbacks
 for recovered semantic state:
 
@@ -623,8 +623,8 @@ for recovered semantic state:
 - AudioHandling slots 17/19 publish source and narrow volume, retaining the
   request handle for slot 17 and zero for the slot-19 notification form.
 
-`MockNavBackendV3` preserves the complete V2 prefix and adds only
-`start_v2`, which receives `MockNavBackendServicesV2`. V1 and V2 backends
+`OpenNaviBackendV3` preserves the complete V2 prefix and adds only
+`start_v2`, which receives `OpenNaviBackendServicesV2`. V1 and V2 backends
 still receive the original 16-byte ARM services object, so their binary and
 startup contracts are unchanged. The V2 services prefix retains
 `request_frame` and appends exactly three provider-owned outbound operations:
@@ -633,7 +633,7 @@ startup contracts are unchanged. The V2 services prefix retains
 - publish audio-source availability states 1 through 4;
 - publish a real backend thread's bounded ASCII status.
 
-`MockNavBackendV4` preserves the complete V3 prefix and appends two
+`OpenNaviBackendV4` preserves the complete V3 prefix and appends two
 renderer-thread input callbacks needed by a future map backend. Internationalization
 adapter 7 slot 3 is delivered as a fixed-width payload containing the request
 handle, presence flag, native-little-endian 16-bit language value, and raw
@@ -647,7 +647,7 @@ remain uninterpreted. Both inputs use latest-state mailboxes in the global
 renderer ordering domain and are discarded at lifecycle boundaries. V1/V2/V3
 install descriptors and query-V1/query-V2 handshakes remain unchanged.
 
-`MockNavBackendV5` preserves the complete V4 prefix and appends one raw
+`OpenNaviBackendV5` preserves the complete V4 prefix and appends one raw
 driver-distraction callback. Diagnosis_Navigation adapter 13 slot 3 retains
 its request handle; slot 4 is the subscription notification and carries a
 zero handle. The status remains an uninterpreted `uint32_t` because only raw
@@ -793,20 +793,20 @@ The provider now has one production backend-selection path. During
 `panaInitialize`, after entering `STARTING` but before renderer lifecycle
 preparation, it attempts exactly once per process to load the compile-time
 absolute path
-`/datastore/navicore-backend/libMockNavBackendOsmAnd.so`. There is no
+`/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so`. There is no
 environment override, `LD_LIBRARY_PATH` lookup, basename search, arbitrary
 configuration path, or constructor-based registration. `dlopen` uses
 `RTLD_NOW | RTLD_LOCAL`, and every successfully opened handle is pinned until
 process exit, including a DSO whose query is rejected. Provider teardown never
 calls `dlclose`.
 
-The plugin exports exactly one C function, `mock_nav_backend_query_v1`. The
+The plugin exports exactly one C function, `open_navi_backend_query_v1`. The
 same symbol accepts query ABI V4 first and falls back through the byte-for-byte
 query-V3, query-V2 and query-V1 contracts for older reviewed plugins. Query V4
-copies a `MockNavBackendPluginV4` handshake and V5 descriptor; query V3 copies a
-`MockNavBackendPluginV3` handshake and V4 descriptor into provider-owned
+copies a `OpenNaviBackendPluginV4` handshake and V5 descriptor; query V3 copies a
+`OpenNaviBackendPluginV3` handshake and V4 descriptor into provider-owned
 memory; query V2 continues to copy the prior
-`MockNavBackendPluginV2` handshake and V3 descriptor into provider-owned
+`OpenNaviBackendPluginV2` handshake and V3 descriptor into provider-owned
 memory. The
 provider rejects anything that does not exactly match both magic words, query
 ABI and structure size, byte-order tag, pointer width, V1/V2 descriptor and
@@ -841,7 +841,7 @@ callback. Normal cleanup calls every successfully surfaced backend's
 again. Stale copied frame services remain rejected by the renderer generation
 token.
 
-`dist/libMockNavBackendReference.so` is a tiny, visibly rendering QNX ARM
+`dist/libOpenNaviBackendReference.so` is a tiny, visibly rendering QNX ARM
 reference plugin, not OsmAnd. In `render_frame` it uses the provider-current
 GLES2 context, resets the framebuffer, scissor, color-mask, and viewport state,
 clears the complete target to cyan, finishes the draw, and reports any GL
@@ -864,7 +864,7 @@ rejection, cleanup ordering, and pinned handles.
 `tests/check_plugin_elf.sh` additionally enforces ARM/EABI metadata,
 the exact export set, no RPATH/RUNPATH/TEXTREL, and an allowlist containing
 only `libc.so.3` and the SDK's actual `libGLESv2.so.1` SONAME.
-`dist/libMockNavBackendOutboundTest.so` is the separately named QNX build of
+`dist/libOpenNaviBackendOutboundTest.so` is the separately named QNX build of
 that controlled path. Once per successful service-enabled lifecycle, on render sequence
 one, it publishes cluster valid mask `0x0003` (follow-street `1`, no-route
 `3`), audio availability `1`, and thread `(id=1, status=1,
@@ -872,16 +872,16 @@ name=ref-worker)`. Its trace records the trigger, all values, and each service
 return code. It is a live-test artifact and must not replace the production
 reference plugin after the test.
 At the typed PAS boundary the provider also records one bounded line per
-attempt in `/tmp/mock-navicore.log`: cluster adapter/slot, fixed `0xa5c` size,
+attempt in `/tmp/open-navi-navicore.log`: cluster adapter/slot, fixed `0xa5c` size,
 route/navigation bytes, little-endian changed/valid masks and PAS status;
 audio adapter 10 slot 10, state and status; and root slot 10, thread ID,
 normalized ASCII name (at most 63 bytes), thread status and PAS status. These
 records are emitted after the synchronous PAS call returns and do not change
 callback results or accepted-history behavior.
-`dist/mock_nav_backend_plugin_smoke` is an ARM/QNX loader
+`dist/open_navi_backend_plugin_smoke` is an ARM/QNX loader
 harness for the production provider bootstrap. On a target, install the
 reviewed reference plugin at the production absolute path, then run
-`mock_nav_backend_plugin_smoke ./libNaviCore.so`; it succeeds only if
+`open_navi_backend_plugin_smoke ./libNaviCore.so`; it succeeds only if
 `panaInitialize` causes that plugin's query to run, the real proxy/readiness
 sequence reaches renderer creation, and normal teardown records plugin
 start/surface-created/surface-destroyed/stale-service rejection/stop. The
@@ -889,7 +889,7 @@ harness does not call the registration export or load a caller-supplied plugin
 path. It is built and ELF-checked offline here, but still requires a QNX target
 to execute.
 
-The reference-plugin trace at `/tmp/mock-nav-reference-plugin.log` records
+The reference-plugin trace at `/tmp/open-navi-reference-plugin.log` records
 `query_v4`, `query_v3`, `query_v2`, or `query_v1` for every requested query contract and records
 `start_v2` on entry to the service-enabled startup callback. A live V5 selection is
 therefore proven by `query_v4`, `start_v2`, and the normal surface/render
@@ -909,7 +909,7 @@ lifecycle/context-loss tests for the foundation refactor remain a bench task.
 ## Observable startup trace
 
 Every exported call and adapter request is sent to syslog and also appended to
-`/tmp/mock-navicore.log`. The file trace uses only libc/POSIX
+`/tmp/open-navi-navicore.log`. The file trace uses only libc/POSIX
 `open(O_APPEND)`, `write`, and `close`; it is best effort, bounded to one short
 line per event, preserves the caller's `errno`, and never changes an ABI return
 value. This provides direct proof of how far the loader progressed even when
@@ -923,10 +923,10 @@ diagnostic output and remove it from later production-oriented builds.
 ## On-target loader smoke test
 
 Before involving the stock service, copy `libNaviCore.so` and
-`mock_navicore_smoke` to a writable test directory on a QNX target and run:
+`open_navi_smoke` to a writable test directory on a QNX target and run:
 
 ```sh
-./mock_navicore_smoke ./libNaviCore.so
+./open_navi_smoke ./libNaviCore.so
 ```
 
 The harness performs `dlopen(RTLD_NOW)`, resolves all four exports, calls the
@@ -935,7 +935,7 @@ for adapter enum 0, calls deinitialization, and closes the DSO. It prints each
 checkpoint and exits zero only after the complete sequence. This is a
 standalone provider test; it does not start, stop, configure, or replace the
 stock navigation service. The provider also records the calls in
-`/tmp/mock-navicore.log`.
+`/tmp/open-navi-navicore.log`.
 
 ## Current safety boundary
 

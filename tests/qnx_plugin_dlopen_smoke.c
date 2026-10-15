@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200112L
 
-#include "mock_navicore.h"
+#include "open_navi.h"
 
 #include <dlfcn.h>
 #include <errno.h>
@@ -12,7 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define REFERENCE_TRACE_PATH "/tmp/mock-nav-reference-plugin.log"
+#define REFERENCE_TRACE_PATH "/tmp/open-navi-reference-plugin.log"
 
 typedef uint32_t (*Initialize)(const void *record);
 typedef void *(*GetInfrastructure)(void);
@@ -124,7 +124,7 @@ int main(int argc, char **argv)
         (void)fprintf(stderr,
             "usage: %s provider.so\n"
             "install the reviewed reference plugin first at "
-            "/datastore/navicore-backend/libMockNavBackendOsmAnd.so\n",
+            "/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so\n",
             argv[0]);
         return 2;
     }

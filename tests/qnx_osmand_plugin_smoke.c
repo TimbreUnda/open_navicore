@@ -7,13 +7,13 @@
 
 int main(int argc, char **argv)
 {
-    static const uint8_t expected_id[MOCK_NAV_PLUGIN_BUILD_ID_BYTES] =
-        MOCK_NAV_PLUGIN_EXPECTED_BUILD_ID_INITIALIZER;
-    MockNavBackendPluginV1 plugin;
-    MockNavBackendPluginQueryV1 query;
+    static const uint8_t expected_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
+        OPEN_NAVI_PLUGIN_EXPECTED_BUILD_ID_INITIALIZER;
+    OpenNaviBackendPluginV1 plugin;
+    OpenNaviBackendPluginQueryV1 query;
     union {
         void *object;
-        MockNavBackendPluginQueryV1 function;
+        OpenNaviBackendPluginQueryV1 function;
     } conversion;
     void *handle;
     const char *error;
@@ -28,7 +28,7 @@ int main(int argc, char **argv)
         return 3;
     }
     (void)dlerror();
-    conversion.object = dlsym(handle, "mock_nav_backend_query_v1");
+    conversion.object = dlsym(handle, "open_navi_backend_query_v1");
     error = dlerror();
     if (error != NULL || conversion.object == NULL) {
         fprintf(stderr, "query symbol failed: %s\n",
@@ -37,14 +37,14 @@ int main(int argc, char **argv)
     }
     query = conversion.function;
     memset(&plugin, 0, sizeof(plugin));
-    if (query(MOCK_NAV_PLUGIN_QUERY_ABI_V1, sizeof(plugin), &plugin) != 0)
+    if (query(OPEN_NAVI_PLUGIN_QUERY_ABI_V1, sizeof(plugin), &plugin) != 0)
         return 5;
-    if (plugin.magic0 != MOCK_NAV_PLUGIN_MAGIC0 ||
-        plugin.magic1 != MOCK_NAV_PLUGIN_MAGIC1 ||
-        plugin.query_abi_version != MOCK_NAV_PLUGIN_QUERY_ABI_V1 ||
+    if (plugin.magic0 != OPEN_NAVI_PLUGIN_MAGIC0 ||
+        plugin.magic1 != OPEN_NAVI_PLUGIN_MAGIC1 ||
+        plugin.query_abi_version != OPEN_NAVI_PLUGIN_QUERY_ABI_V1 ||
         plugin.struct_size != sizeof(plugin) ||
         plugin.pointer_bytes != sizeof(void *) ||
-        plugin.backend_abi_version != MOCK_NAV_BACKEND_ABI_V2 ||
+        plugin.backend_abi_version != OPEN_NAVI_BACKEND_ABI_V2 ||
         memcmp(plugin.build_id, expected_id, sizeof(expected_id)) != 0 ||
         plugin.backend.v1.start == NULL ||
         plugin.backend.v1.surface_created == NULL ||

@@ -13,7 +13,7 @@
 #
 # Environment:
 #   RADIO_HOST (192.168.2.8), RADIO_SSH_KEY ($HOME/priv_openssh)
-#   ACTIVE  installed path (/datastore/navicore-backend/libMockNavBackendOsmAnd.so)
+#   ACTIVE  installed path (/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so)
 #   MATCH   name pidin shows while it is mapped (BackendOsmAnd)
 #   RADIO_SYNC    flush helper on the unit, run as "$RADIO_SYNC <path>" (the
 #                 unit has no sync); empty skips flushing
@@ -27,7 +27,7 @@ HOST=root@${RADIO_HOST:-192.168.2.8}
 KEY=${RADIO_SSH_KEY:-$HOME/priv_openssh}
 OPTS=(-oHostKeyAlgorithms=+ssh-dss -oPubkeyAcceptedAlgorithms=+ssh-rsa
       -oBatchMode=yes -oConnectTimeout=10 -i "$KEY")
-ACTIVE=${ACTIVE:-/datastore/navicore-backend/libMockNavBackendOsmAnd.so}
+ACTIVE=${ACTIVE:-/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so}
 MATCH=${MATCH:-BackendOsmAnd}
 SYNC=${RADIO_SYNC-/datastore/navicore-mock-final-a1/navicore_sync}
 FSFREE=${RADIO_FSFREE-/tmp/fsfree}

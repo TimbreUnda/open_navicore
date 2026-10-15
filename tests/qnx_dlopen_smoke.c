@@ -1,4 +1,4 @@
-#include "mock_navicore.h"
+#include "open_navi.h"
 
 #include <dlfcn.h>
 #include <stdint.h>

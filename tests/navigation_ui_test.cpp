@@ -104,9 +104,9 @@ void settle(NavigationView& view, int frames)
 // Holds each phase for 64 ms like a real touch (LVGL press timing).
 void tap(NavigationView& view, int32_t x, int32_t y)
 {
-    view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, x, y);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, x, y);
     settle(view, 4);
-    view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, x, y);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, x, y);
     settle(view, 4);
 }
 
@@ -176,30 +176,30 @@ void test_car_controls()
         assert(model.take_map_touch(touch) && touch.gesture == MapGesture::Tap &&
                touch.x == column_x);
         assert(!model.take_map_touch(touch));
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 600, 300);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 640, 320);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 600, 300);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, 640, 320);
         frame(view);
         assert(model.take_drag(drag) && drag.started && drag.active);
         assert(drag.start_x == 600 && drag.start_y == 300 && drag.x == 640 && drag.y == 320);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 650, 330);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 650, 330);
         frame(view);
         assert(model.take_drag(drag) && !drag.started && !drag.active);
         assert(drag.x == 650 && drag.y == 330);
         assert(!model.take_drag(drag));
         assert(!model.take_map_touch(touch));
         // A small wobble is still a tap, not a drag.
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 600, 300);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 604, 303);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 600, 300);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, 604, 303);
         settle(view, 2);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 604, 303);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 604, 303);
         settle(view, 2);
         assert(!model.take_drag(drag));
         assert(model.take_map_touch(touch) && touch.gesture == MapGesture::Tap &&
                touch.x == 600 && touch.y == 300);
         assert(!model.take_map_touch(touch));
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, column_x, button_y(0));
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, column_x - 60, 300);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, column_x - 60, 300);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, column_x, button_y(0));
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, column_x - 60, 300);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, column_x - 60, 300);
         settle(view, 4);
         assert(!model.take_drag(drag));
         assert(!model.take_map_touch(touch));
@@ -226,7 +226,7 @@ void test_car_controls()
 
         // Holding still for 600 ms is a long press, noticed while the
         // finger rests (frames keep coming); no tap or drag follows.
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 620, 280);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 620, 280);
         frame(view);
         assert(view.wants_frames());
         settle(view, 30);  // 480 ms
@@ -235,54 +235,54 @@ void test_car_controls()
         assert(model.take_map_touch(touch) && touch.gesture == MapGesture::LongPress &&
                touch.x == 620 && touch.y == 280);
         assert(!view.wants_frames());
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 700, 300);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 700, 300);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, 700, 300);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 700, 300);
         settle(view, 2);
         assert(!model.take_map_touch(touch) && !model.take_drag(drag));
         // A second finger turns a drag into a pinch: the drag ends, the
         // pinch reports both fingers, and lifting either ends it with no
         // tap, drag or long press from the finger left down.
         MapPinch pinch;
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 500, 300);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 540, 300);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 500, 300);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, 540, 300);
         frame(view);
         assert(model.take_drag(drag) && drag.started);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 700, 300, 1);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 700, 300, 1);
         frame(view);
         assert(model.take_drag(drag) && !drag.active);
         assert(model.take_pinch(pinch) && pinch.started && pinch.active);
         assert(pinch.x0 == 540 && pinch.x1 == 700);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 760, 320, 1);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 520, 290);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, 760, 320, 1);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, 520, 290);
         frame(view);
         assert(model.take_pinch(pinch) && !pinch.started && pinch.active);
         assert(pinch.x0 == 520 && pinch.y0 == 290 && pinch.x1 == 760 && pinch.y1 == 320);
         assert(!model.take_drag(drag));
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 760, 320, 1);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 760, 320, 1);
         frame(view);
         assert(model.take_pinch(pinch) && !pinch.active);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 400, 200);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, 400, 200);
         settle(view, 45);  // past the long-press time
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 400, 200);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 400, 200);
         settle(view, 2);
         assert(!model.take_pinch(pinch) && !model.take_drag(drag));
         assert(!model.take_map_touch(touch));
         // A second finger alone (first one on a control) does nothing.
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, column_x, button_y(0));
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 600, 300, 1);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 600, 300, 1);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, column_x, button_y(0));
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, column_x, button_y(0));
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 600, 300, 1);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 600, 300, 1);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, column_x, button_y(0));
         settle(view, 4);
         assert(!model.take_pinch(pinch));
         (void)commands(model);
         settle(view, 30);
 
         // Moving past the slop first makes it a drag, never a long press.
-        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 620, 280);
-        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 660, 280);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 620, 280);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_MOVE, 660, 280);
         settle(view, 45);
         assert(!view.wants_frames());
-        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 660, 280);
+        view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 660, 280);
         settle(view, 2);
         assert(!model.take_map_touch(touch));
         assert(model.take_drag(drag) && !drag.active);
@@ -450,29 +450,29 @@ void test_place_card_and_back()
     assert(model.routes().empty() && !model.destination());
 }
 
-// The provider's serializer rules (src/runtime/mock_cluster_backend.c):
+// The provider's serializer rules (src/runtime/open_navi_cluster_backend.c):
 // only supported fields, values inside the recovered ranges.
 void check_cluster_valid(const navicore_osmand::ClusterPayload& payload)
 {
     const auto& c = payload.cluster;
     const unsigned valid = c.valid_attributes;
-    assert(c.abi_version == MOCK_NAV_BACKEND_PAYLOAD_ABI_V1 && c.struct_size == sizeof(c));
-    assert((valid & ~unsigned(MOCK_CLUSTER_SEMANTIC_SUPPORTED_MASK)) == 0u);
-    if (valid & MOCK_CLUSTER_ROUTE_GUIDANCE_STATE)
+    assert(c.abi_version == OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1 && c.struct_size == sizeof(c));
+    assert((valid & ~unsigned(OPEN_NAVI_CLUSTER_SEMANTIC_SUPPORTED_MASK)) == 0u);
+    if (valid & OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE)
         assert(c.route_guidance_state >= 1 && c.route_guidance_state <= 7);
-    if (valid & MOCK_CLUSTER_NAVIGATION_STATUS)
+    if (valid & OPEN_NAVI_CLUSTER_NAVIGATION_STATUS)
         assert(c.navigation_status >= 1 && c.navigation_status <= 8);
-    if (valid & MOCK_CLUSTER_DISTANCE_DESTINATION)
+    if (valid & OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION)
         assert(c.distance_destination_unit >= 1 && c.distance_destination_unit <= 5 &&
                c.distance_destination <= 65535u);
-    if (valid & MOCK_CLUSTER_DISTANCE_MANEUVER)
+    if (valid & OPEN_NAVI_CLUSTER_DISTANCE_MANEUVER)
         assert(c.distance_maneuver_unit >= 1 && c.distance_maneuver_unit <= 5 &&
                c.distance_maneuver_tenths <= 65535u);
-    if (valid & MOCK_CLUSTER_BAR_PERCENT)
+    if (valid & OPEN_NAVI_CLUSTER_BAR_PERCENT)
         assert(c.bar_percent <= 100);
-    if (valid & MOCK_CLUSTER_COMPASS)
+    if (valid & OPEN_NAVI_CLUSTER_COMPASS)
         assert(c.compass >= 1 && c.compass <= 8);
-    if (valid & MOCK_CLUSTER_SPEED_LIMIT)
+    if (valid & OPEN_NAVI_CLUSTER_SPEED_LIMIT)
         assert(c.speed_unit >= 1 && c.speed_unit <= 2);
     assert(c.current_road.byte_count == payload.current_road.size());
     assert(c.next_road.byte_count == payload.next_road.size());
@@ -488,16 +488,16 @@ void test_cluster_payload()
     // Not guiding: "no route"; while a route is calculated: "calculation".
     auto p = build_cluster_payload(in);
     check_cluster_valid(p);
-    assert(p.cluster.valid_attributes == MOCK_CLUSTER_NAVIGATION_STATUS);
-    assert(p.cluster.navigation_status == MOCK_CLUSTER_NAV_NO_ROUTE);
+    assert(p.cluster.valid_attributes == OPEN_NAVI_CLUSTER_NAVIGATION_STATUS);
+    assert(p.cluster.navigation_status == OPEN_NAVI_CLUSTER_NAV_NO_ROUTE);
     in.calculating_route = true;
     assert(build_cluster_payload(in).cluster.navigation_status ==
-           MOCK_CLUSTER_NAV_ROUTE_CALCULATION);
+           OPEN_NAVI_CLUSTER_NAV_ROUTE_CALCULATION);
     // Guidance without a fix.
     in.screen = Screen::Guidance;
     p = build_cluster_payload(in);
     check_cluster_valid(p);
-    assert(p.cluster.navigation_status == MOCK_CLUSTER_NAV_DIRECTION_NOT_AVAILABLE);
+    assert(p.cluster.navigation_status == OPEN_NAVI_CLUSTER_NAV_DIRECTION_NOT_AVAILABLE);
     // 250 m before a left turn, 2.4 km and 7 min to go, heading east.
     in.guidance.position_available = true;
     in.guidance.distance_to_maneuver_metres = 250.0;
@@ -512,17 +512,17 @@ void test_cluster_payload()
     p = build_cluster_payload(in);
     check_cluster_valid(p);
     const auto& c = p.cluster;
-    assert(c.route_guidance_state == MOCK_CLUSTER_ROUTE_MANOEUVRE_ANNOUNCEMENT);
-    assert(!(c.valid_attributes & MOCK_CLUSTER_NAVIGATION_STATUS));
+    assert(c.route_guidance_state == OPEN_NAVI_CLUSTER_ROUTE_MANOEUVRE_ANNOUNCEMENT);
+    assert(!(c.valid_attributes & OPEN_NAVI_CLUSTER_NAVIGATION_STATUS));
     assert(c.distance_destination == 2 &&
-           c.distance_destination_unit == MOCK_CLUSTER_DISTANCE_KILOMETRES);
+           c.distance_destination_unit == OPEN_NAVI_CLUSTER_DISTANCE_KILOMETRES);
     assert(c.distance_maneuver_tenths == 2500 &&
-           c.distance_maneuver_unit == MOCK_CLUSTER_DISTANCE_METRES);
+           c.distance_maneuver_unit == OPEN_NAVI_CLUSTER_DISTANCE_METRES);
     assert(c.rta_hour == 0 && c.rta_minute == 7);
-    assert(c.valid_attributes & MOCK_CLUSTER_ETA);
+    assert(c.valid_attributes & OPEN_NAVI_CLUSTER_ETA);
     assert(c.bar_percent == 63);
-    assert(c.compass == MOCK_CLUSTER_COMPASS_E);
-    assert(c.speed_limit == 50 && c.speed_unit == MOCK_CLUSTER_SPEED_KMH);
+    assert(c.compass == OPEN_NAVI_CLUSTER_COMPASS_E);
+    assert(c.speed_limit == 50 && c.speed_unit == OPEN_NAVI_CLUSTER_SPEED_KMH);
     assert(p.current_road == "бульвар Тараса Шевченка" && p.next_road == "вулиця Антоновича");
     assert(std::string(c.current_road.bytes, c.current_road.byte_count) == p.current_road);
     // A copy compares equal and rebinds its spans to its own strings.
@@ -532,20 +532,20 @@ void test_cluster_payload()
     // At the turn; far from it (no countdown); km distances in tenths.
     in.guidance.distance_to_maneuver_metres = 30.0;
     assert(build_cluster_payload(in).cluster.route_guidance_state ==
-           MOCK_CLUSTER_ROUTE_MANOEUVRE);
+           OPEN_NAVI_CLUSTER_ROUTE_MANOEUVRE);
     in.guidance.distance_to_maneuver_metres = 1250.0;
     p = build_cluster_payload(in);
     check_cluster_valid(p);
-    assert(p.cluster.route_guidance_state == MOCK_CLUSTER_ROUTE_FOLLOW_STREET);
-    assert(!(p.cluster.valid_attributes & MOCK_CLUSTER_BAR_PERCENT));
+    assert(p.cluster.route_guidance_state == OPEN_NAVI_CLUSTER_ROUTE_FOLLOW_STREET);
+    assert(!(p.cluster.valid_attributes & OPEN_NAVI_CLUSTER_BAR_PERCENT));
     assert(p.cluster.distance_maneuver_tenths == 13 &&
-           p.cluster.distance_maneuver_unit == MOCK_CLUSTER_DISTANCE_KILOMETRES);
+           p.cluster.distance_maneuver_unit == OPEN_NAVI_CLUSTER_DISTANCE_KILOMETRES);
     assert(!p.same_as(copy));
     // Compass sectors around north.
     const std::vector<std::pair<double, int>> sectors = {
-        {0.0, MOCK_CLUSTER_COMPASS_N}, {359.0, MOCK_CLUSTER_COMPASS_N},
-        {337.4, MOCK_CLUSTER_COMPASS_NW}, {22.6, MOCK_CLUSTER_COMPASS_NE},
-        {-90.0, MOCK_CLUSTER_COMPASS_W}, {180.0, MOCK_CLUSTER_COMPASS_S}};
+        {0.0, OPEN_NAVI_CLUSTER_COMPASS_N}, {359.0, OPEN_NAVI_CLUSTER_COMPASS_N},
+        {337.4, OPEN_NAVI_CLUSTER_COMPASS_NW}, {22.6, OPEN_NAVI_CLUSTER_COMPASS_NE},
+        {-90.0, OPEN_NAVI_CLUSTER_COMPASS_W}, {180.0, OPEN_NAVI_CLUSTER_COMPASS_S}};
     for (const auto& sector : sectors) {
         in.heading_degrees = sector.first;
         assert(build_cluster_payload(in).cluster.compass == sector.second);
@@ -553,16 +553,16 @@ void test_cluster_payload()
     // Recalculating; arrived (no distances).
     in.guidance.recalculating = true;
     p = build_cluster_payload(in);
-    assert(p.cluster.route_guidance_state == MOCK_CLUSTER_ROUTE_RECALCULATION &&
-           p.cluster.navigation_status == MOCK_CLUSTER_NAV_ROUTE_CALCULATION);
+    assert(p.cluster.route_guidance_state == OPEN_NAVI_CLUSTER_ROUTE_RECALCULATION &&
+           p.cluster.navigation_status == OPEN_NAVI_CLUSTER_NAV_ROUTE_CALCULATION);
     in.guidance.recalculating = false;
     in.guidance.arrived = true;
     p = build_cluster_payload(in);
     check_cluster_valid(p);
-    assert(p.cluster.route_guidance_state == MOCK_CLUSTER_ROUTE_DESTINATION_REACHED);
+    assert(p.cluster.route_guidance_state == OPEN_NAVI_CLUSTER_ROUTE_DESTINATION_REACHED);
     assert(!(p.cluster.valid_attributes &
-             (MOCK_CLUSTER_DISTANCE_DESTINATION | MOCK_CLUSTER_DISTANCE_MANEUVER |
-              MOCK_CLUSTER_BAR_PERCENT)));
+             (OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION | OPEN_NAVI_CLUSTER_DISTANCE_MANEUVER |
+              OPEN_NAVI_CLUSTER_BAR_PERCENT)));
 }
 
 void test_dev_menu()
@@ -577,9 +577,9 @@ void test_dev_menu()
     model.take_map_commands(taken);
     assert((taken == std::vector<MapCommand>{MapCommand::ToggleNight}));
     // Holding it 1.5 s opens the developer menu instead (no toggle).
-    view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, night_x, night_y);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, night_x, night_y);
     settle(view, 100);
-    view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, night_x, night_y);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, night_x, night_y);
     settle(view, 2);
     assert(model.dev_menu_open());
     model.take_map_commands(taken);
@@ -757,17 +757,17 @@ int main()
                static_cast<std::uint64_t>(view.width()) * view.height());
     }
     // Startup Screen events are quarantined until the first stable frames.
-    view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 80, 40);
-    view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 80, 40);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 80, 40);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 80, 40);
     frame(view);
     assert(model.screen() == Screen::FreeDrive);
     for (int i = 2; i < 30; ++i)
         frame(view);
     // Exercise the real provider action constants through LVGL's input queue.
-    view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 80, 40);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 80, 40);
     frame(view);
     frame(view);
-    view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 80, 40);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 80, 40);
     frame(view);
     frame(view);
     assert(model.screen() == Screen::Search);
@@ -783,10 +783,10 @@ int main()
           "9.4 km", 50.43, 30.51}}));
     assert(model.results().size() == 2);
     frame(view);
-    view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 100, 120);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_PRESS, 100, 120);
     frame(view);
     frame(view);
-    view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 100, 120);
+    view.pointer(OPEN_NAVI_BACKEND_POINTER_RELEASE, 100, 120);
     frame(view);
     frame(view);
     assert(model.destination());

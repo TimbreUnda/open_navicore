@@ -1,9 +1,9 @@
 #define _POSIX_C_SOURCE 200112L
 
-#include "mock_backend_loader.h"
+#include "open_navi_backend_loader.h"
 
-#include "mock_default_backend.h"
-#include "mock_renderer.h"
+#include "open_navi_default_backend.h"
+#include "open_navi_renderer.h"
 
 #include <dlfcn.h>
 #include <pthread.h>
@@ -11,9 +11,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifndef MOCK_NAV_BACKEND_PLUGIN_PATH
-#define MOCK_NAV_BACKEND_PLUGIN_PATH \
-    "/datastore/navicore-backend/libMockNavBackendOsmAnd.so"
+#ifndef OPEN_NAVI_BACKEND_PLUGIN_PATH
+#define OPEN_NAVI_BACKEND_PLUGIN_PATH \
+    "/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so"
 #endif
 
 typedef enum {
@@ -25,15 +25,15 @@ typedef struct {
     pthread_mutex_t lock;
     pthread_once_t once;
     void *pinned_handle;
-    MockNavBackendV2 plugin;
-    MockNavBackendV3 plugin_v3;
-    MockNavBackendV4 plugin_v4;
-    MockNavBackendV5 plugin_v5;
-    MockNavBackendV2 wrapper;
-    MockNavBackendV3 wrapper_v3;
-    MockNavBackendV4 wrapper_v4;
-    MockNavBackendV5 wrapper_v5;
-    MockNavBackendServicesV2 upstream_services;
+    OpenNaviBackendV2 plugin;
+    OpenNaviBackendV3 plugin_v3;
+    OpenNaviBackendV4 plugin_v4;
+    OpenNaviBackendV5 plugin_v5;
+    OpenNaviBackendV2 wrapper;
+    OpenNaviBackendV3 wrapper_v3;
+    OpenNaviBackendV4 wrapper_v4;
+    OpenNaviBackendV5 wrapper_v5;
+    OpenNaviBackendServicesV2 upstream_services;
     uintptr_t next_plugin_service_token;
     uintptr_t active_plugin_service_token;
     uint32_t query_abi;
@@ -42,7 +42,7 @@ typedef struct {
     int plugin_surfaced;
     int default_started;
     int default_surfaced;
-    MockBackendLoaderTestState test;
+    OpenNaviBackendLoaderTestState test;
 } LoaderRuntime;
 
 static LoaderRuntime g_loader = {
@@ -50,14 +50,14 @@ static LoaderRuntime g_loader = {
     .once = PTHREAD_ONCE_INIT
 };
 
-static const uint8_t g_expected_build_id[MOCK_NAV_PLUGIN_BUILD_ID_BYTES] =
-    MOCK_NAV_PLUGIN_EXPECTED_BUILD_ID_INITIALIZER;
-static const uint8_t g_v2_expected_build_id[MOCK_NAV_PLUGIN_BUILD_ID_BYTES] =
-    MOCK_NAV_PLUGIN_V2_EXPECTED_BUILD_ID_INITIALIZER;
-static const uint8_t g_v3_expected_build_id[MOCK_NAV_PLUGIN_BUILD_ID_BYTES] =
-    MOCK_NAV_PLUGIN_V3_EXPECTED_BUILD_ID_INITIALIZER;
-static const uint8_t g_v4_expected_build_id[MOCK_NAV_PLUGIN_BUILD_ID_BYTES] =
-    MOCK_NAV_PLUGIN_V4_EXPECTED_BUILD_ID_INITIALIZER;
+static const uint8_t g_expected_build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
+    OPEN_NAVI_PLUGIN_EXPECTED_BUILD_ID_INITIALIZER;
+static const uint8_t g_v2_expected_build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
+    OPEN_NAVI_PLUGIN_V2_EXPECTED_BUILD_ID_INITIALIZER;
+static const uint8_t g_v3_expected_build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
+    OPEN_NAVI_PLUGIN_V3_EXPECTED_BUILD_ID_INITIALIZER;
+static const uint8_t g_v4_expected_build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
+    OPEN_NAVI_PLUGIN_V4_EXPECTED_BUILD_ID_INITIALIZER;
 
 static void set_diagnostic(char *output, size_t capacity,
                            const char *format, ...)
@@ -70,10 +70,10 @@ static void set_diagnostic(char *output, size_t capacity,
     output[capacity - 1u] = '\0';
 }
 
-static void set_fallback(enum MockBackendFallbackReason reason)
+static void set_fallback(enum OpenNaviBackendFallbackReason reason)
 {
     (void)pthread_mutex_lock(&g_loader.lock);
-    if (g_loader.test.fallback_reason == MOCK_BACKEND_FALLBACK_NONE)
+    if (g_loader.test.fallback_reason == OPEN_NAVI_BACKEND_FALLBACK_NONE)
         g_loader.test.fallback_reason = (uint32_t)reason;
     (void)pthread_mutex_unlock(&g_loader.lock);
 }
@@ -92,7 +92,7 @@ static void set_flag(uint32_t *flag)
     (void)pthread_mutex_unlock(&g_loader.lock);
 }
 
-int mock_backend_plugin_validate(const MockNavBackendPluginV1 *plugin,
+int open_navi_backend_plugin_validate(const OpenNaviBackendPluginV1 *plugin,
                                  char *diagnostic,
                                  size_t diagnostic_capacity)
 {
@@ -106,40 +106,40 @@ int mock_backend_plugin_validate(const MockNavBackendPluginV1 *plugin,
             return -1;                                                        \
         }                                                                     \
     } while (0)
-    const MockNavBackendV1 *backend;
+    const OpenNaviBackendV1 *backend;
     if (plugin == NULL) {
         set_diagnostic(diagnostic, diagnostic_capacity, "null plugin query");
         return -1;
     }
-    REQUIRE_EQUAL(magic0, MOCK_NAV_PLUGIN_MAGIC0);
-    REQUIRE_EQUAL(magic1, MOCK_NAV_PLUGIN_MAGIC1);
-    REQUIRE_EQUAL(query_abi_version, MOCK_NAV_PLUGIN_QUERY_ABI_V1);
+    REQUIRE_EQUAL(magic0, OPEN_NAVI_PLUGIN_MAGIC0);
+    REQUIRE_EQUAL(magic1, OPEN_NAVI_PLUGIN_MAGIC1);
+    REQUIRE_EQUAL(query_abi_version, OPEN_NAVI_PLUGIN_QUERY_ABI_V1);
     REQUIRE_EQUAL(struct_size, sizeof(*plugin));
-    REQUIRE_EQUAL(endian_tag, MOCK_NAV_PLUGIN_ENDIAN_TAG);
+    REQUIRE_EQUAL(endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
     REQUIRE_EQUAL(pointer_bytes, sizeof(void *));
-    REQUIRE_EQUAL(backend_abi_version, MOCK_NAV_BACKEND_ABI_V2);
-    REQUIRE_EQUAL(backend_v1_size, sizeof(MockNavBackendV1));
-    REQUIRE_EQUAL(backend_v2_size, sizeof(MockNavBackendV2));
+    REQUIRE_EQUAL(backend_abi_version, OPEN_NAVI_BACKEND_ABI_V2);
+    REQUIRE_EQUAL(backend_v1_size, sizeof(OpenNaviBackendV1));
+    REQUIRE_EQUAL(backend_v2_size, sizeof(OpenNaviBackendV2));
     REQUIRE_EQUAL(render_target_v1_size,
-                  sizeof(MockNavBackendRenderTargetV1));
-    REQUIRE_EQUAL(frame_v1_size, sizeof(MockNavBackendFrameV1));
-    REQUIRE_EQUAL(gps_v1_size, sizeof(MockNavBackendGpsV1));
-    REQUIRE_EQUAL(visibility_v1_size, sizeof(MockNavBackendVisibilityV1));
-    REQUIRE_EQUAL(screen_v1_size, sizeof(MockNavBackendScreenV1));
-    REQUIRE_EQUAL(pointer_v1_size, sizeof(MockNavBackendPointerV1));
-    REQUIRE_EQUAL(services_v1_size, sizeof(MockNavBackendServicesV1));
-    REQUIRE_EQUAL(vehicle_v2_size, sizeof(MockNavBackendVehicleV2));
+                  sizeof(OpenNaviBackendRenderTargetV1));
+    REQUIRE_EQUAL(frame_v1_size, sizeof(OpenNaviBackendFrameV1));
+    REQUIRE_EQUAL(gps_v1_size, sizeof(OpenNaviBackendGpsV1));
+    REQUIRE_EQUAL(visibility_v1_size, sizeof(OpenNaviBackendVisibilityV1));
+    REQUIRE_EQUAL(screen_v1_size, sizeof(OpenNaviBackendScreenV1));
+    REQUIRE_EQUAL(pointer_v1_size, sizeof(OpenNaviBackendPointerV1));
+    REQUIRE_EQUAL(services_v1_size, sizeof(OpenNaviBackendServicesV1));
+    REQUIRE_EQUAL(vehicle_v2_size, sizeof(OpenNaviBackendVehicleV2));
     REQUIRE_EQUAL(gps_interval_v2_size,
-                  sizeof(MockNavBackendGpsIntervalV2));
-    REQUIRE_EQUAL(audio_v2_size, sizeof(MockNavBackendAudioV2));
+                  sizeof(OpenNaviBackendGpsIntervalV2));
+    REQUIRE_EQUAL(audio_v2_size, sizeof(OpenNaviBackendAudioV2));
     /* Optional capabilities (pointer contacts) may be added to the exact
      * required set in every query version. */
-    if ((plugin->capabilities & ~(uint32_t)MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES) !=
-        (uint32_t)MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES) {
+    if ((plugin->capabilities & ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES) !=
+        (uint32_t)OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES) {
         set_diagnostic(diagnostic, diagnostic_capacity,
                        "plugin capabilities mismatch got=%u expected=%u",
                        (unsigned int)plugin->capabilities,
-                       (unsigned int)MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
+                       (unsigned int)OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
         return -1;
     }
     if (memcmp(plugin->build_id, g_expected_build_id,
@@ -149,8 +149,8 @@ int mock_backend_plugin_validate(const MockNavBackendPluginV1 *plugin,
         return -1;
     }
     backend = &plugin->backend.v1;
-    if (backend->abi_version != MOCK_NAV_BACKEND_ABI_V2 ||
-        backend->struct_size != sizeof(MockNavBackendV2) ||
+    if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V2 ||
+        backend->struct_size != sizeof(OpenNaviBackendV2) ||
         backend->start == NULL || backend->stop == NULL ||
         backend->surface_created == NULL ||
         backend->surface_destroyed == NULL ||
@@ -169,7 +169,7 @@ int mock_backend_plugin_validate(const MockNavBackendPluginV1 *plugin,
 #undef REQUIRE_EQUAL
 }
 
-int mock_backend_plugin_validate_v2(const MockNavBackendPluginV2 *plugin,
+int open_navi_backend_plugin_validate_v2(const OpenNaviBackendPluginV2 *plugin,
                                     char *diagnostic,
                                     size_t diagnostic_capacity)
 {
@@ -183,47 +183,47 @@ int mock_backend_plugin_validate_v2(const MockNavBackendPluginV2 *plugin,
             return -1;                                                        \
         }                                                                     \
     } while (0)
-    const MockNavBackendV1 *backend;
+    const OpenNaviBackendV1 *backend;
     if (plugin == NULL) {
         set_diagnostic(diagnostic, diagnostic_capacity,
                        "null plugin v2 query");
         return -1;
     }
-    REQUIRE_V2(plugin->v1.magic0, MOCK_NAV_PLUGIN_MAGIC0);
-    REQUIRE_V2(plugin->v1.magic1, MOCK_NAV_PLUGIN_MAGIC1);
-    REQUIRE_V2(plugin->v1.query_abi_version, MOCK_NAV_PLUGIN_QUERY_ABI_V2);
+    REQUIRE_V2(plugin->v1.magic0, OPEN_NAVI_PLUGIN_MAGIC0);
+    REQUIRE_V2(plugin->v1.magic1, OPEN_NAVI_PLUGIN_MAGIC1);
+    REQUIRE_V2(plugin->v1.query_abi_version, OPEN_NAVI_PLUGIN_QUERY_ABI_V2);
     REQUIRE_V2(plugin->v1.struct_size, sizeof(*plugin));
-    REQUIRE_V2(plugin->v1.endian_tag, MOCK_NAV_PLUGIN_ENDIAN_TAG);
+    REQUIRE_V2(plugin->v1.endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
     REQUIRE_V2(plugin->v1.pointer_bytes, sizeof(void *));
-    REQUIRE_V2(plugin->v1.backend_abi_version, MOCK_NAV_BACKEND_ABI_V3);
-    REQUIRE_V2(plugin->v1.backend_v1_size, sizeof(MockNavBackendV1));
-    REQUIRE_V2(plugin->v1.backend_v2_size, sizeof(MockNavBackendV2));
+    REQUIRE_V2(plugin->v1.backend_abi_version, OPEN_NAVI_BACKEND_ABI_V3);
+    REQUIRE_V2(plugin->v1.backend_v1_size, sizeof(OpenNaviBackendV1));
+    REQUIRE_V2(plugin->v1.backend_v2_size, sizeof(OpenNaviBackendV2));
     REQUIRE_V2(plugin->v1.render_target_v1_size,
-               sizeof(MockNavBackendRenderTargetV1));
-    REQUIRE_V2(plugin->v1.frame_v1_size, sizeof(MockNavBackendFrameV1));
-    REQUIRE_V2(plugin->v1.gps_v1_size, sizeof(MockNavBackendGpsV1));
+               sizeof(OpenNaviBackendRenderTargetV1));
+    REQUIRE_V2(plugin->v1.frame_v1_size, sizeof(OpenNaviBackendFrameV1));
+    REQUIRE_V2(plugin->v1.gps_v1_size, sizeof(OpenNaviBackendGpsV1));
     REQUIRE_V2(plugin->v1.visibility_v1_size,
-               sizeof(MockNavBackendVisibilityV1));
-    REQUIRE_V2(plugin->v1.screen_v1_size, sizeof(MockNavBackendScreenV1));
-    REQUIRE_V2(plugin->v1.pointer_v1_size, sizeof(MockNavBackendPointerV1));
+               sizeof(OpenNaviBackendVisibilityV1));
+    REQUIRE_V2(plugin->v1.screen_v1_size, sizeof(OpenNaviBackendScreenV1));
+    REQUIRE_V2(plugin->v1.pointer_v1_size, sizeof(OpenNaviBackendPointerV1));
     REQUIRE_V2(plugin->v1.services_v1_size,
-               sizeof(MockNavBackendServicesV1));
-    REQUIRE_V2(plugin->v1.vehicle_v2_size, sizeof(MockNavBackendVehicleV2));
+               sizeof(OpenNaviBackendServicesV1));
+    REQUIRE_V2(plugin->v1.vehicle_v2_size, sizeof(OpenNaviBackendVehicleV2));
     REQUIRE_V2(plugin->v1.gps_interval_v2_size,
-               sizeof(MockNavBackendGpsIntervalV2));
-    REQUIRE_V2(plugin->v1.audio_v2_size, sizeof(MockNavBackendAudioV2));
-    REQUIRE_V2(plugin->v1.capabilities & ~(uint32_t)MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES,
-               MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
-    REQUIRE_V2(plugin->services_v2_size, sizeof(MockNavBackendServicesV2));
-    REQUIRE_V2(plugin->cluster_v1_size, sizeof(MockNavBackendClusterV1));
-    REQUIRE_V2(plugin->utf8_span_v1_size, sizeof(MockNavBackendUtf8SpanV1));
+               sizeof(OpenNaviBackendGpsIntervalV2));
+    REQUIRE_V2(plugin->v1.audio_v2_size, sizeof(OpenNaviBackendAudioV2));
+    REQUIRE_V2(plugin->v1.capabilities & ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES,
+               OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
+    REQUIRE_V2(plugin->services_v2_size, sizeof(OpenNaviBackendServicesV2));
+    REQUIRE_V2(plugin->cluster_v1_size, sizeof(OpenNaviBackendClusterV1));
+    REQUIRE_V2(plugin->utf8_span_v1_size, sizeof(OpenNaviBackendUtf8SpanV1));
     REQUIRE_V2(plugin->audio_availability_v1_size,
-               sizeof(MockNavBackendAudioAvailabilityV1));
+               sizeof(OpenNaviBackendAudioAvailabilityV1));
     REQUIRE_V2(plugin->thread_status_v1_size,
-               sizeof(MockNavBackendThreadStatusV1));
-    REQUIRE_V2(plugin->backend_v3_size, sizeof(MockNavBackendV3));
+               sizeof(OpenNaviBackendThreadStatusV1));
+    REQUIRE_V2(plugin->backend_v3_size, sizeof(OpenNaviBackendV3));
     REQUIRE_V2(plugin->capabilities_v2,
-               MOCK_NAV_PLUGIN_V2_REQUIRED_CAPABILITIES);
+               OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
     if (memcmp(plugin->v1.build_id, g_v2_expected_build_id,
                sizeof(g_v2_expected_build_id)) != 0) {
         set_diagnostic(diagnostic, diagnostic_capacity,
@@ -231,8 +231,8 @@ int mock_backend_plugin_validate_v2(const MockNavBackendPluginV2 *plugin,
         return -1;
     }
     backend = &plugin->backend_v3.v2.v1;
-    if (backend->abi_version != MOCK_NAV_BACKEND_ABI_V3 ||
-        backend->struct_size != sizeof(MockNavBackendV3) ||
+    if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V3 ||
+        backend->struct_size != sizeof(OpenNaviBackendV3) ||
         backend->stop == NULL || backend->surface_created == NULL ||
         backend->surface_destroyed == NULL ||
         backend->visibility_changed == NULL ||
@@ -252,7 +252,7 @@ int mock_backend_plugin_validate_v2(const MockNavBackendPluginV2 *plugin,
 #undef REQUIRE_V2
 }
 
-int mock_backend_plugin_validate_v3(const MockNavBackendPluginV3 *plugin,
+int open_navi_backend_plugin_validate_v3(const OpenNaviBackendPluginV3 *plugin,
                                     char *diagnostic,
                                     size_t diagnostic_capacity)
 {
@@ -266,61 +266,61 @@ int mock_backend_plugin_validate_v3(const MockNavBackendPluginV3 *plugin,
             return -1;                                                        \
         }                                                                     \
     } while (0)
-    const MockNavBackendV1 *backend;
+    const OpenNaviBackendV1 *backend;
     if (plugin == NULL) return -1;
-    REQUIRE_V3(plugin->v2.v1.magic0, MOCK_NAV_PLUGIN_MAGIC0);
-    REQUIRE_V3(plugin->v2.v1.magic1, MOCK_NAV_PLUGIN_MAGIC1);
+    REQUIRE_V3(plugin->v2.v1.magic0, OPEN_NAVI_PLUGIN_MAGIC0);
+    REQUIRE_V3(plugin->v2.v1.magic1, OPEN_NAVI_PLUGIN_MAGIC1);
     REQUIRE_V3(plugin->v2.v1.query_abi_version,
-               MOCK_NAV_PLUGIN_QUERY_ABI_V3);
+               OPEN_NAVI_PLUGIN_QUERY_ABI_V3);
     REQUIRE_V3(plugin->v2.v1.struct_size, sizeof(*plugin));
-    REQUIRE_V3(plugin->v2.v1.endian_tag, MOCK_NAV_PLUGIN_ENDIAN_TAG);
+    REQUIRE_V3(plugin->v2.v1.endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
     REQUIRE_V3(plugin->v2.v1.pointer_bytes, sizeof(void *));
-    REQUIRE_V3(plugin->v2.v1.backend_abi_version, MOCK_NAV_BACKEND_ABI_V4);
-    REQUIRE_V3(plugin->v2.v1.backend_v1_size, sizeof(MockNavBackendV1));
-    REQUIRE_V3(plugin->v2.v1.backend_v2_size, sizeof(MockNavBackendV2));
+    REQUIRE_V3(plugin->v2.v1.backend_abi_version, OPEN_NAVI_BACKEND_ABI_V4);
+    REQUIRE_V3(plugin->v2.v1.backend_v1_size, sizeof(OpenNaviBackendV1));
+    REQUIRE_V3(plugin->v2.v1.backend_v2_size, sizeof(OpenNaviBackendV2));
     REQUIRE_V3(plugin->v2.v1.render_target_v1_size,
-               sizeof(MockNavBackendRenderTargetV1));
-    REQUIRE_V3(plugin->v2.v1.frame_v1_size, sizeof(MockNavBackendFrameV1));
-    REQUIRE_V3(plugin->v2.v1.gps_v1_size, sizeof(MockNavBackendGpsV1));
+               sizeof(OpenNaviBackendRenderTargetV1));
+    REQUIRE_V3(plugin->v2.v1.frame_v1_size, sizeof(OpenNaviBackendFrameV1));
+    REQUIRE_V3(plugin->v2.v1.gps_v1_size, sizeof(OpenNaviBackendGpsV1));
     REQUIRE_V3(plugin->v2.v1.visibility_v1_size,
-               sizeof(MockNavBackendVisibilityV1));
+               sizeof(OpenNaviBackendVisibilityV1));
     REQUIRE_V3(plugin->v2.v1.screen_v1_size,
-               sizeof(MockNavBackendScreenV1));
+               sizeof(OpenNaviBackendScreenV1));
     REQUIRE_V3(plugin->v2.v1.pointer_v1_size,
-               sizeof(MockNavBackendPointerV1));
+               sizeof(OpenNaviBackendPointerV1));
     REQUIRE_V3(plugin->v2.v1.services_v1_size,
-               sizeof(MockNavBackendServicesV1));
+               sizeof(OpenNaviBackendServicesV1));
     REQUIRE_V3(plugin->v2.v1.vehicle_v2_size,
-               sizeof(MockNavBackendVehicleV2));
+               sizeof(OpenNaviBackendVehicleV2));
     REQUIRE_V3(plugin->v2.v1.gps_interval_v2_size,
-               sizeof(MockNavBackendGpsIntervalV2));
-    REQUIRE_V3(plugin->v2.v1.audio_v2_size, sizeof(MockNavBackendAudioV2));
-    REQUIRE_V3(plugin->v2.v1.capabilities & ~(uint32_t)MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES,
-               MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
+               sizeof(OpenNaviBackendGpsIntervalV2));
+    REQUIRE_V3(plugin->v2.v1.audio_v2_size, sizeof(OpenNaviBackendAudioV2));
+    REQUIRE_V3(plugin->v2.v1.capabilities & ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES,
+               OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
     REQUIRE_V3(plugin->v2.services_v2_size,
-               sizeof(MockNavBackendServicesV2));
-    REQUIRE_V3(plugin->v2.cluster_v1_size, sizeof(MockNavBackendClusterV1));
+               sizeof(OpenNaviBackendServicesV2));
+    REQUIRE_V3(plugin->v2.cluster_v1_size, sizeof(OpenNaviBackendClusterV1));
     REQUIRE_V3(plugin->v2.utf8_span_v1_size,
-               sizeof(MockNavBackendUtf8SpanV1));
+               sizeof(OpenNaviBackendUtf8SpanV1));
     REQUIRE_V3(plugin->v2.audio_availability_v1_size,
-               sizeof(MockNavBackendAudioAvailabilityV1));
+               sizeof(OpenNaviBackendAudioAvailabilityV1));
     REQUIRE_V3(plugin->v2.thread_status_v1_size,
-               sizeof(MockNavBackendThreadStatusV1));
-    REQUIRE_V3(plugin->v2.backend_v3_size, sizeof(MockNavBackendV3));
+               sizeof(OpenNaviBackendThreadStatusV1));
+    REQUIRE_V3(plugin->v2.backend_v3_size, sizeof(OpenNaviBackendV3));
     REQUIRE_V3(plugin->v2.capabilities_v2,
-               MOCK_NAV_PLUGIN_V2_REQUIRED_CAPABILITIES);
+               OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
     REQUIRE_V3(plugin->internationalization_v1_size,
-               sizeof(MockNavBackendInternationalizationV1));
+               sizeof(OpenNaviBackendInternationalizationV1));
     REQUIRE_V3(plugin->cluster_display_v1_size,
-               sizeof(MockNavBackendClusterDisplayV1));
-    REQUIRE_V3(plugin->backend_v4_size, sizeof(MockNavBackendV4));
+               sizeof(OpenNaviBackendClusterDisplayV1));
+    REQUIRE_V3(plugin->backend_v4_size, sizeof(OpenNaviBackendV4));
     REQUIRE_V3(plugin->capabilities_v3,
-               MOCK_NAV_PLUGIN_V3_REQUIRED_CAPABILITIES);
+               OPEN_NAVI_PLUGIN_V3_REQUIRED_CAPABILITIES);
     if (memcmp(plugin->v2.v1.build_id, g_v3_expected_build_id,
                sizeof(g_v3_expected_build_id)) != 0) return -1;
     backend = &plugin->backend_v4.v3.v2.v1;
-    if (backend->abi_version != MOCK_NAV_BACKEND_ABI_V4 ||
-        backend->struct_size != sizeof(MockNavBackendV4) ||
+    if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V4 ||
+        backend->struct_size != sizeof(OpenNaviBackendV4) ||
         backend->stop == NULL || backend->surface_created == NULL ||
         backend->surface_destroyed == NULL ||
         backend->visibility_changed == NULL ||
@@ -338,7 +338,7 @@ int mock_backend_plugin_validate_v3(const MockNavBackendPluginV3 *plugin,
 #undef REQUIRE_V3
 }
 
-int mock_backend_plugin_validate_v4(const MockNavBackendPluginV4 *plugin,
+int open_navi_backend_plugin_validate_v4(const OpenNaviBackendPluginV4 *plugin,
                                     char *diagnostic,
                                     size_t diagnostic_capacity)
 {
@@ -352,70 +352,70 @@ int mock_backend_plugin_validate_v4(const MockNavBackendPluginV4 *plugin,
             return -1;                                                        \
         }                                                                     \
     } while (0)
-    const MockNavBackendV1 *backend;
+    const OpenNaviBackendV1 *backend;
     if (plugin == NULL) return -1;
-    REQUIRE_V4(plugin->v3.v2.v1.magic0, MOCK_NAV_PLUGIN_MAGIC0);
-    REQUIRE_V4(plugin->v3.v2.v1.magic1, MOCK_NAV_PLUGIN_MAGIC1);
+    REQUIRE_V4(plugin->v3.v2.v1.magic0, OPEN_NAVI_PLUGIN_MAGIC0);
+    REQUIRE_V4(plugin->v3.v2.v1.magic1, OPEN_NAVI_PLUGIN_MAGIC1);
     REQUIRE_V4(plugin->v3.v2.v1.query_abi_version,
-               MOCK_NAV_PLUGIN_QUERY_ABI_V4);
+               OPEN_NAVI_PLUGIN_QUERY_ABI_V4);
     REQUIRE_V4(plugin->v3.v2.v1.struct_size, sizeof(*plugin));
-    REQUIRE_V4(plugin->v3.v2.v1.endian_tag, MOCK_NAV_PLUGIN_ENDIAN_TAG);
+    REQUIRE_V4(plugin->v3.v2.v1.endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
     REQUIRE_V4(plugin->v3.v2.v1.pointer_bytes, sizeof(void *));
     REQUIRE_V4(plugin->v3.v2.v1.backend_abi_version,
-               MOCK_NAV_BACKEND_ABI_V5);
-    REQUIRE_V4(plugin->v3.v2.v1.backend_v1_size, sizeof(MockNavBackendV1));
-    REQUIRE_V4(plugin->v3.v2.v1.backend_v2_size, sizeof(MockNavBackendV2));
+               OPEN_NAVI_BACKEND_ABI_V5);
+    REQUIRE_V4(plugin->v3.v2.v1.backend_v1_size, sizeof(OpenNaviBackendV1));
+    REQUIRE_V4(plugin->v3.v2.v1.backend_v2_size, sizeof(OpenNaviBackendV2));
     REQUIRE_V4(plugin->v3.v2.v1.render_target_v1_size,
-               sizeof(MockNavBackendRenderTargetV1));
+               sizeof(OpenNaviBackendRenderTargetV1));
     REQUIRE_V4(plugin->v3.v2.v1.frame_v1_size,
-               sizeof(MockNavBackendFrameV1));
-    REQUIRE_V4(plugin->v3.v2.v1.gps_v1_size, sizeof(MockNavBackendGpsV1));
+               sizeof(OpenNaviBackendFrameV1));
+    REQUIRE_V4(plugin->v3.v2.v1.gps_v1_size, sizeof(OpenNaviBackendGpsV1));
     REQUIRE_V4(plugin->v3.v2.v1.visibility_v1_size,
-               sizeof(MockNavBackendVisibilityV1));
+               sizeof(OpenNaviBackendVisibilityV1));
     REQUIRE_V4(plugin->v3.v2.v1.screen_v1_size,
-               sizeof(MockNavBackendScreenV1));
+               sizeof(OpenNaviBackendScreenV1));
     REQUIRE_V4(plugin->v3.v2.v1.pointer_v1_size,
-               sizeof(MockNavBackendPointerV1));
+               sizeof(OpenNaviBackendPointerV1));
     REQUIRE_V4(plugin->v3.v2.v1.services_v1_size,
-               sizeof(MockNavBackendServicesV1));
+               sizeof(OpenNaviBackendServicesV1));
     REQUIRE_V4(plugin->v3.v2.v1.vehicle_v2_size,
-               sizeof(MockNavBackendVehicleV2));
+               sizeof(OpenNaviBackendVehicleV2));
     REQUIRE_V4(plugin->v3.v2.v1.gps_interval_v2_size,
-               sizeof(MockNavBackendGpsIntervalV2));
+               sizeof(OpenNaviBackendGpsIntervalV2));
     REQUIRE_V4(plugin->v3.v2.v1.audio_v2_size,
-               sizeof(MockNavBackendAudioV2));
-    REQUIRE_V4(plugin->v3.v2.v1.capabilities & ~(uint32_t)MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES,
-               MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
+               sizeof(OpenNaviBackendAudioV2));
+    REQUIRE_V4(plugin->v3.v2.v1.capabilities & ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES,
+               OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
     REQUIRE_V4(plugin->v3.v2.services_v2_size,
-               sizeof(MockNavBackendServicesV2));
+               sizeof(OpenNaviBackendServicesV2));
     REQUIRE_V4(plugin->v3.v2.cluster_v1_size,
-               sizeof(MockNavBackendClusterV1));
+               sizeof(OpenNaviBackendClusterV1));
     REQUIRE_V4(plugin->v3.v2.utf8_span_v1_size,
-               sizeof(MockNavBackendUtf8SpanV1));
+               sizeof(OpenNaviBackendUtf8SpanV1));
     REQUIRE_V4(plugin->v3.v2.audio_availability_v1_size,
-               sizeof(MockNavBackendAudioAvailabilityV1));
+               sizeof(OpenNaviBackendAudioAvailabilityV1));
     REQUIRE_V4(plugin->v3.v2.thread_status_v1_size,
-               sizeof(MockNavBackendThreadStatusV1));
-    REQUIRE_V4(plugin->v3.v2.backend_v3_size, sizeof(MockNavBackendV3));
+               sizeof(OpenNaviBackendThreadStatusV1));
+    REQUIRE_V4(plugin->v3.v2.backend_v3_size, sizeof(OpenNaviBackendV3));
     REQUIRE_V4(plugin->v3.v2.capabilities_v2,
-               MOCK_NAV_PLUGIN_V2_REQUIRED_CAPABILITIES);
+               OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
     REQUIRE_V4(plugin->v3.internationalization_v1_size,
-               sizeof(MockNavBackendInternationalizationV1));
+               sizeof(OpenNaviBackendInternationalizationV1));
     REQUIRE_V4(plugin->v3.cluster_display_v1_size,
-               sizeof(MockNavBackendClusterDisplayV1));
-    REQUIRE_V4(plugin->v3.backend_v4_size, sizeof(MockNavBackendV4));
+               sizeof(OpenNaviBackendClusterDisplayV1));
+    REQUIRE_V4(plugin->v3.backend_v4_size, sizeof(OpenNaviBackendV4));
     REQUIRE_V4(plugin->v3.capabilities_v3,
-               MOCK_NAV_PLUGIN_V3_REQUIRED_CAPABILITIES);
+               OPEN_NAVI_PLUGIN_V3_REQUIRED_CAPABILITIES);
     REQUIRE_V4(plugin->driver_distraction_v1_size,
-               sizeof(MockNavBackendDriverDistractionV1));
-    REQUIRE_V4(plugin->backend_v5_size, sizeof(MockNavBackendV5));
+               sizeof(OpenNaviBackendDriverDistractionV1));
+    REQUIRE_V4(plugin->backend_v5_size, sizeof(OpenNaviBackendV5));
     REQUIRE_V4(plugin->capabilities_v4,
-               MOCK_NAV_PLUGIN_V4_REQUIRED_CAPABILITIES);
+               OPEN_NAVI_PLUGIN_V4_REQUIRED_CAPABILITIES);
     if (memcmp(plugin->v3.v2.v1.build_id, g_v4_expected_build_id,
                sizeof(g_v4_expected_build_id)) != 0) return -1;
     backend = &plugin->backend_v5.v4.v3.v2.v1;
-    if (backend->abi_version != MOCK_NAV_BACKEND_ABI_V5 ||
-        backend->struct_size != sizeof(MockNavBackendV5) ||
+    if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V5 ||
+        backend->struct_size != sizeof(OpenNaviBackendV5) ||
         backend->stop == NULL || backend->surface_created == NULL ||
         backend->surface_destroyed == NULL ||
         backend->visibility_changed == NULL ||
@@ -434,9 +434,9 @@ int mock_backend_plugin_validate_v4(const MockNavBackendPluginV4 *plugin,
 #undef REQUIRE_V4
 }
 
-static int call_default_start(const MockNavBackendServicesV1 *services)
+static int call_default_start(const OpenNaviBackendServicesV1 *services)
 {
-    const MockNavBackendV1 *backend = mock_default_backend_v1();
+    const OpenNaviBackendV1 *backend = open_navi_default_backend_v1();
     int result = backend->start != NULL
         ? backend->start(backend->backend_context, services) : 0;
     if (result == 0) {
@@ -460,7 +460,7 @@ static void revoke_plugin_services_locked(void)
 }
 
 static int acquire_upstream_services(
-    void *runtime_context, MockNavBackendServicesV2 *services_out)
+    void *runtime_context, OpenNaviBackendServicesV2 *services_out)
 {
     uintptr_t token = (uintptr_t)runtime_context;
     int accepted;
@@ -482,20 +482,20 @@ static int acquire_upstream_services(
 }
 
 static uint32_t wrapper_publish_cluster(
-    void *runtime_context, const MockNavBackendClusterV1 *cluster)
+    void *runtime_context, const OpenNaviBackendClusterV1 *cluster)
 {
-    MockNavBackendServicesV2 upstream;
+    OpenNaviBackendServicesV2 upstream;
     if (!acquire_upstream_services(runtime_context, &upstream))
-        return MOCK_NAV_BACKEND_SERVICE_STALE;
+        return OPEN_NAVI_BACKEND_SERVICE_STALE;
     return upstream.publish_cluster != NULL
         ? upstream.publish_cluster(upstream.v1.runtime_context, cluster)
-        : MOCK_NAV_BACKEND_SERVICE_UNAVAILABLE;
+        : OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
 }
 
 static int wrapper_request_frame(void *runtime_context)
 {
     uintptr_t token = (uintptr_t)runtime_context;
-    MockNavBackendServicesV2 upstream;
+    OpenNaviBackendServicesV2 upstream;
     int accepted;
 
     (void)pthread_mutex_lock(&g_loader.lock);
@@ -509,31 +509,31 @@ static int wrapper_request_frame(void *runtime_context)
 }
 
 static uint32_t wrapper_publish_audio_availability(
-    void *runtime_context, const MockNavBackendAudioAvailabilityV1 *audio)
+    void *runtime_context, const OpenNaviBackendAudioAvailabilityV1 *audio)
 {
-    MockNavBackendServicesV2 upstream;
+    OpenNaviBackendServicesV2 upstream;
     if (!acquire_upstream_services(runtime_context, &upstream))
-        return MOCK_NAV_BACKEND_SERVICE_STALE;
+        return OPEN_NAVI_BACKEND_SERVICE_STALE;
     return upstream.publish_audio_availability != NULL
         ? upstream.publish_audio_availability(
               upstream.v1.runtime_context, audio)
-        : MOCK_NAV_BACKEND_SERVICE_UNAVAILABLE;
+        : OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
 }
 
 static uint32_t wrapper_publish_thread_status(
-    void *runtime_context, const MockNavBackendThreadStatusV1 *thread_status)
+    void *runtime_context, const OpenNaviBackendThreadStatusV1 *thread_status)
 {
-    MockNavBackendServicesV2 upstream;
+    OpenNaviBackendServicesV2 upstream;
     if (!acquire_upstream_services(runtime_context, &upstream))
-        return MOCK_NAV_BACKEND_SERVICE_STALE;
+        return OPEN_NAVI_BACKEND_SERVICE_STALE;
     return upstream.publish_thread_status != NULL
         ? upstream.publish_thread_status(
               upstream.v1.runtime_context, thread_status)
-        : MOCK_NAV_BACKEND_SERVICE_UNAVAILABLE;
+        : OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
 }
 
 static int wrapper_start(void *context,
-                         const MockNavBackendServicesV1 *services)
+                         const OpenNaviBackendServicesV1 *services)
 {
     int result;
     (void)context;
@@ -550,22 +550,22 @@ static int wrapper_start(void *context,
         g_loader.plugin_started = 1;
         return 0;
     }
-    set_fallback(MOCK_BACKEND_FALLBACK_START);
+    set_fallback(OPEN_NAVI_BACKEND_FALLBACK_START);
     g_loader.selection = WRAPPER_DEFAULT;
     return call_default_start(services);
 }
 
 static int wrapper_start_v2(void *context,
-                            const MockNavBackendServicesV2 *services)
+                            const OpenNaviBackendServicesV2 *services)
 {
-    MockNavBackendServicesV2 scoped;
-    MockNavBackendServicesV1 fallback_services;
+    OpenNaviBackendServicesV2 scoped;
+    OpenNaviBackendServicesV1 fallback_services;
     uintptr_t token;
     int result;
     (void)context;
 
     if (services == NULL ||
-        services->v1.abi_version != MOCK_NAV_BACKEND_ABI_V2 ||
+        services->v1.abi_version != OPEN_NAVI_BACKEND_ABI_V2 ||
         services->v1.struct_size < sizeof(*services) ||
         services->publish_cluster == NULL ||
         services->publish_audio_availability == NULL ||
@@ -585,7 +585,7 @@ static int wrapper_start_v2(void *context,
     if (token == (uintptr_t)0u) return -1;
 
     memset(&scoped, 0, sizeof(scoped));
-    scoped.v1.abi_version = MOCK_NAV_BACKEND_ABI_V2;
+    scoped.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
     scoped.v1.struct_size = sizeof(scoped);
     scoped.v1.runtime_context = (void *)token;
     scoped.v1.request_frame = wrapper_request_frame;
@@ -607,22 +607,22 @@ static int wrapper_start_v2(void *context,
     revoke_plugin_services_locked();
     g_loader.selection = WRAPPER_DEFAULT;
     (void)pthread_mutex_unlock(&g_loader.lock);
-    set_fallback(MOCK_BACKEND_FALLBACK_START);
+    set_fallback(OPEN_NAVI_BACKEND_FALLBACK_START);
     fallback_services = services->v1;
-    fallback_services.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    fallback_services.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
     fallback_services.struct_size = sizeof(fallback_services);
     return call_default_start(&fallback_services);
 }
 
 static void wrapper_stop(void *context)
 {
-    const MockNavBackendV1 *fallback = mock_default_backend_v1();
+    const OpenNaviBackendV1 *fallback = open_navi_default_backend_v1();
     (void)context;
     (void)pthread_mutex_lock(&g_loader.lock);
     revoke_plugin_services_locked();
     (void)pthread_mutex_unlock(&g_loader.lock);
     if (g_loader.plugin_started != 0) {
-        if (g_loader.query_abi == MOCK_NAV_PLUGIN_QUERY_ABI_V2)
+        if (g_loader.query_abi == OPEN_NAVI_PLUGIN_QUERY_ABI_V2)
             g_loader.plugin_v3.v2.v1.stop(
                 g_loader.plugin_v3.v2.v1.backend_context);
         else
@@ -640,9 +640,9 @@ static void wrapper_stop(void *context)
 }
 
 static int wrapper_surface_created(
-    void *context, const MockNavBackendRenderTargetV1 *target)
+    void *context, const OpenNaviBackendRenderTargetV1 *target)
 {
-    const MockNavBackendV1 *fallback = mock_default_backend_v1();
+    const OpenNaviBackendV1 *fallback = open_navi_default_backend_v1();
     int result;
     (void)context;
     if (g_loader.selection == WRAPPER_PLUGIN) {
@@ -652,7 +652,7 @@ static int wrapper_surface_created(
             g_loader.plugin_surfaced = 1;
             return 0;
         }
-        set_fallback(MOCK_BACKEND_FALLBACK_SURFACE);
+        set_fallback(OPEN_NAVI_BACKEND_FALLBACK_SURFACE);
         (void)pthread_mutex_lock(&g_loader.lock);
         revoke_plugin_services_locked();
         g_loader.selection = WRAPPER_DEFAULT;
@@ -668,7 +668,7 @@ static int wrapper_surface_created(
 
 static void wrapper_surface_destroyed(void *context)
 {
-    const MockNavBackendV1 *fallback = mock_default_backend_v1();
+    const OpenNaviBackendV1 *fallback = open_navi_default_backend_v1();
     (void)context;
     if (g_loader.plugin_surfaced != 0) {
         g_loader.plugin.v1.surface_destroyed(
@@ -687,7 +687,7 @@ static void wrapper_surface_destroyed(void *context)
 #define WRAP_V1_EVENT(name, type)                                             \
     static int wrapper_##name(void *context, const type *event)               \
     {                                                                         \
-        const MockNavBackendV1 *fallback = mock_default_backend_v1();         \
+        const OpenNaviBackendV1 *fallback = open_navi_default_backend_v1();         \
         (void)context;                                                        \
         if (g_loader.selection == WRAPPER_PLUGIN)                             \
             return g_loader.plugin.v1.name(                                  \
@@ -696,13 +696,13 @@ static void wrapper_surface_destroyed(void *context)
             ? fallback->name(fallback->backend_context, event) : 0;           \
     }
 
-WRAP_V1_EVENT(visibility_changed, MockNavBackendVisibilityV1)
-WRAP_V1_EVENT(screen_changed, MockNavBackendScreenV1)
-WRAP_V1_EVENT(gps_changed, MockNavBackendGpsV1)
-WRAP_V1_EVENT(pointer_changed, MockNavBackendPointerV1)
+WRAP_V1_EVENT(visibility_changed, OpenNaviBackendVisibilityV1)
+WRAP_V1_EVENT(screen_changed, OpenNaviBackendScreenV1)
+WRAP_V1_EVENT(gps_changed, OpenNaviBackendGpsV1)
+WRAP_V1_EVENT(pointer_changed, OpenNaviBackendPointerV1)
 
 static int wrapper_vehicle_changed(void *context,
-                                   const MockNavBackendVehicleV2 *event)
+                                   const OpenNaviBackendVehicleV2 *event)
 {
     (void)context;
     return g_loader.selection == WRAPPER_PLUGIN
@@ -711,7 +711,7 @@ static int wrapper_vehicle_changed(void *context,
 }
 
 static int wrapper_gps_interval_changed(
-    void *context, const MockNavBackendGpsIntervalV2 *event)
+    void *context, const OpenNaviBackendGpsIntervalV2 *event)
 {
     (void)context;
     return g_loader.selection == WRAPPER_PLUGIN
@@ -720,7 +720,7 @@ static int wrapper_gps_interval_changed(
 }
 
 static int wrapper_audio_changed(void *context,
-                                 const MockNavBackendAudioV2 *event)
+                                 const OpenNaviBackendAudioV2 *event)
 {
     (void)context;
     return g_loader.selection == WRAPPER_PLUGIN
@@ -729,7 +729,7 @@ static int wrapper_audio_changed(void *context,
 }
 
 static int wrapper_internationalization_changed(
-    void *context, const MockNavBackendInternationalizationV1 *event)
+    void *context, const OpenNaviBackendInternationalizationV1 *event)
 {
     (void)context;
     return g_loader.selection == WRAPPER_PLUGIN
@@ -738,7 +738,7 @@ static int wrapper_internationalization_changed(
 }
 
 static int wrapper_cluster_display_changed(
-    void *context, const MockNavBackendClusterDisplayV1 *event)
+    void *context, const OpenNaviBackendClusterDisplayV1 *event)
 {
     (void)context;
     return g_loader.selection == WRAPPER_PLUGIN
@@ -747,7 +747,7 @@ static int wrapper_cluster_display_changed(
 }
 
 static int wrapper_driver_distraction_changed(
-    void *context, const MockNavBackendDriverDistractionV1 *event)
+    void *context, const OpenNaviBackendDriverDistractionV1 *event)
 {
     (void)context;
     return g_loader.selection == WRAPPER_PLUGIN
@@ -756,10 +756,10 @@ static int wrapper_driver_distraction_changed(
 }
 
 static int wrapper_render_frame(void *context,
-                                const MockNavBackendRenderTargetV1 *target,
-                                const MockNavBackendFrameV1 *frame)
+                                const OpenNaviBackendRenderTargetV1 *target,
+                                const OpenNaviBackendFrameV1 *frame)
 {
-    const MockNavBackendV1 *fallback = mock_default_backend_v1();
+    const OpenNaviBackendV1 *fallback = open_navi_default_backend_v1();
     int result;
     (void)context;
     if (g_loader.selection == WRAPPER_PLUGIN) {
@@ -770,7 +770,7 @@ static int wrapper_render_frame(void *context,
          * plugin, initialize the trivial fallback in the still-current
          * context, draw magenta now, and defer plugin surface destruction and
          * stop to the normal surface_destroyed/stop ordering. */
-        set_fallback(MOCK_BACKEND_FALLBACK_RENDER);
+        set_fallback(OPEN_NAVI_BACKEND_FALLBACK_RENDER);
         (void)pthread_mutex_lock(&g_loader.lock);
         revoke_plugin_services_locked();
         g_loader.selection = WRAPPER_DEFAULT;
@@ -789,7 +789,7 @@ static int wrapper_render_frame(void *context,
 static void initialize_wrapper(void)
 {
     memset(&g_loader.wrapper, 0, sizeof(g_loader.wrapper));
-    g_loader.wrapper.v1.abi_version = MOCK_NAV_BACKEND_ABI_V2;
+    g_loader.wrapper.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
     g_loader.wrapper.v1.struct_size = sizeof(g_loader.wrapper);
     g_loader.wrapper.v1.backend_context = &g_loader;
     g_loader.wrapper.v1.start = wrapper_start;
@@ -811,7 +811,7 @@ static void initialize_wrapper_v3(void)
     initialize_wrapper();
     memset(&g_loader.wrapper_v3, 0, sizeof(g_loader.wrapper_v3));
     g_loader.wrapper_v3.v2 = g_loader.wrapper;
-    g_loader.wrapper_v3.v2.v1.abi_version = MOCK_NAV_BACKEND_ABI_V3;
+    g_loader.wrapper_v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V3;
     g_loader.wrapper_v3.v2.v1.struct_size = sizeof(g_loader.wrapper_v3);
     g_loader.wrapper_v3.start_v2 = wrapper_start_v2;
 }
@@ -821,7 +821,7 @@ static void initialize_wrapper_v4(void)
     initialize_wrapper_v3();
     memset(&g_loader.wrapper_v4, 0, sizeof(g_loader.wrapper_v4));
     g_loader.wrapper_v4.v3 = g_loader.wrapper_v3;
-    g_loader.wrapper_v4.v3.v2.v1.abi_version = MOCK_NAV_BACKEND_ABI_V4;
+    g_loader.wrapper_v4.v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V4;
     g_loader.wrapper_v4.v3.v2.v1.struct_size = sizeof(g_loader.wrapper_v4);
     g_loader.wrapper_v4.internationalization_changed =
         wrapper_internationalization_changed;
@@ -834,7 +834,7 @@ static void initialize_wrapper_v5(void)
     initialize_wrapper_v4();
     memset(&g_loader.wrapper_v5, 0, sizeof(g_loader.wrapper_v5));
     g_loader.wrapper_v5.v4 = g_loader.wrapper_v4;
-    g_loader.wrapper_v5.v4.v3.v2.v1.abi_version = MOCK_NAV_BACKEND_ABI_V5;
+    g_loader.wrapper_v5.v4.v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V5;
     g_loader.wrapper_v5.v4.v3.v2.v1.struct_size = sizeof(g_loader.wrapper_v5);
     g_loader.wrapper_v5.driver_distraction_changed =
         wrapper_driver_distraction_changed;
@@ -842,147 +842,147 @@ static void initialize_wrapper_v5(void)
 
 static void bootstrap_once(void)
 {
-    MockNavBackendPluginV1 query_result;
-    MockNavBackendPluginV2 query_result_v2;
-    MockNavBackendPluginV3 query_result_v3;
-    MockNavBackendPluginV4 query_result_v4;
-    MockNavBackendPluginQueryV1 query;
+    OpenNaviBackendPluginV1 query_result;
+    OpenNaviBackendPluginV2 query_result_v2;
+    OpenNaviBackendPluginV3 query_result_v3;
+    OpenNaviBackendPluginV4 query_result_v4;
+    OpenNaviBackendPluginQueryV1 query;
     union {
         void *object;
-        MockNavBackendPluginQueryV1 function;
+        OpenNaviBackendPluginQueryV1 function;
     } conversion;
     char diagnostic[257];
     const char *error;
     int status;
 
     increment_counter(&g_loader.test.load_attempts);
-    g_loader.pinned_handle = dlopen(MOCK_NAV_BACKEND_PLUGIN_PATH,
+    g_loader.pinned_handle = dlopen(OPEN_NAVI_BACKEND_PLUGIN_PATH,
                                     RTLD_NOW | RTLD_LOCAL);
     if (g_loader.pinned_handle == NULL) {
-        set_fallback(MOCK_BACKEND_FALLBACK_LOAD);
+        set_fallback(OPEN_NAVI_BACKEND_FALLBACK_LOAD);
         return;
     }
     set_flag(&g_loader.test.handle_pinned);
     (void)dlerror();
     conversion.object = dlsym(g_loader.pinned_handle,
-                              "mock_nav_backend_query_v1");
+                              "open_navi_backend_query_v1");
     error = dlerror();
     if (error != NULL || conversion.object == NULL) {
-        set_fallback(MOCK_BACKEND_FALLBACK_SYMBOL);
+        set_fallback(OPEN_NAVI_BACKEND_FALLBACK_SYMBOL);
         return;
     }
     query = conversion.function;
     memset(&query_result_v4, 0, sizeof(query_result_v4));
     increment_counter(&g_loader.test.query_calls);
-    status = query(MOCK_NAV_PLUGIN_QUERY_ABI_V4,
+    status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V4,
                    sizeof(query_result_v4),
-                   (MockNavBackendPluginV1 *)&query_result_v4);
+                   (OpenNaviBackendPluginV1 *)&query_result_v4);
     if (status == 0) {
         diagnostic[0] = '\0';
-        if (mock_backend_plugin_validate_v4(&query_result_v4, diagnostic,
+        if (open_navi_backend_plugin_validate_v4(&query_result_v4, diagnostic,
                                             sizeof(diagnostic)) != 0) {
-            set_fallback(MOCK_BACKEND_FALLBACK_HANDSHAKE);
+            set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
             return;
         }
         g_loader.plugin_v5 = query_result_v4.backend_v5;
         g_loader.plugin_v4 = query_result_v4.backend_v5.v4;
         g_loader.plugin_v3 = query_result_v4.backend_v5.v4.v3;
         g_loader.plugin = query_result_v4.backend_v5.v4.v3.v2;
-        g_loader.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V4;
-        g_loader.test.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V4;
+        g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V4;
+        g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V4;
         initialize_wrapper_v5();
-        (void)mock_renderer_set_pointer_contacts(
-            (query_result_v4.v3.v2.v1.capabilities & MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
-        status = mock_navicore_backend_install_v5(&g_loader.wrapper_v5);
+        (void)open_navi_renderer_set_pointer_contacts(
+            (query_result_v4.v3.v2.v1.capabilities & OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
+        status = open_navi_backend_install_v5(&g_loader.wrapper_v5);
     } else {
         memset(&query_result_v3, 0, sizeof(query_result_v3));
         increment_counter(&g_loader.test.query_calls);
-        status = query(MOCK_NAV_PLUGIN_QUERY_ABI_V3,
+        status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V3,
                        sizeof(query_result_v3),
-                       (MockNavBackendPluginV1 *)&query_result_v3);
+                       (OpenNaviBackendPluginV1 *)&query_result_v3);
         if (status == 0) {
             diagnostic[0] = '\0';
-            if (mock_backend_plugin_validate_v3(&query_result_v3, diagnostic,
+            if (open_navi_backend_plugin_validate_v3(&query_result_v3, diagnostic,
                                                 sizeof(diagnostic)) != 0) {
-                set_fallback(MOCK_BACKEND_FALLBACK_HANDSHAKE);
+                set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
                 return;
             }
             g_loader.plugin_v4 = query_result_v3.backend_v4;
             g_loader.plugin_v3 = query_result_v3.backend_v4.v3;
             g_loader.plugin = query_result_v3.backend_v4.v3.v2;
-            g_loader.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V3;
-            g_loader.test.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V3;
+            g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V3;
+            g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V3;
             initialize_wrapper_v4();
-            (void)mock_renderer_set_pointer_contacts(
-                (query_result_v3.v2.v1.capabilities & MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
-            status = mock_navicore_backend_install_v4(&g_loader.wrapper_v4);
+            (void)open_navi_renderer_set_pointer_contacts(
+                (query_result_v3.v2.v1.capabilities & OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
+            status = open_navi_backend_install_v4(&g_loader.wrapper_v4);
         } else {
             memset(&query_result_v2, 0, sizeof(query_result_v2));
             increment_counter(&g_loader.test.query_calls);
-            status = query(MOCK_NAV_PLUGIN_QUERY_ABI_V2,
+            status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V2,
                            sizeof(query_result_v2),
-                           (MockNavBackendPluginV1 *)&query_result_v2);
+                           (OpenNaviBackendPluginV1 *)&query_result_v2);
             if (status == 0) {
                 diagnostic[0] = '\0';
-                if (mock_backend_plugin_validate_v2(
+                if (open_navi_backend_plugin_validate_v2(
                         &query_result_v2, diagnostic,
                         sizeof(diagnostic)) != 0) {
-                    set_fallback(MOCK_BACKEND_FALLBACK_HANDSHAKE);
+                    set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
                     return;
                 }
                 g_loader.plugin_v3 = query_result_v2.backend_v3;
                 g_loader.plugin = query_result_v2.backend_v3.v2;
-                g_loader.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V2;
-                g_loader.test.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V2;
+                g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V2;
+                g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V2;
                 initialize_wrapper_v3();
-                (void)mock_renderer_set_pointer_contacts(
+                (void)open_navi_renderer_set_pointer_contacts(
                     (query_result_v2.v1.capabilities &
-                     MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
-                status = mock_navicore_backend_install_v3(
+                     OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
+                status = open_navi_backend_install_v3(
                     &g_loader.wrapper_v3);
             } else {
                 memset(&query_result, 0, sizeof(query_result));
                 increment_counter(&g_loader.test.query_calls);
-                status = query(MOCK_NAV_PLUGIN_QUERY_ABI_V1,
+                status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V1,
                                sizeof(query_result), &query_result);
                 if (status != 0) {
-                    set_fallback(MOCK_BACKEND_FALLBACK_QUERY);
+                    set_fallback(OPEN_NAVI_BACKEND_FALLBACK_QUERY);
                     return;
                 }
                 diagnostic[0] = '\0';
-                if (mock_backend_plugin_validate(
+                if (open_navi_backend_plugin_validate(
                         &query_result, diagnostic,
                         sizeof(diagnostic)) != 0) {
-                    set_fallback(MOCK_BACKEND_FALLBACK_HANDSHAKE);
+                    set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
                     return;
                 }
                 g_loader.plugin = query_result.backend;
-                g_loader.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V1;
-                g_loader.test.query_abi = MOCK_NAV_PLUGIN_QUERY_ABI_V1;
+                g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V1;
+                g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V1;
                 initialize_wrapper();
-                (void)mock_renderer_set_pointer_contacts(
+                (void)open_navi_renderer_set_pointer_contacts(
                     (query_result.capabilities &
-                     MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
-                status = mock_navicore_backend_install_v2(
+                     OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS) != 0u);
+                status = open_navi_backend_install_v2(
                     &g_loader.wrapper);
             }
         }
     }
     if (status != 0) {
-        set_fallback(MOCK_BACKEND_FALLBACK_INSTALL);
+        set_fallback(OPEN_NAVI_BACKEND_FALLBACK_INSTALL);
         return;
     }
     set_flag(&g_loader.test.plugin_valid);
 }
 
-void mock_backend_loader_bootstrap(void)
+void open_navi_backend_loader_bootstrap(void)
 {
     increment_counter(&g_loader.test.bootstrap_calls);
     (void)pthread_once(&g_loader.once, bootstrap_once);
 }
 
-#if defined(MOCK_NAVICORE_TESTING)
-void mock_backend_loader_test_state(MockBackendLoaderTestState *output)
+#if defined(OPEN_NAVI_TESTING)
+void open_navi_backend_loader_test_state(OpenNaviBackendLoaderTestState *output)
 {
     if (output == NULL) return;
     (void)pthread_mutex_lock(&g_loader.lock);

@@ -1,9 +1,9 @@
 #define _POSIX_C_SOURCE 200112L
 
-#include "mock_gps_backend.h"
-#include "mock_callback_backend.h"
+#include "open_navi_gps_backend.h"
+#include "open_navi_callback_backend.h"
 #include <open_navicore/cluster.h>
-#include "mock_navicore.h"
+#include "open_navi.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -11,7 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define TRACE_TEST_PATH MOCK_NAVICORE_TRACE_PATH  /* set by the build */
+#define TRACE_TEST_PATH OPEN_NAVI_TRACE_PATH  /* set by the build */
 
 typedef uint32_t (*TestGPSDataVirtual)(void *self, const void *record);
 
@@ -54,8 +54,8 @@ int main(void)
     void *cluster_interface = NULL;
     PanaGenericVirtual callback_vtable[32];
     TestProxy callback_proxy;
-    uint8_t gps_record[MOCK_GPS_RECORD_SIZE];
-    uint8_t cluster_record[MOCK_CLUSTER_RECORD_SIZE];
+    uint8_t gps_record[OPEN_NAVI_GPS_RECORD_SIZE];
+    uint8_t cluster_record[OPEN_NAVI_CLUSTER_RECORD_SIZE];
     uint32_t compatibility = 0u;
     char contents[65536];
     size_t bytes_read;
@@ -104,9 +104,9 @@ int main(void)
     cluster_record[1] = 3u;
     cluster_record[0xa56] = 3u;
     cluster_record[0xa58] = 3u;
-    assert(mock_callback_send_cluster(cluster_record) == 0u);
-    assert(mock_callback_signal_audio_availability(1u) == 0u);
-    assert(mock_callback_signal_thread_status(
+    assert(open_navi_callback_send_cluster(cluster_record) == 0u);
+    assert(open_navi_callback_signal_audio_availability(1u) == 0u);
+    assert(open_navi_callback_signal_thread_status(
                1u, "ref-worker", 1u) == 0u);
     panaDeinitialize();
 

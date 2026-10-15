@@ -14,7 +14,7 @@ namespace navicore_osmand {
 // no maneuver symbol or lanes). The road spans point into the strings, so
 // keep the payload object alive (and unmoved) while publishing.
 struct ClusterPayload {
-    MockNavBackendClusterV1 cluster{};
+    OpenNaviBackendClusterV1 cluster{};
     std::string current_road;
     std::string next_road;
     // Points the spans at the strings; call after any copy or move.

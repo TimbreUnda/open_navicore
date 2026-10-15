@@ -10,13 +10,13 @@ namespace navicore_osmand {
 // Workers capture this gate, never the Session or a future lifecycle's services.
 class Wakeup {
 public:
-    Wakeup(MockNavBackendServicesV1 services, uint64_t generation) noexcept
+    Wakeup(OpenNaviBackendServicesV1 services, uint64_t generation) noexcept
         : services_(services), generation_(generation) {}
     int request() const noexcept;
     void revoke() noexcept { active_.store(false); }
     uint64_t generation() const noexcept { return generation_; }
 private:
-    const MockNavBackendServicesV1 services_;
+    const OpenNaviBackendServicesV1 services_;
     const uint64_t generation_;
     std::atomic<bool> active_{true};
 };
@@ -30,21 +30,21 @@ public:
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
-    int start(const MockNavBackendServicesV1&, Config) noexcept;
+    int start(const OpenNaviBackendServicesV1&, Config) noexcept;
     // V3+: the same start with the outbound services kept for the engine.
-    int start_v2(const MockNavBackendServicesV2&, Config) noexcept;
+    int start_v2(const OpenNaviBackendServicesV2&, Config) noexcept;
     // Platform inputs: the latest of each is kept and forwarded (replayed
     // after attach).
-    int input(const MockNavBackendVisibilityV1&) noexcept;
-    int input(const MockNavBackendScreenV1&) noexcept;
-    int input(const MockNavBackendVehicleV2&) noexcept;
-    int input(const MockNavBackendInternationalizationV1&) noexcept;
-    int input(const MockNavBackendClusterDisplayV1&) noexcept;
-    int input(const MockNavBackendDriverDistractionV1&) noexcept;
-    int attach(const MockNavBackendRenderTargetV1&) noexcept;
-    FrameResult frame(const MockNavBackendRenderTargetV1&) noexcept;
-    int gps(const MockNavBackendGpsV1&) noexcept;
-    int pointer(const MockNavBackendPointerV2&) noexcept;
+    int input(const OpenNaviBackendVisibilityV1&) noexcept;
+    int input(const OpenNaviBackendScreenV1&) noexcept;
+    int input(const OpenNaviBackendVehicleV2&) noexcept;
+    int input(const OpenNaviBackendInternationalizationV1&) noexcept;
+    int input(const OpenNaviBackendClusterDisplayV1&) noexcept;
+    int input(const OpenNaviBackendDriverDistractionV1&) noexcept;
+    int attach(const OpenNaviBackendRenderTargetV1&) noexcept;
+    FrameResult frame(const OpenNaviBackendRenderTargetV1&) noexcept;
+    int gps(const OpenNaviBackendGpsV1&) noexcept;
+    int pointer(const OpenNaviBackendPointerV2&) noexcept;
     void detach(uintptr_t current_context) noexcept;
     void stop() noexcept;
     bool accepts_events() const noexcept;
@@ -58,7 +58,7 @@ private:
     const EngineFactory factory_;
     State state_ = State::Stopped;
     Config config_;
-    MockNavBackendServicesV1 services_{};
+    OpenNaviBackendServicesV1 services_{};
     std::unique_ptr<Engine> engine_;
     std::shared_ptr<Wakeup> wakeup_;
     uintptr_t context_ = 0;
@@ -67,17 +67,17 @@ private:
     bool prepare_reported_ = false;
     bool render_reported_ = false;
     bool first_presented_ = false;
-    MockNavBackendGpsV1 gps_{};
+    OpenNaviBackendGpsV1 gps_{};
     bool has_gps_ = false;
-    MockNavBackendServicesV2 services_v2_{};
+    OpenNaviBackendServicesV2 services_v2_{};
     bool has_services_v2_ = false;
     template <typename T> struct Latest { T value{}; bool has = false; };
-    Latest<MockNavBackendVisibilityV1> visibility_;
-    Latest<MockNavBackendScreenV1> screen_;
-    Latest<MockNavBackendVehicleV2> vehicle_;
-    Latest<MockNavBackendInternationalizationV1> internationalization_;
-    Latest<MockNavBackendClusterDisplayV1> cluster_display_;
-    Latest<MockNavBackendDriverDistractionV1> driver_distraction_;
+    Latest<OpenNaviBackendVisibilityV1> visibility_;
+    Latest<OpenNaviBackendScreenV1> screen_;
+    Latest<OpenNaviBackendVehicleV2> vehicle_;
+    Latest<OpenNaviBackendInternationalizationV1> internationalization_;
+    Latest<OpenNaviBackendClusterDisplayV1> cluster_display_;
+    Latest<OpenNaviBackendDriverDistractionV1> driver_distraction_;
     template <typename T>
     int record(Latest<T>& latest, const T& event, void (Engine::*forward)(const T&)) noexcept;
     void replay_inputs();

@@ -102,7 +102,7 @@ def negative_tests(rows, header_text, source_text, provider_text):
     mutations.append(emitted)
     missing_symbol = copy.deepcopy(rows)
     row = next(r for r in missing_symbol if r["implementation_symbol"])
-    row["implementation_symbol"] = "mock_pas_missing_contract"
+    row["implementation_symbol"] = "open_navi_pas_missing_contract"
     mutations.append(missing_symbol)
     for mutation in mutations:
         try:

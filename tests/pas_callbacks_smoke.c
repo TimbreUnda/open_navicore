@@ -25,9 +25,9 @@ static size_t g_expected_copy_size;
 
 static void observe_unlocked(void)
 {
-    MockCallbackTestState state;
+    OpenNaviCallbackTestState state;
 
-    mock_callback_test_state(&state);
+    open_navi_callback_test_state(&state);
 }
 
 static uint32_t callback0(void *self)
@@ -249,7 +249,7 @@ static uint32_t callback_wide(void *self, int32_t handle,
 {
     assert(self == &g_proxy && handle == -9 && text != g_mutate_wide);
     g_mutate_wide[0] = L'X';
-    assert(text[0] == L'A' && text[MOCK_PAS_DIAG_WIDE_TEXT_MAX] == L'\0');
+    assert(text[0] == L'A' && text[OPEN_NAVI_PAS_DIAG_WIDE_TEXT_MAX] == L'\0');
     ++g_calls;
     return g_return_status;
 }
@@ -273,9 +273,9 @@ static uint32_t callback_thread(void *self, uint32_t id,
                                 const wchar_t *name, uint32_t status)
 {
     assert(self == &g_proxy && id == 77u && status == 3u);
-    assert(name != g_mutate_wide && wcslen(name) == MOCK_THREAD_NAME_LIMIT);
+    assert(name != g_mutate_wide && wcslen(name) == OPEN_NAVI_THREAD_NAME_LIMIT);
     g_mutate_wide[0] = L'X';
-    assert(name[0] == L'N' && name[MOCK_THREAD_NAME_LIMIT] == L'\0');
+    assert(name[0] == L'N' && name[OPEN_NAVI_THREAD_NAME_LIMIT] == L'\0');
     ++g_calls;
     return g_return_status;
 }
@@ -325,7 +325,7 @@ static uint32_t callback_wsa(void *self, uint32_t alert_id,
     assert(self == &g_proxy && alert_id == 10u && is_manual == 1u);
     assert(copy != g_mutate_bytes && copy[0] == 0x5au);
     g_mutate_bytes[0] = 0u;
-    assert(copy[0] == 0x5au && copy[MOCK_PAS_WSA_ALERT_INFO_SIZE - 1u] == 0x5au);
+    assert(copy[0] == 0x5au && copy[OPEN_NAVI_PAS_WSA_ALERT_INFO_SIZE - 1u] == 0x5au);
     ++g_calls;
     return g_return_status;
 }
@@ -487,7 +487,7 @@ static uint32_t callback_exchange_transfer(void *self, uint32_t handle,
 }
 
 static uint32_t callback_map_address(void *self, uint32_t handle,
-                                     const MockPasMapMatchedAddress *address)
+                                     const OpenNaviPasMapMatchedAddress *address)
 {
     assert(self == &g_proxy && handle == 9u && address == g_pointer[0]);
     ++g_calls;
@@ -526,7 +526,7 @@ static uint32_t callback_phonetic(void *self, uint32_t handle,
     return g_return_status;
 }
 
-static void assert_mbr(MockPasSxmMbr mbr)
+static void assert_mbr(OpenNaviPasSxmMbr mbr)
 {
     assert(mbr.lower_left.longitude == 1.0);
     assert(mbr.lower_left.latitude == 2.0);
@@ -537,7 +537,7 @@ static void assert_mbr(MockPasSxmMbr mbr)
 }
 
 static uint32_t callback_wsa_location(void *self, uint32_t handle,
-                                      MockPasSxmLocation location,
+                                      OpenNaviPasSxmLocation location,
                                       uint32_t radius, uint32_t radius_unit)
 {
     assert(self == &g_proxy && handle == 31u);
@@ -548,7 +548,7 @@ static uint32_t callback_wsa_location(void *self, uint32_t handle,
 }
 
 static uint32_t callback_apogee_mbr(void *self, uint32_t handle,
-                                    uint16_t type, MockPasSxmMbr mbr,
+                                    uint16_t type, OpenNaviPasSxmMbr mbr,
                                     uint32_t collection_index)
 {
     assert(self == &g_proxy && handle == 30u && type == 0x1234u);
@@ -559,7 +559,7 @@ static uint32_t callback_apogee_mbr(void *self, uint32_t handle,
 }
 
 static uint32_t callback_parking_mbr(void *self, uint32_t handle,
-                                     MockPasSxmMbr mbr,
+                                     OpenNaviPasSxmMbr mbr,
                                      uint16_t collection_index)
 {
     assert(self == &g_proxy && handle == 29u);
@@ -571,45 +571,45 @@ static uint32_t callback_parking_mbr(void *self, uint32_t handle,
 
 static void check_pending_request_correlation(void)
 {
-    MockCallbackTestState state;
+    OpenNaviCallbackTestState state;
 
-    mock_callback_backend_reset();
+    open_navi_callback_backend_reset();
     /* The same handle may occur in different adapters or provider slots. */
-    mock_callback_pending_add(1u, 3u, 7u);
-    mock_callback_pending_add(1u, 4u, 7u);
-    mock_callback_pending_add(2u, 3u, 7u);
-    mock_callback_pending_cancel(1u, 3u, 8u);
-    mock_callback_pending_cancel(1u, 3u, 7u);
-    mock_callback_pending_cancel(1u, 3u, 7u);
-    mock_callback_test_state(&state);
+    open_navi_callback_pending_add(1u, 3u, 7u);
+    open_navi_callback_pending_add(1u, 4u, 7u);
+    open_navi_callback_pending_add(2u, 3u, 7u);
+    open_navi_callback_pending_cancel(1u, 3u, 8u);
+    open_navi_callback_pending_cancel(1u, 3u, 7u);
+    open_navi_callback_pending_cancel(1u, 3u, 7u);
+    open_navi_callback_test_state(&state);
     assert(state.pending_count == 2u);
     assert(state.correlation_successes == 0u);
     assert(state.correlation_failures == 0u);
 
-    assert(mock_callback_pending_complete(1u, 3u, 7u) == 0);
-    assert(mock_callback_pending_complete(1u, 4u, 7u) == 1);
-    assert(mock_callback_pending_complete(2u, 3u, 7u) == 1);
-    assert(mock_callback_pending_complete(2u, 3u, 7u) == 0);
-    mock_callback_test_state(&state);
+    assert(open_navi_callback_pending_complete(1u, 3u, 7u) == 0);
+    assert(open_navi_callback_pending_complete(1u, 4u, 7u) == 1);
+    assert(open_navi_callback_pending_complete(2u, 3u, 7u) == 1);
+    assert(open_navi_callback_pending_complete(2u, 3u, 7u) == 0);
+    open_navi_callback_test_state(&state);
     assert(state.pending_count == 0u);
     assert(state.correlation_successes == 2u);
     assert(state.correlation_failures == 2u);
-    mock_callback_backend_reset();
+    open_navi_callback_backend_reset();
 }
 
 int main(void)
 {
-    MockCallbackTestState state;
-    uint8_t timezone[MOCK_PAS_TIMEZONE_SIZE];
-    uint8_t cluster[MOCK_CLUSTER_RECORD_SIZE];
-    uint8_t version[MOCK_PAS_SOFTWARE_VERSION_SIZE];
-    uint8_t wsa[MOCK_PAS_WSA_ALERT_INFO_SIZE];
-    uint8_t concrete_copy[MOCK_PAS_TIMEZONE_SIZE];
-    char vr_text[MOCK_PAS_VR_STRING_SIZE];
-    wchar_t wide[MOCK_PAS_DIAG_WIDE_TEXT_MAX + 2u];
+    OpenNaviCallbackTestState state;
+    uint8_t timezone[OPEN_NAVI_PAS_TIMEZONE_SIZE];
+    uint8_t cluster[OPEN_NAVI_CLUSTER_RECORD_SIZE];
+    uint8_t version[OPEN_NAVI_PAS_SOFTWARE_VERSION_SIZE];
+    uint8_t wsa[OPEN_NAVI_PAS_WSA_ALERT_INFO_SIZE];
+    uint8_t concrete_copy[OPEN_NAVI_PAS_TIMEZONE_SIZE];
+    char vr_text[OPEN_NAVI_PAS_VR_STRING_SIZE];
+    wchar_t wide[OPEN_NAVI_PAS_DIAG_WIDE_TEXT_MAX + 2u];
     uint32_t types[3] = { 0x11223344u, 0x55667788u, 0x99aabbccu };
     uint32_t location_types[7] = { 1u, 2u, 3u, 4u, 5u, 6u, 0u };
-    uint32_t next_types[MOCK_PAS_VR_LOCATION_TYPE_COUNT] = {
+    uint32_t next_types[OPEN_NAVI_PAS_VR_LOCATION_TYPE_COUNT] = {
         1u, 2u, 3u, 4u, 5u, 6u, 7u
     };
     const char location_ids[] = "id1;id2";
@@ -617,8 +617,8 @@ int main(void)
     const char orthographic[] = "ortho1;ortho2";
     const char phonetic[] = "phone1;phone2";
     char tts[] = "hello";
-    uint8_t old_area[MOCK_PAS_EWS_AREA_SIZE];
-    uint8_t new_area[MOCK_PAS_EWS_AREA_SIZE];
+    uint8_t old_area[OPEN_NAVI_PAS_EWS_AREA_SIZE];
+    uint8_t new_area[OPEN_NAVI_PAS_EWS_AREA_SIZE];
     uint8_t request_data[3] = { 1u, 2u, 3u };
     uint8_t response_data[4] = { 4u, 5u, 6u, 7u };
     const wchar_t url[] = L"https://example.invalid";
@@ -631,13 +631,13 @@ int main(void)
     uint8_t transfer_data[4] = { 8u, 9u, 10u, 11u };
     uint32_t phonetic_types[2] = { 8u, 9u };
     const char *phonetic_strings[2] = { "alpha", "beta" };
-    MockPasMapMatchedAddress address = { 0 };
-    MockPasSxmLocation wsa_location = { 11.0, 22.0 };
-    MockPasSxmMbr mbr = {
+    OpenNaviPasMapMatchedAddress address = { 0 };
+    OpenNaviPasSxmLocation wsa_location = { 11.0, 22.0 };
+    OpenNaviPasSxmMbr mbr = {
         { 1.0, 2.0 }, { 3.0, 4.0 }, { 5.0, 6.0 }
     };
 
-    mock_callback_backend_reset();
+    open_navi_callback_backend_reset();
 
     check_pending_request_correlation();
 
@@ -855,12 +855,12 @@ int main(void)
     TEST_1(nc_host_nav_diagnosis_request_static_setting_11fe, 8u, 5u);
     TEST_1(nc_host_nav_diagnosis_request_static_setting_11fd, 9u, 6u);
     TEST_2(nc_host_nav_diagnosis_reply_navigation_database_status, 13u, (int32_t)-10, 0xabcdefu);
-    TEST_1(mock_pas_17_4_raw, 4u, 0x174u);
+    TEST_1(open_navi_pas_17_4_raw, 4u, 0x174u);
     TEST_1(nc_host_cluster_subscribe, 5u, UINT32_MAX);
     TEST_0(nc_host_cluster_request_or_signal_no_args, 6u);
     TEST_1(nc_host_cluster_request_tbt_settings_enable_status, 7u, 19u);
     TEST_1(nc_host_data_exchange_request_supported_transport_means_and_buffer_sizes, 5u, 17u);
-    TEST_3(mock_pas_19_6_raw, 6u, 0x1960u, 0x1961u, 0x1962u);
+    TEST_3(open_navi_pas_19_6_raw, 6u, 0x1960u, 0x1961u, 0x1962u);
     TEST_3(nc_host_data_exchange_request_send_data_exchange_object_produced_by_server,
            7u, 1u, 2u, 3u);
     TEST_1(nc_host_connectivity_subscribe, 3u, 1u);
@@ -913,9 +913,9 @@ int main(void)
     TEST_1(nc_host_parking_subscribe, 3u, UINT32_MAX);
     TEST_1(nc_host_apogee_subscribe, 3u, UINT32_MAX);
     TEST_1(nc_host_agw_subscribe, 3u, UINT32_MAX);
-    TEST_1(mock_pas_31_6_raw, 6u, 0x316u);
-    TEST_5(mock_pas_31_10_raw, 10u, 1u, 2u, 3u, 4u, 5u);
-    TEST_3(mock_pas_31_13_raw, 13u, 0x311u, 0x312u, 0x313u);
+    TEST_1(open_navi_pas_31_6_raw, 6u, 0x316u);
+    TEST_5(open_navi_pas_31_10_raw, 10u, 1u, 2u, 3u, 4u, 5u);
+    TEST_3(open_navi_pas_31_13_raw, 13u, 0x311u, 0x312u, 0x313u);
     TEST_2(nc_host_agw_reply_graphical_weather_map_mode, 8u, 1u, 2u);
     TEST_2(nc_host_root_request_user_storage, 9u, 1u, 2u);
 
@@ -970,15 +970,15 @@ int main(void)
     /* Bounded pointer seams copy before dispatch; callbacks mutate the caller. */
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
-    g_expected_copy_size = MOCK_PAS_EWS_AREA_SIZE;
+    g_expected_copy_size = OPEN_NAVI_PAS_EWS_AREA_SIZE;
     prepare(3u, (GenericCallback)callback_word_owned_blob);
     assert(nc_host_ews_reply_ews_area(&g_proxy, 47u, concrete_copy) == 0u);
     assert(g_calls == 1u && g_argument[0] == 47u);
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
-    g_expected_copy_size = MOCK_PAS_RDS_FILTER_RECORD_SIZE *
-                           MOCK_PAS_RDS_FILTER_MAX_RECORDS;
+    g_expected_copy_size = OPEN_NAVI_PAS_RDS_FILTER_RECORD_SIZE *
+                           OPEN_NAVI_PAS_RDS_FILTER_MAX_RECORDS;
     prepare(7u, (GenericCallback)callback_word_owned_blob);
     assert(nc_host_rds_signal_selection_filter(&g_proxy, 25u,
                                                 concrete_copy) == 0u);
@@ -986,30 +986,30 @@ int main(void)
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
-    g_expected_copy_size = MOCK_PAS_TPEG_STATION_SIZE;
+    g_expected_copy_size = OPEN_NAVI_PAS_TPEG_STATION_SIZE;
     prepare(5u, (GenericCallback)callback_owned_blob);
     assert(nc_host_tpeg_signal_select_station(&g_proxy, concrete_copy) == 0u);
     assert(g_calls == 1u);
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
-    g_expected_copy_size = MOCK_PAS_TPEG_STATION_SIZE *
-                           MOCK_PAS_TPEG_STATION_MAX_RECORDS;
+    g_expected_copy_size = OPEN_NAVI_PAS_TPEG_STATION_SIZE *
+                           OPEN_NAVI_PAS_TPEG_STATION_MAX_RECORDS;
     prepare(6u, (GenericCallback)callback_word_owned_blob);
     assert(nc_host_tpeg_signal_select_station_list(
-               &g_proxy, MOCK_PAS_TPEG_STATION_MAX_RECORDS,
+               &g_proxy, OPEN_NAVI_PAS_TPEG_STATION_MAX_RECORDS,
                concrete_copy) == 0u);
     assert(g_calls == 1u &&
-           g_argument[0] == MOCK_PAS_TPEG_STATION_MAX_RECORDS);
+           g_argument[0] == OPEN_NAVI_PAS_TPEG_STATION_MAX_RECORDS);
     prepare(6u, (GenericCallback)callback_word_owned_blob);
     assert(nc_host_tpeg_signal_select_station_list(
-               &g_proxy, MOCK_PAS_TPEG_STATION_MAX_RECORDS + 1u,
+               &g_proxy, OPEN_NAVI_PAS_TPEG_STATION_MAX_RECORDS + 1u,
                concrete_copy) == 1u);
     assert(g_calls == 0u);
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
-    g_expected_copy_size = MOCK_PAS_MAP_MATCHED_POSITION_SIZE;
+    g_expected_copy_size = OPEN_NAVI_PAS_MAP_MATCHED_POSITION_SIZE;
     prepare(5u, (GenericCallback)callback_owned_blob);
     assert(nc_host_gps_signal_map_matched_position(
                &g_proxy, concrete_copy) == 0u && g_calls == 1u);
@@ -1024,7 +1024,7 @@ int main(void)
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
-    g_expected_copy_size = MOCK_PAS_VICS_WARNING_SIZE;
+    g_expected_copy_size = OPEN_NAVI_PAS_VICS_WARNING_SIZE;
     prepare(5u, (GenericCallback)callback_4word_owned_blob);
     assert(nc_host_vics_signal_vics_wide_emergency_warning(
                &g_proxy, 50u, 51u, 52u, 53u, concrete_copy) == 0u);
@@ -1032,7 +1032,7 @@ int main(void)
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
-    g_expected_copy_size = MOCK_PAS_CAN_MESSAGE_SIZE;
+    g_expected_copy_size = OPEN_NAVI_PAS_CAN_MESSAGE_SIZE;
     prepare(10u, (GenericCallback)callback_2word_owned_blob);
     assert(nc_host_vehicle_signal_can_message(
                &g_proxy, 54u, 55u, concrete_copy) == 0u);
@@ -1040,7 +1040,7 @@ int main(void)
 
     memset(concrete_copy, 0x5a, sizeof(concrete_copy));
     g_mutate_bytes = concrete_copy;
-    g_expected_copy_size = MOCK_PAS_TIMEZONE_SIZE;
+    g_expected_copy_size = OPEN_NAVI_PAS_TIMEZONE_SIZE;
     prepare(5u, (GenericCallback)callback_word_owned_blob);
     assert(nc_host_i18n_reply_time_zone_information(
                &g_proxy, 56u, concrete_copy) == 0u);
@@ -1093,8 +1093,8 @@ int main(void)
     prepare(6u, (GenericCallback)callback_supplier);
     assert(nc_host_diagnosis_reply_software_component_supplier_identification(&g_proxy, -8, 0xfedcu) == 0u && g_calls == 1u);
 
-    wmemset(wide, L'A', MOCK_PAS_DIAG_WIDE_TEXT_MAX + 1u);
-    wide[MOCK_PAS_DIAG_WIDE_TEXT_MAX + 1u] = L'\0';
+    wmemset(wide, L'A', OPEN_NAVI_PAS_DIAG_WIDE_TEXT_MAX + 1u);
+    wide[OPEN_NAVI_PAS_DIAG_WIDE_TEXT_MAX + 1u] = L'\0';
     g_mutate_wide = wide;
     prepare(11u, (GenericCallback)callback_wide);
     assert(nc_host_nav_diagnosis_reply_navigation_database_version_string(&g_proxy, -9, wide) == 0u && g_calls == 1u);
@@ -1118,8 +1118,8 @@ int main(void)
     prepare(4u, (GenericCallback)callback_data);
     assert(nc_host_data_exchange_consume_data_exchange_object_types(&g_proxy, 1u, NULL) == 1u && g_calls == 0u);
 
-    wmemset(wide, L'N', MOCK_THREAD_NAME_LIMIT + 1u);
-    wide[MOCK_THREAD_NAME_LIMIT + 1u] = L'\0';
+    wmemset(wide, L'N', OPEN_NAVI_THREAD_NAME_LIMIT + 1u);
+    wide[OPEN_NAVI_THREAD_NAME_LIMIT + 1u] = L'\0';
     g_mutate_wide = wide;
     prepare(10u, (GenericCallback)callback_thread);
     assert(nc_host_root_signal_thread_status(&g_proxy, 77u, wide, 3u) == 0u && g_calls == 1u);
@@ -1129,15 +1129,15 @@ int main(void)
     prepare(3u, (GenericCallback)callback1);
     g_return_status = 5u;
     assert(nc_host_nav_diagnosis_subscribe_driver_distraction_status(&g_proxy, 1u) == 5u);
-    mock_callback_test_state(&state);
+    open_navi_callback_test_state(&state);
     assert(state.optional_failures >= 1u);
     prepare(3u, (GenericCallback)callback1);
     g_return_status = 6u;
     assert(nc_host_vehicle_subscribe(&g_proxy, 1u) == 6u);
-    mock_callback_test_state(&state);
+    open_navi_callback_test_state(&state);
     assert(state.critical_failures >= 1u);
-    mock_callback_backend_reset();
-    mock_callback_test_state(&state);
+    open_navi_callback_backend_reset();
+    open_navi_callback_test_state(&state);
     assert(state.callback_count == 0u);
     assert(state.critical_failures == 0u);
     assert(state.optional_failures == 0u);

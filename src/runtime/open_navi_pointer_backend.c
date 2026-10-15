@@ -1,5 +1,5 @@
-#include "mock_pointer_backend.h"
-#include "mock_counter.h"
+#include "open_navi_pointer_backend.h"
+#include "open_navi_counter.h"
 
 #include <pthread.h>
 #include <stddef.h>
@@ -7,24 +7,24 @@
 
 #if UINTPTR_MAX == 0xffffffffu
 typedef char connection_info_must_be_16_bytes[
-    sizeof(MockConnectionDeviceInfoInput) == 16u ? 1 : -1];
+    sizeof(OpenNaviConnectionDeviceInfoInput) == 16u ? 1 : -1];
 typedef char connection_info_field_04_offset[
-    offsetof(MockConnectionDeviceInfoInput, field_04) == 4u ? 1 : -1];
+    offsetof(OpenNaviConnectionDeviceInfoInput, field_04) == 4u ? 1 : -1];
 typedef char connection_info_msisdn_offset[
-    offsetof(MockConnectionDeviceInfoInput, msisdn) == 8u ? 1 : -1];
+    offsetof(OpenNaviConnectionDeviceInfoInput, msisdn) == 8u ? 1 : -1];
 typedef char connection_info_sim_offset[
-    offsetof(MockConnectionDeviceInfoInput, sim_iccid) == 12u ? 1 : -1];
+    offsetof(OpenNaviConnectionDeviceInfoInput, sim_iccid) == 12u ? 1 : -1];
 #endif
 
 static pthread_mutex_t g_pointer_lock = PTHREAD_MUTEX_INITIALIZER;
-static MockPointerBackendTestState g_pointer_state;
+static OpenNaviPointerBackendTestState g_pointer_state;
 
 typedef char intl_settings_must_be_4_bytes[
-    sizeof(MockIntlSettingsInput) == 4u ? 1 : -1];
+    sizeof(OpenNaviIntlSettingsInput) == 4u ? 1 : -1];
 typedef char transport_item_must_be_16_bytes[
-    sizeof(MockTransportMeansObservedInput) == 16u ? 1 : -1];
+    sizeof(OpenNaviTransportMeansObservedInput) == 16u ? 1 : -1];
 typedef char transport_buffer_offset_must_be_8[
-    offsetof(MockTransportMeansObservedInput, buffer_size) == 8u ? 1 : -1];
+    offsetof(OpenNaviTransportMeansObservedInput, buffer_size) == 8u ? 1 : -1];
 
 static uint16_t read_le16(const uint8_t *bytes)
 {
@@ -52,13 +52,13 @@ static uint32_t copy_bounded_string(char *destination, uint32_t limit,
     return length;
 }
 
-void mock_pointer_backend_logging(uint32_t handle, uint32_t count,
+void open_navi_pointer_backend_logging(uint32_t handle, uint32_t count,
                                   const uint8_t *levels,
                                   const uint32_t *sizes)
 {
     uint8_t local_levels[4] = {0u, 0u, 0u, 0u};
     uint32_t local_sizes[4] = {0u, 0u, 0u, 0u};
-    int supported = count == MOCK_LOGGING_OBSERVED_COUNT;
+    int supported = count == OPEN_NAVI_LOGGING_OBSERVED_COUNT;
     int present = supported && levels != NULL && sizes != NULL;
 
     if (present) {
@@ -66,8 +66,8 @@ void mock_pointer_backend_logging(uint32_t handle, uint32_t count,
         memcpy(local_sizes, sizes, sizeof(local_sizes));
     }
     (void)pthread_mutex_lock(&g_pointer_lock);
-    mock_increment_saturating(&g_pointer_state.generation);
-    mock_increment_saturating(&g_pointer_state.logging_calls);
+    open_navi_increment_saturating(&g_pointer_state.generation);
+    open_navi_increment_saturating(&g_pointer_state.logging_calls);
     g_pointer_state.logging_handle = handle;
     g_pointer_state.logging_count = count;
     g_pointer_state.logging_supported = (uint8_t)supported;
@@ -77,17 +77,17 @@ void mock_pointer_backend_logging(uint32_t handle, uint32_t count,
     (void)pthread_mutex_unlock(&g_pointer_lock);
 }
 
-void mock_pointer_backend_internationalization(uint32_t handle,
-    const MockIntlSettingsInput *settings)
+void open_navi_pointer_backend_internationalization(uint32_t handle,
+    const OpenNaviIntlSettingsInput *settings)
 {
-    uint8_t bytes[MOCK_INTL_SETTINGS_SIZE] = {0u, 0u, 0u, 0u};
+    uint8_t bytes[OPEN_NAVI_INTL_SETTINGS_SIZE] = {0u, 0u, 0u, 0u};
 
     if (settings != NULL) {
         memcpy(bytes, settings, sizeof(bytes));
     }
     (void)pthread_mutex_lock(&g_pointer_lock);
-    mock_increment_saturating(&g_pointer_state.generation);
-    mock_increment_saturating(&g_pointer_state.intl_calls);
+    open_navi_increment_saturating(&g_pointer_state.generation);
+    open_navi_increment_saturating(&g_pointer_state.intl_calls);
     g_pointer_state.intl_handle = handle;
     g_pointer_state.intl_present = (uint8_t)(settings != NULL);
     g_pointer_state.intl_language = read_le16(bytes);
@@ -96,33 +96,33 @@ void mock_pointer_backend_internationalization(uint32_t handle,
     (void)pthread_mutex_unlock(&g_pointer_lock);
 }
 
-void mock_pointer_backend_vin(uint32_t handle, const char *vin17)
+void open_navi_pointer_backend_vin(uint32_t handle, const char *vin17)
 {
-    char vin[MOCK_VIN_SIZE + 1u];
+    char vin[OPEN_NAVI_VIN_SIZE + 1u];
 
     memset(vin, 0, sizeof(vin));
     if (vin17 != NULL) {
-        memcpy(vin, vin17, MOCK_VIN_SIZE);
+        memcpy(vin, vin17, OPEN_NAVI_VIN_SIZE);
     }
-    vin[MOCK_VIN_SIZE] = '\0';
+    vin[OPEN_NAVI_VIN_SIZE] = '\0';
     (void)pthread_mutex_lock(&g_pointer_lock);
-    mock_increment_saturating(&g_pointer_state.generation);
-    mock_increment_saturating(&g_pointer_state.vin_calls);
+    open_navi_increment_saturating(&g_pointer_state.generation);
+    open_navi_increment_saturating(&g_pointer_state.vin_calls);
     g_pointer_state.vin_handle = handle;
     g_pointer_state.vin_present = (uint8_t)(vin17 != NULL);
     memcpy(g_pointer_state.vin, vin, sizeof(vin));
     (void)pthread_mutex_unlock(&g_pointer_lock);
 }
 
-void mock_pointer_backend_transport(uint32_t handle, uint32_t count,
-    const MockTransportMeansObservedInput *items)
+void open_navi_pointer_backend_transport(uint32_t handle, uint32_t count,
+    const OpenNaviTransportMeansObservedInput *items)
 {
     const uint8_t *bytes = (const uint8_t *)items;
     uint8_t kind = 0u;
     uint8_t buffer_bytes[4] = {0u, 0u, 0u, 0u};
     uint8_t field_bytes[4] = {0u, 0u, 0u, 0u};
-    int supported = count == 0u || count == MOCK_TRANSPORT_OBSERVED_COUNT;
-    int present = count == MOCK_TRANSPORT_OBSERVED_COUNT && items != NULL;
+    int supported = count == 0u || count == OPEN_NAVI_TRANSPORT_OBSERVED_COUNT;
+    int present = count == OPEN_NAVI_TRANSPORT_OBSERVED_COUNT && items != NULL;
 
     if (present) {
         /* Read only proven fields. Bytes +1..+7 are indeterminate padding and
@@ -132,8 +132,8 @@ void mock_pointer_backend_transport(uint32_t handle, uint32_t count,
         memcpy(field_bytes, bytes + 12, sizeof(field_bytes));
     }
     (void)pthread_mutex_lock(&g_pointer_lock);
-    mock_increment_saturating(&g_pointer_state.generation);
-    mock_increment_saturating(&g_pointer_state.transport_calls);
+    open_navi_increment_saturating(&g_pointer_state.generation);
+    open_navi_increment_saturating(&g_pointer_state.transport_calls);
     g_pointer_state.transport_handle = handle;
     g_pointer_state.transport_count = count;
     g_pointer_state.transport_supported = (uint8_t)supported;
@@ -144,9 +144,9 @@ void mock_pointer_backend_transport(uint32_t handle, uint32_t count,
     (void)pthread_mutex_unlock(&g_pointer_lock);
 }
 
-void mock_pointer_backend_connection(
+void open_navi_pointer_backend_connection(
     uint32_t handle, uint32_t service,
-    const MockConnectionDeviceInfoInput *info)
+    const OpenNaviConnectionDeviceInfoInput *info)
 {
     uint32_t field_04 = 0u;
     const char *imei_source = NULL;
@@ -171,8 +171,8 @@ void mock_pointer_backend_connection(
     sim_length = copy_bounded_string(sim_iccid, 128u, sim_source);
 
     (void)pthread_mutex_lock(&g_pointer_lock);
-    mock_increment_saturating(&g_pointer_state.generation);
-    mock_increment_saturating(&g_pointer_state.connection_calls);
+    open_navi_increment_saturating(&g_pointer_state.generation);
+    open_navi_increment_saturating(&g_pointer_state.connection_calls);
     g_pointer_state.connection_handle = handle;
     g_pointer_state.connection_service = service;
     g_pointer_state.connection_info_present = (uint8_t)(info != NULL);
@@ -189,15 +189,15 @@ void mock_pointer_backend_connection(
     (void)pthread_mutex_unlock(&g_pointer_lock);
 }
 
-void mock_pointer_backend_tef(uint32_t handle, uint32_t category,
+void open_navi_pointer_backend_tef(uint32_t handle, uint32_t category,
                               const char *filename)
 {
     char local_filename[513] = {0};
     uint32_t length = copy_bounded_string(local_filename, 512u, filename);
 
     (void)pthread_mutex_lock(&g_pointer_lock);
-    mock_increment_saturating(&g_pointer_state.generation);
-    mock_increment_saturating(&g_pointer_state.tef_calls);
+    open_navi_increment_saturating(&g_pointer_state.generation);
+    open_navi_increment_saturating(&g_pointer_state.tef_calls);
     g_pointer_state.tef_handle = handle;
     g_pointer_state.tef_category = category;
     g_pointer_state.tef_present = (uint8_t)(filename != NULL);
@@ -207,15 +207,15 @@ void mock_pointer_backend_tef(uint32_t handle, uint32_t category,
     (void)pthread_mutex_unlock(&g_pointer_lock);
 }
 
-void mock_pointer_backend_reset(void)
+void open_navi_pointer_backend_reset(void)
 {
     (void)pthread_mutex_lock(&g_pointer_lock);
     memset(&g_pointer_state, 0, sizeof(g_pointer_state));
     (void)pthread_mutex_unlock(&g_pointer_lock);
 }
 
-#if defined(MOCK_NAVICORE_TESTING)
-void mock_pointer_backend_test_state(MockPointerBackendTestState *state_out)
+#if defined(OPEN_NAVI_TESTING)
+void open_navi_pointer_backend_test_state(OpenNaviPointerBackendTestState *state_out)
 {
     (void)pthread_mutex_lock(&g_pointer_lock);
     if (state_out != NULL) {

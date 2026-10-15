@@ -23,24 +23,24 @@ struct FrameResult {
 class Engine {
 public:
     virtual ~Engine() = default;
-    virtual bool initialize(const Config&, const MockNavBackendRenderTargetV1&,
+    virtual bool initialize(const Config&, const OpenNaviBackendRenderTargetV1&,
                             std::shared_ptr<Wakeup>) = 0;
-    virtual FrameResult frame(const MockNavBackendRenderTargetV1&) = 0;
-    virtual int gps(const MockNavBackendGpsV1&) = 0;
-    virtual int pointer(const MockNavBackendPointerV2&) = 0;
+    virtual FrameResult frame(const OpenNaviBackendRenderTargetV1&) = 0;
+    virtual int gps(const OpenNaviBackendGpsV1&) = 0;
+    virtual int pointer(const OpenNaviBackendPointerV2&) = 0;
     virtual ReleaseResult release(ReleaseMode) = 0;
     // Platform inputs (backend V2-V5). Most carry raw values whose meaning
     // is not qualified yet (api-ui-restrictions.md): recorded and shown,
     // not acted on. The session replays the latest of each after attach.
-    virtual void visibility(const MockNavBackendVisibilityV1&) {}
-    virtual void screen(const MockNavBackendScreenV1&) {}
-    virtual void vehicle(const MockNavBackendVehicleV2&) {}
-    virtual void internationalization(const MockNavBackendInternationalizationV1&) {}
-    virtual void cluster_display(const MockNavBackendClusterDisplayV1&) {}
-    virtual void driver_distraction(const MockNavBackendDriverDistractionV1&) {}
+    virtual void visibility(const OpenNaviBackendVisibilityV1&) {}
+    virtual void screen(const OpenNaviBackendScreenV1&) {}
+    virtual void vehicle(const OpenNaviBackendVehicleV2&) {}
+    virtual void internationalization(const OpenNaviBackendInternationalizationV1&) {}
+    virtual void cluster_display(const OpenNaviBackendClusterDisplayV1&) {}
+    virtual void driver_distraction(const OpenNaviBackendDriverDistractionV1&) {}
     // Outbound services (cluster, audio, thread status) from start until
     // stop; null when the runtime gave none. Call on the renderer thread.
-    virtual void set_outbound(const MockNavBackendServicesV2*) {}
+    virtual void set_outbound(const OpenNaviBackendServicesV2*) {}
 };
 
 using EngineFactory = std::unique_ptr<Engine> (*)();

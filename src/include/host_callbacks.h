@@ -4,28 +4,28 @@
 #include <stdint.h>
 #include <wchar.h>
 
-#include "mock_callback_backend.h"
+#include "open_navi_callback_backend.h"
 
 enum {
-    MOCK_PAS_TIMEZONE_SIZE = 0x22c,
-    MOCK_PAS_SOFTWARE_VERSION_SIZE = 4,
-    MOCK_PAS_VR_STRING_SIZE = 0x200,
-    MOCK_PAS_VR_LOCATION_TYPE_COUNT = 7,
-    MOCK_PAS_WSA_ALERT_INFO_SIZE = 0x2d0,
-    MOCK_PAS_DATA_EXCHANGE_MAX_TYPES = 64,
-    MOCK_PAS_DIAG_WIDE_TEXT_MAX = 127,
-    MOCK_PAS_EWS_AREA_SIZE = 10,
-    MOCK_PAS_RDS_FILTER_RECORD_SIZE = 6,
-    MOCK_PAS_RDS_FILTER_MAX_RECORDS = 20,
-    MOCK_PAS_TPEG_STATION_SIZE = 0x30,
-    MOCK_PAS_TPEG_STATION_MAX_RECORDS = 4,
-    MOCK_PAS_MAP_MATCHED_POSITION_SIZE = 0x38,
-    MOCK_PAS_VICS_WARNING_SIZE = 0x180,
-    MOCK_PAS_CAN_MESSAGE_SIZE = 8
+    OPEN_NAVI_PAS_TIMEZONE_SIZE = 0x22c,
+    OPEN_NAVI_PAS_SOFTWARE_VERSION_SIZE = 4,
+    OPEN_NAVI_PAS_VR_STRING_SIZE = 0x200,
+    OPEN_NAVI_PAS_VR_LOCATION_TYPE_COUNT = 7,
+    OPEN_NAVI_PAS_WSA_ALERT_INFO_SIZE = 0x2d0,
+    OPEN_NAVI_PAS_DATA_EXCHANGE_MAX_TYPES = 64,
+    OPEN_NAVI_PAS_DIAG_WIDE_TEXT_MAX = 127,
+    OPEN_NAVI_PAS_EWS_AREA_SIZE = 10,
+    OPEN_NAVI_PAS_RDS_FILTER_RECORD_SIZE = 6,
+    OPEN_NAVI_PAS_RDS_FILTER_MAX_RECORDS = 20,
+    OPEN_NAVI_PAS_TPEG_STATION_SIZE = 0x30,
+    OPEN_NAVI_PAS_TPEG_STATION_MAX_RECORDS = 4,
+    OPEN_NAVI_PAS_MAP_MATCHED_POSITION_SIZE = 0x38,
+    OPEN_NAVI_PAS_VICS_WARNING_SIZE = 0x180,
+    OPEN_NAVI_PAS_CAN_MESSAGE_SIZE = 8
 };
 
 /* ARM/QNX wire-side record consumed by SI_GPSData slot 6. */
-typedef struct MockPasMapMatchedAddress {
+typedef struct OpenNaviPasMapMatchedAddress {
     const wchar_t *country;
     const wchar_t *city;
     const wchar_t *street;
@@ -33,19 +33,19 @@ typedef struct MockPasMapMatchedAddress {
     const wchar_t *cross_street;
     const wchar_t *house_number;
     uint8_t scalar_fields[0x38];
-} MockPasMapMatchedAddress;
+} OpenNaviPasMapMatchedAddress;
 
 /* ARM/QNX by-value geography records used by the SXM callback interfaces. */
-typedef struct MockPasSxmLocation {
+typedef struct OpenNaviPasSxmLocation {
     double longitude;
     double latitude;
-} MockPasSxmLocation;
+} OpenNaviPasSxmLocation;
 
-typedef struct MockPasSxmMbr {
-    MockPasSxmLocation lower_left;
-    MockPasSxmLocation upper_right;
-    MockPasSxmLocation center;
-} MockPasSxmMbr;
+typedef struct OpenNaviPasSxmMbr {
+    OpenNaviPasSxmLocation lower_left;
+    OpenNaviPasSxmLocation upper_right;
+    OpenNaviPasSxmLocation center;
+} OpenNaviPasSxmMbr;
 
 uint32_t nc_host_root_adapter_ready(void *proxy);
 uint32_t nc_host_root_no_arg_internal_state_cleanup(void *proxy);
@@ -139,14 +139,14 @@ uint32_t nc_host_nav_diagnosis_request_static_setting_11fd(void *proxy, uint32_t
 uint32_t nc_host_nav_diagnosis_reply_navigation_database_version_string(void *proxy, int32_t handle, const wchar_t *text);
 uint32_t nc_host_nav_diagnosis_reply_navigation_database_status(void *proxy, int32_t handle, uint32_t packed_status);
 uint32_t nc_host_cluster_signal_instrument_cluster_display_data(void *proxy, const void *display_data_0xa5c);
-uint32_t mock_pas_17_4_raw(void *proxy, uint32_t word0);
+uint32_t open_navi_pas_17_4_raw(void *proxy, uint32_t word0);
 uint32_t nc_host_cluster_subscribe(void *proxy, uint32_t mask);
 uint32_t nc_host_cluster_request_or_signal_no_args(void *proxy);
 uint32_t nc_host_cluster_request_tbt_settings_enable_status(void *proxy, uint32_t handle);
 uint32_t nc_host_data_exchange_produce_data_exchange_object_types(void *proxy, uint16_t count, const uint32_t *types);
 uint32_t nc_host_data_exchange_consume_data_exchange_object_types(void *proxy, uint16_t count, const uint32_t *types);
 uint32_t nc_host_data_exchange_request_supported_transport_means_and_buffer_sizes(void *proxy, uint32_t handle);
-uint32_t mock_pas_19_6_raw(void *proxy, uint32_t word0, uint32_t word1,
+uint32_t open_navi_pas_19_6_raw(void *proxy, uint32_t word0, uint32_t word1,
                            uint32_t word2);
 uint32_t nc_host_data_exchange_request_send_data_exchange_object_produced_by_server(
     void *proxy, uint32_t handle, uint32_t object_id, uint32_t request_word);
@@ -195,7 +195,7 @@ uint32_t nc_host_voice_reply_location_set(
     const char *location, uint32_t location_type, uint32_t entries);
 uint32_t nc_host_voice_reply_next_available_location_get(
     void *proxy, uint32_t handle, uint32_t result,
-    const uint32_t location_types[MOCK_PAS_VR_LOCATION_TYPE_COUNT]);
+    const uint32_t location_types[OPEN_NAVI_PAS_VR_LOCATION_TYPE_COUNT]);
 uint32_t nc_host_voice_reply_poi_set(void *proxy, uint32_t handle,
                                    uint32_t result, uint32_t poi_status,
                                    uint32_t entries);
@@ -216,10 +216,10 @@ uint32_t nc_host_phone_request_phone_call_availability(void *proxy, uint32_t han
 uint32_t nc_host_parking_subscribe(void *proxy, uint32_t mask);
 uint32_t nc_host_apogee_subscribe(void *proxy, uint32_t mask);
 uint32_t nc_host_agw_subscribe(void *proxy, uint32_t mask);
-uint32_t mock_pas_31_6_raw(void *proxy, uint32_t word0);
-uint32_t mock_pas_31_10_raw(void *proxy, uint32_t word0, uint32_t word1,
+uint32_t open_navi_pas_31_6_raw(void *proxy, uint32_t word0);
+uint32_t open_navi_pas_31_10_raw(void *proxy, uint32_t word0, uint32_t word1,
                             uint32_t word2, uint32_t word3, uint32_t word4);
-uint32_t mock_pas_31_13_raw(void *proxy, uint32_t word0, uint32_t word1,
+uint32_t open_navi_pas_31_13_raw(void *proxy, uint32_t word0, uint32_t word1,
                             uint32_t word2);
 uint32_t nc_host_agw_reply_graphical_weather_map_mode(
     void *proxy, uint32_t handle, uint32_t mode);
@@ -227,7 +227,7 @@ uint32_t nc_host_agw_signal_wsa_warning_popup(
     void *proxy, uint32_t alert_id, uint32_t is_manual,
     const void *alert_info_0x2d0);
 uint32_t nc_host_agw_request_wsa_set_alert_location(
-    void *proxy, uint32_t handle, MockPasSxmLocation location,
+    void *proxy, uint32_t handle, OpenNaviPasSxmLocation location,
     uint32_t radius, uint32_t radius_unit);
 uint32_t nc_host_root_request_user_storage(void *proxy, uint32_t handle,
                                            uint32_t storage_id);
@@ -259,7 +259,7 @@ uint32_t nc_host_data_exchange_request_send_data_exchange_object_required_by_ser
 uint32_t nc_host_nav_diagnosis_reply_approved_map_versions(
     void *proxy, int32_t handle, const wchar_t *versions);
 uint32_t nc_host_gps_reply_map_matched_address(
-    void *proxy, uint32_t handle, const MockPasMapMatchedAddress *address);
+    void *proxy, uint32_t handle, const OpenNaviPasMapMatchedAddress *address);
 uint32_t nc_host_phone_make_phone_call(void *proxy, uint32_t handle,
                                      const wchar_t *phone_number,
                                      const wchar_t *display_text);
@@ -358,13 +358,13 @@ uint32_t nc_host_apogee_request_apogee_remove_collection_mbr(void *proxy,
                                                        uint32_t word0,
                                                        uint32_t word1);
 uint32_t nc_host_apogee_request_apogee_set_type_collection_mbr(
-    void *proxy, uint32_t handle, uint16_t type, MockPasSxmMbr mbr,
+    void *proxy, uint32_t handle, uint16_t type, OpenNaviPasSxmMbr mbr,
     uint32_t collection_index);
 uint32_t nc_host_apogee_request_apogee_set_type_extraction_mbr(
-    void *proxy, uint32_t handle, uint16_t type, MockPasSxmMbr mbr,
+    void *proxy, uint32_t handle, uint16_t type, OpenNaviPasSxmMbr mbr,
     uint32_t collection_index);
 uint32_t nc_host_parking_request_parking_set_collection_mbr(
-    void *proxy, uint32_t handle, MockPasSxmMbr mbr,
+    void *proxy, uint32_t handle, OpenNaviPasSxmMbr mbr,
     uint16_t collection_index);
 uint32_t nc_host_nav_diagnosis_reply_status_navigation_database(void *proxy,
                                                       uint32_t word0,

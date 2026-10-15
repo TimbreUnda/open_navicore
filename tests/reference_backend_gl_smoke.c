@@ -83,20 +83,20 @@ static void reset(void)
     g_inject_clear_error = 0;
 }
 
-static MockNavBackendV1 query_backend(void)
+static OpenNaviBackendV1 query_backend(void)
 {
-    MockNavBackendPluginV1 plugin;
+    OpenNaviBackendPluginV1 plugin;
     memset(&plugin, 0, sizeof(plugin));
-    assert(mock_nav_backend_query_v1(MOCK_NAV_PLUGIN_QUERY_ABI_V1,
+    assert(open_navi_backend_query_v1(OPEN_NAVI_PLUGIN_QUERY_ABI_V1,
                                      sizeof(plugin), &plugin) == 0);
     return plugin.backend.v1;
 }
 
 int main(void)
 {
-    MockNavBackendV1 backend = query_backend();
-    MockNavBackendRenderTargetV1 target;
-    MockNavBackendFrameV1 frame;
+    OpenNaviBackendV1 backend = query_backend();
+    OpenNaviBackendRenderTargetV1 target;
+    OpenNaviBackendFrameV1 frame;
     memset(&target, 0, sizeof(target));
     memset(&frame, 0, sizeof(frame));
     target.width = 800u;

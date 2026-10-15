@@ -83,7 +83,7 @@ def negative_tests(text):
         text.replace("9,6,SI_GPSData,static_typed_not_emitted",
                      "9,6,SI_GPSData,static_pointer_fail_closed", 1),
         text.replace(",nc_host_root_signal_initiate_restart_once,no\n",
-                     ",mock_pas_forbidden,yes\n", 1),
+                     ",open_navi_pas_forbidden,yes\n", 1),
         text.replace("borrowed synchronous 0x50-byte ARM record", "none", 1),
     ]
     for mutation in mutations:

@@ -1,12 +1,12 @@
-#include "mock_default_backend.h"
+#include "open_navi_default_backend.h"
 
-#if !defined(MOCK_NAVICORE_RENDERER_STUB)
+#if !defined(OPEN_NAVI_RENDERER_STUB)
 #include <GLES2/gl2.h>
 #include <limits.h>
 #endif
 
 static int default_start(void *context,
-                         const MockNavBackendServicesV1 *services)
+                         const OpenNaviBackendServicesV1 *services)
 {
     (void)context;
     (void)services;
@@ -14,7 +14,7 @@ static int default_start(void *context,
 }
 
 static int default_surface(void *context,
-                           const MockNavBackendRenderTargetV1 *target)
+                           const OpenNaviBackendRenderTargetV1 *target)
 {
     (void)context;
     return target != NULL && target->width != 0u && target->height != 0u
@@ -22,21 +22,21 @@ static int default_surface(void *context,
 }
 
 static int default_visibility(void *context,
-                              const MockNavBackendVisibilityV1 *event)
+                              const OpenNaviBackendVisibilityV1 *event)
 {
     (void)context;
     (void)event;
     return 0;
 }
 
-static int default_screen(void *context, const MockNavBackendScreenV1 *event)
+static int default_screen(void *context, const OpenNaviBackendScreenV1 *event)
 {
     (void)context;
     (void)event;
     return 0;
 }
 
-static int default_gps(void *context, const MockNavBackendGpsV1 *event)
+static int default_gps(void *context, const OpenNaviBackendGpsV1 *event)
 {
     (void)context;
     (void)event;
@@ -44,7 +44,7 @@ static int default_gps(void *context, const MockNavBackendGpsV1 *event)
 }
 
 static int default_pointer(void *context,
-                           const MockNavBackendPointerV1 *event)
+                           const OpenNaviBackendPointerV1 *event)
 {
     (void)context;
     (void)event;
@@ -52,13 +52,13 @@ static int default_pointer(void *context,
 }
 
 static int default_render(void *context,
-                          const MockNavBackendRenderTargetV1 *target,
-                          const MockNavBackendFrameV1 *frame)
+                          const OpenNaviBackendRenderTargetV1 *target,
+                          const OpenNaviBackendFrameV1 *frame)
 {
     (void)context;
     (void)target;
     (void)frame;
-#if !defined(MOCK_NAVICORE_RENDERER_STUB)
+#if !defined(OPEN_NAVI_RENDERER_STUB)
     unsigned int drain;
     if (target == NULL || target->width == 0u || target->height == 0u ||
         target->width > (uint32_t)INT_MAX ||
@@ -82,9 +82,9 @@ static int default_render(void *context,
 #endif
 }
 
-static const MockNavBackendV1 g_default_backend = {
-    MOCK_NAV_BACKEND_ABI_V1,
-    sizeof(MockNavBackendV1),
+static const OpenNaviBackendV1 g_default_backend = {
+    OPEN_NAVI_BACKEND_ABI_V1,
+    sizeof(OpenNaviBackendV1),
     NULL,
     default_start,
     NULL,
@@ -97,7 +97,7 @@ static const MockNavBackendV1 g_default_backend = {
     default_render
 };
 
-const MockNavBackendV1 *mock_default_backend_v1(void)
+const OpenNaviBackendV1 *open_navi_default_backend_v1(void)
 {
     return &g_default_backend;
 }

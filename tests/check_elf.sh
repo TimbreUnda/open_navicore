@@ -22,11 +22,11 @@ for library in libscreen.so.1 libEGL.so.1 libGLESv2.so.1; do
 done
 
 for symbol in panaVersionCheck panaInitialize panaGetSoftwareInfrastructure panaDeinitialize \
-    mock_navicore_backend_install_v1 mock_navicore_backend_install_v2 \
-	    mock_navicore_backend_install_v3 mock_navicore_backend_install_v4 \
-        mock_navicore_backend_install_v5 \
-    mock_cluster_backend_serialize mock_cluster_backend_publish \
-    mock_cluster_backend_reset; do
+    open_navi_backend_install_v1 open_navi_backend_install_v2 \
+	    open_navi_backend_install_v3 open_navi_backend_install_v4 \
+        open_navi_backend_install_v5 \
+    open_navi_cluster_backend_serialize open_navi_cluster_backend_publish \
+    open_navi_cluster_backend_reset; do
     count=$(printf '%s\n' "$symbols" | awk -v wanted="$symbol" '$4 == "FUNC" && $5 == "GLOBAL" && $8 == wanted { n++ } END { print n+0 }')
     test "$count" -ge 1 || {
         echo "missing exported function: $symbol" >&2
@@ -53,14 +53,14 @@ application_exports=$(printf '%s\n' "$symbols" | awk \
     '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && \
      $8 !~ /^_/ { print $8 }' | sort -u)
 expected_exports=$(printf '%s\n' \
-    mock_cluster_backend_publish \
-    mock_cluster_backend_reset \
-    mock_cluster_backend_serialize \
-    mock_navicore_backend_install_v1 \
-    mock_navicore_backend_install_v2 \
-	    mock_navicore_backend_install_v3 \
-    mock_navicore_backend_install_v4 \
-    mock_navicore_backend_install_v5 \
+    open_navi_cluster_backend_publish \
+    open_navi_cluster_backend_reset \
+    open_navi_cluster_backend_serialize \
+    open_navi_backend_install_v1 \
+    open_navi_backend_install_v2 \
+	    open_navi_backend_install_v3 \
+    open_navi_backend_install_v4 \
+    open_navi_backend_install_v5 \
     panaDeinitialize \
     panaGetSoftwareInfrastructure \
     panaInitialize \

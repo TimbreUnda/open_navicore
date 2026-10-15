@@ -1,8 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include "mock_gps_backend.h"
+#include "open_navi_gps_backend.h"
 #include <open_navicore/backend.h>
-#include "mock_renderer.h"
+#include "open_navi_renderer.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -50,17 +50,17 @@ typedef struct {
     uint32_t vehicle_calls;
     uint32_t gps_interval_calls;
     uint32_t audio_calls;
-    MockNavBackendVisibilityV1 visibility[MOCK_RENDERER_DISPLAY_COUNT];
-    MockNavBackendScreenV1 screen[MOCK_RENDERER_DISPLAY_COUNT];
-    uint32_t visibility_per_display[MOCK_RENDERER_DISPLAY_COUNT];
-    uint32_t screen_per_display[MOCK_RENDERER_DISPLAY_COUNT];
+    OpenNaviBackendVisibilityV1 visibility[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
+    OpenNaviBackendScreenV1 screen[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
+    uint32_t visibility_per_display[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
+    uint32_t screen_per_display[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
     uint32_t state_order[32];
     uint32_t state_order_count;
-    MockNavBackendGpsV1 gps;
-    MockNavBackendVehicleV2 vehicle;
-    MockNavBackendGpsIntervalV2 gps_interval;
-    MockNavBackendAudioV2 audio;
-    MockNavBackendServicesV1 services;
+    OpenNaviBackendGpsV1 gps;
+    OpenNaviBackendVehicleV2 vehicle;
+    OpenNaviBackendGpsIntervalV2 gps_interval;
+    OpenNaviBackendAudioV2 audio;
+    OpenNaviBackendServicesV1 services;
 } StressBackend;
 
 typedef struct {
@@ -99,16 +99,16 @@ static void callback_enter(StressBackend *backend, enum CallbackPhase phase)
     }
     destroy = backend->destroy_phase == phase;
     (void)pthread_mutex_unlock(&backend->lock);
-    if (destroy != 0) mock_renderer_destroy();
+    if (destroy != 0) open_navi_renderer_destroy();
 }
 
 static int backend_start(void *context,
-                         const MockNavBackendServicesV1 *services)
+                         const OpenNaviBackendServicesV1 *services)
 {
     StressBackend *backend = (StressBackend *)context;
     backend->services = *services;
     assert(services->runtime_context != NULL);
-    assert(mock_renderer_stub_context_current() == 0);
+    assert(open_navi_renderer_stub_context_current() == 0);
     assert(services->request_frame(services->runtime_context) == 0);
     callback_enter(backend, PHASE_START);
     return 0;
@@ -116,15 +116,15 @@ static int backend_start(void *context,
 
 static void backend_stop(void *context)
 {
-    assert(mock_renderer_stub_context_current() == 0);
+    assert(open_navi_renderer_stub_context_current() == 0);
     callback_enter((StressBackend *)context, PHASE_STOP);
 }
 
 static int backend_surface_created(
-    void *context, const MockNavBackendRenderTargetV1 *target)
+    void *context, const OpenNaviBackendRenderTargetV1 *target)
 {
     assert(target->width == 800u && target->height == 480u);
-    assert(mock_renderer_stub_context_current() != 0);
+    assert(open_navi_renderer_stub_context_current() != 0);
     callback_enter((StressBackend *)context, PHASE_SURFACE_CREATED);
     return 0;
 }
@@ -132,16 +132,16 @@ static int backend_surface_created(
 static void backend_surface_destroyed(void *context)
 {
     StressBackend *backend = (StressBackend *)context;
-    assert((mock_renderer_stub_context_current() != 0) ==
+    assert((open_navi_renderer_stub_context_current() != 0) ==
            backend->expect_surface_destroyed_current);
     callback_enter(backend, PHASE_SURFACE_DESTROYED);
 }
 
 static int backend_visibility(
-    void *context, const MockNavBackendVisibilityV1 *visibility)
+    void *context, const OpenNaviBackendVisibilityV1 *visibility)
 {
     StressBackend *backend = (StressBackend *)context;
-    assert(visibility->display < MOCK_RENDERER_DISPLAY_COUNT);
+    assert(visibility->display < OPEN_NAVI_RENDERER_DISPLAY_COUNT);
     (void)pthread_mutex_lock(&backend->lock);
     backend->visibility[visibility->display] = *visibility;
     ++backend->visibility_per_display[visibility->display];
@@ -154,11 +154,11 @@ static int backend_visibility(
 }
 
 static int backend_screen(void *context,
-                          const MockNavBackendScreenV1 *screen)
+                          const OpenNaviBackendScreenV1 *screen)
 {
     StressBackend *backend = (StressBackend *)context;
     (void)pthread_mutex_lock(&backend->lock);
-    assert(screen->display < MOCK_RENDERER_DISPLAY_COUNT);
+    assert(screen->display < OPEN_NAVI_RENDERER_DISPLAY_COUNT);
     backend->screen[screen->display] = *screen;
     ++backend->screen_per_display[screen->display];
     ++backend->screen_calls;
@@ -169,7 +169,7 @@ static int backend_screen(void *context,
     return 0;
 }
 
-static int backend_gps(void *context, const MockNavBackendGpsV1 *gps)
+static int backend_gps(void *context, const OpenNaviBackendGpsV1 *gps)
 {
     StressBackend *backend = (StressBackend *)context;
     (void)pthread_mutex_lock(&backend->lock);
@@ -183,7 +183,7 @@ static int backend_gps(void *context, const MockNavBackendGpsV1 *gps)
 }
 
 static int backend_pointer(void *context,
-                           const MockNavBackendPointerV1 *pointer)
+                           const OpenNaviBackendPointerV1 *pointer)
 {
     StressBackend *backend = (StressBackend *)context;
     (void)pthread_mutex_lock(&backend->lock);
@@ -200,7 +200,7 @@ static int backend_pointer(void *context,
 }
 
 static int backend_vehicle(void *context,
-                           const MockNavBackendVehicleV2 *vehicle)
+                           const OpenNaviBackendVehicleV2 *vehicle)
 {
     StressBackend *backend = (StressBackend *)context;
     (void)pthread_mutex_lock(&backend->lock);
@@ -215,7 +215,7 @@ static int backend_vehicle(void *context,
 }
 
 static int backend_gps_interval(
-    void *context, const MockNavBackendGpsIntervalV2 *gps_interval)
+    void *context, const OpenNaviBackendGpsIntervalV2 *gps_interval)
 {
     StressBackend *backend = (StressBackend *)context;
     (void)pthread_mutex_lock(&backend->lock);
@@ -229,7 +229,7 @@ static int backend_gps_interval(
     return 0;
 }
 
-static int backend_audio(void *context, const MockNavBackendAudioV2 *audio)
+static int backend_audio(void *context, const OpenNaviBackendAudioV2 *audio)
 {
     StressBackend *backend = (StressBackend *)context;
     (void)pthread_mutex_lock(&backend->lock);
@@ -244,21 +244,21 @@ static int backend_audio(void *context, const MockNavBackendAudioV2 *audio)
 }
 
 static int backend_render(void *context,
-                          const MockNavBackendRenderTargetV1 *target,
-                          const MockNavBackendFrameV1 *frame)
+                          const OpenNaviBackendRenderTargetV1 *target,
+                          const OpenNaviBackendFrameV1 *frame)
 {
     (void)target;
     assert(frame->sequence != 0u);
-    assert(mock_renderer_stub_context_current() != 0);
+    assert(open_navi_renderer_stub_context_current() != 0);
     callback_enter((StressBackend *)context, PHASE_RENDER);
     return 0;
 }
 
-static MockNavBackendV1 make_backend(StressBackend *context)
+static OpenNaviBackendV1 make_backend(StressBackend *context)
 {
-    MockNavBackendV1 backend;
+    OpenNaviBackendV1 backend;
     memset(&backend, 0, sizeof(backend));
-    backend.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    backend.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
     backend.struct_size = sizeof(backend);
     backend.backend_context = context;
     backend.start = backend_start;
@@ -273,12 +273,12 @@ static MockNavBackendV1 make_backend(StressBackend *context)
     return backend;
 }
 
-static MockNavBackendV2 make_backend_v2(StressBackend *context)
+static OpenNaviBackendV2 make_backend_v2(StressBackend *context)
 {
-    MockNavBackendV2 backend;
+    OpenNaviBackendV2 backend;
     memset(&backend, 0, sizeof(backend));
     backend.v1 = make_backend(context);
-    backend.v1.abi_version = MOCK_NAV_BACKEND_ABI_V2;
+    backend.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
     backend.v1.struct_size = sizeof(backend);
     backend.vehicle_changed = backend_vehicle;
     backend.gps_interval_changed = backend_gps_interval;
@@ -299,12 +299,12 @@ static void wait_phase_at(StressBackend *backend, enum CallbackPhase phase,
     if (status != 0 || backend->calls[phase] < expected)
     {
         if (phase == PHASE_POINTER) {
-            MockRendererPointerQueueStats queue_stats;
-            MockRendererStubInputStats input_stats;
+            OpenNaviRendererPointerQueueStats queue_stats;
+            OpenNaviRendererStubInputStats input_stats;
             memset(&queue_stats, 0, sizeof(queue_stats));
             memset(&input_stats, 0, sizeof(input_stats));
-            mock_renderer_test_pointer_stats(&queue_stats);
-            mock_renderer_stub_input_stats(&input_stats);
+            open_navi_renderer_test_pointer_stats(&queue_stats);
+            open_navi_renderer_stub_input_stats(&input_stats);
             (void)fprintf(stderr,
                           "pointer stats accepted=%u dropped=%u platform_error=%u window_lost=%u raw_accepted=%u ignored=%u foreign=%u secondary=%u\n",
                           queue_stats.accepted, queue_stats.dropped,
@@ -369,9 +369,9 @@ static void *operation_thread(void *opaque)
     char diagnostic[257];
     int result = 0;
     if (operation->create != 0)
-        result = mock_renderer_create(diagnostic, sizeof(diagnostic));
+        result = open_navi_renderer_create(diagnostic, sizeof(diagnostic));
     else
-        mock_renderer_destroy();
+        open_navi_renderer_destroy();
     (void)pthread_mutex_lock(&operation->lock);
     operation->result = result;
     operation->done = 1;
@@ -405,26 +405,26 @@ static int timed_operation(int create)
 static void finish_lifecycle(void)
 {
     assert(timed_operation(0) == 0);
-    mock_renderer_end_lifecycle();
-    assert(mock_navicore_backend_install_v1(NULL) == 0);
+    open_navi_renderer_end_lifecycle();
+    assert(open_navi_backend_install_v1(NULL) == 0);
 }
 
 static void test_reentrant_phase(enum CallbackPhase phase)
 {
     StressBackend context;
-    MockNavBackendV1 backend;
-    MockNavBackendV2 backend_v2;
+    OpenNaviBackendV1 backend;
+    OpenNaviBackendV2 backend_v2;
     int create_status;
     backend_init(&context);
     context.destroy_phase = phase;
-    mock_renderer_prepare_lifecycle();
+    open_navi_renderer_prepare_lifecycle();
     if (phase == PHASE_VEHICLE || phase == PHASE_GPS_INTERVAL ||
         phase == PHASE_AUDIO) {
         backend_v2 = make_backend_v2(&context);
-        assert(mock_navicore_backend_install_v2(&backend_v2) == 0);
+        assert(open_navi_backend_install_v2(&backend_v2) == 0);
     } else {
         backend = make_backend(&context);
-        assert(mock_navicore_backend_install_v1(&backend) == 0);
+        assert(open_navi_backend_install_v1(&backend) == 0);
     }
     create_status = timed_operation(1);
     if (phase == PHASE_START || phase == PHASE_SURFACE_CREATED)
@@ -433,20 +433,20 @@ static void test_reentrant_phase(enum CallbackPhase phase)
         assert(create_status == 0);
 
     if (phase == PHASE_VISIBILITY) {
-        assert(mock_renderer_notify_visibility(0u, 1u, 1u) == 0);
+        assert(open_navi_renderer_notify_visibility(0u, 1u, 1u) == 0);
         wait_phase(&context, PHASE_VISIBILITY, 1u);
     } else if (phase == PHASE_POINTER) {
-        assert(mock_renderer_test_submit_pointer(
-                   MOCK_NAV_BACKEND_POINTER_PRESS, 1, 2, 1u) == 0);
+        assert(open_navi_renderer_test_submit_pointer(
+                   OPEN_NAVI_BACKEND_POINTER_PRESS, 1, 2, 1u) == 0);
         wait_phase(&context, PHASE_POINTER, 1u);
     } else if (phase == PHASE_VEHICLE) {
-        assert(mock_renderer_notify_vehicle_status(4u, 0u, 1u) == 0);
+        assert(open_navi_renderer_notify_vehicle_status(4u, 0u, 1u) == 0);
         wait_phase(&context, PHASE_VEHICLE, 1u);
     } else if (phase == PHASE_GPS_INTERVAL) {
-        assert(mock_renderer_notify_gps_interval(6u, 1000u) == 0);
+        assert(open_navi_renderer_notify_gps_interval(6u, 1000u) == 0);
         wait_phase(&context, PHASE_GPS_INTERVAL, 1u);
     } else if (phase == PHASE_AUDIO) {
-        assert(mock_renderer_notify_audio(19u, 0u, 1u, 15u) == 0);
+        assert(open_navi_renderer_notify_audio(19u, 0u, 1u, 15u) == 0);
         wait_phase(&context, PHASE_AUDIO, 1u);
     } else if (phase == PHASE_RENDER) {
         wait_phase(&context, PHASE_RENDER, 1u);
@@ -458,23 +458,23 @@ static void test_reentrant_phase(enum CallbackPhase phase)
     wait_phase(&context, PHASE_STOP, 1u);
     if (phase != PHASE_START)
         wait_phase(&context, PHASE_SURFACE_DESTROYED, 1u);
-    mock_renderer_end_lifecycle();
-    assert(mock_navicore_backend_install_v2(NULL) == 0);
+    open_navi_renderer_end_lifecycle();
+    assert(open_navi_backend_install_v2(NULL) == 0);
 }
 
 static void test_stale_service(void)
 {
     StressBackend first;
     StressBackend second;
-    MockNavBackendV1 backend;
-    MockNavBackendServicesV1 stale;
+    OpenNaviBackendV1 backend;
+    OpenNaviBackendServicesV1 stale;
     uint32_t render_before;
 
     backend_init(&first);
     backend_init(&second);
-    mock_renderer_prepare_lifecycle();
+    open_navi_renderer_prepare_lifecycle();
     backend = make_backend(&first);
-    assert(mock_navicore_backend_install_v1(&backend) == 0);
+    assert(open_navi_backend_install_v1(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&first, PHASE_RENDER, 1u);
     stale = first.services;
@@ -482,9 +482,9 @@ static void test_stale_service(void)
     finish_lifecycle();
     assert(stale.request_frame(stale.runtime_context) == -1);
 
-    mock_renderer_prepare_lifecycle();
+    open_navi_renderer_prepare_lifecycle();
     backend = make_backend(&second);
-    assert(mock_navicore_backend_install_v1(&backend) == 0);
+    assert(open_navi_backend_install_v1(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&second, PHASE_RENDER, 1u);
     assert(second.services.runtime_context != stale.runtime_context);
@@ -500,22 +500,22 @@ static void test_stale_service(void)
 static void test_coalescing_and_pointer_overflow(void)
 {
     StressBackend context;
-    MockNavBackendV1 backend;
-    MockGpsSnapshot gps;
+    OpenNaviBackendV1 backend;
+    OpenNaviGpsSnapshot gps;
     uint32_t accepted = 0u;
     uint32_t dropped = 0u;
     uint32_t index;
     uint32_t display;
-    MockRendererPointerQueueStats queue_stats;
+    OpenNaviRendererPointerQueueStats queue_stats;
 
     backend_init(&context);
     context.block_phase = PHASE_VISIBILITY;
     backend = make_backend(&context);
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v1(&backend) == 0);
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v1(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&context, PHASE_RENDER, 1u);
-    assert(mock_renderer_notify_visibility(0u, 1u, 1u) == 0);
+    assert(open_navi_renderer_notify_visibility(0u, 1u, 1u) == 0);
 
     (void)pthread_mutex_lock(&context.lock);
     while (context.block_entered == 0)
@@ -523,9 +523,9 @@ static void test_coalescing_and_pointer_overflow(void)
     (void)pthread_mutex_unlock(&context.lock);
 
     for (index = 0u; index < 40u; ++index) {
-        int status = mock_renderer_test_submit_pointer(
-            (index & 1u) != 0u ? MOCK_NAV_BACKEND_POINTER_RELEASE
-                               : MOCK_NAV_BACKEND_POINTER_PRESS,
+        int status = open_navi_renderer_test_submit_pointer(
+            (index & 1u) != 0u ? OPEN_NAVI_BACKEND_POINTER_RELEASE
+                               : OPEN_NAVI_BACKEND_POINTER_PRESS,
             (int32_t)index, (int32_t)(100u + index), index & 1u);
         if (status == 0) ++accepted;
         else ++dropped;
@@ -534,24 +534,24 @@ static void test_coalescing_and_pointer_overflow(void)
     for (index = 0u; index < 1000u; ++index) {
         gps.latitude_e7 = (int32_t)index;
         gps.longitude_e7 = -(int32_t)index;
-        assert(mock_renderer_notify_gps(&gps) == 0);
-        for (display = 0u; display < MOCK_RENDERER_DISPLAY_COUNT; ++display) {
-            assert(mock_renderer_notify_visibility(
+        assert(open_navi_renderer_notify_gps(&gps) == 0);
+        for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
+            assert(open_navi_renderer_notify_visibility(
                        display, index + display * 10000u,
                        index + display * 10000u + 1u) == 0);
-            assert(mock_renderer_notify_screen(
+            assert(open_navi_renderer_notify_screen(
                        display, index + display * 10000u + 2000u,
                        index + display * 10000u) == 0);
         }
     }
-    assert(mock_renderer_notify_visibility(3u, 1u, 1u) == -2);
-    assert(mock_renderer_notify_screen(3u, 1u, 1u) == -2);
-    assert(mock_renderer_test_visibility_unsupported() == 1u);
-    assert(mock_renderer_test_screen_unsupported() == 1u);
+    assert(open_navi_renderer_notify_visibility(3u, 1u, 1u) == -2);
+    assert(open_navi_renderer_notify_screen(3u, 1u, 1u) == -2);
+    assert(open_navi_renderer_test_visibility_unsupported() == 1u);
+    assert(open_navi_renderer_test_screen_unsupported() == 1u);
     assert(accepted == 40u && dropped == 0u);
-    assert(mock_renderer_test_pointer_accepted() == 40u);
-    assert(mock_renderer_test_pointer_dropped() == 8u);
-    mock_renderer_test_pointer_stats(&queue_stats);
+    assert(open_navi_renderer_test_pointer_accepted() == 40u);
+    assert(open_navi_renderer_test_pointer_dropped() == 8u);
+    open_navi_renderer_test_pointer_stats(&queue_stats);
     assert(queue_stats.gesture_pairs_evicted == 4u);
     assert(queue_stats.edge_dropped == 0u);
 
@@ -563,7 +563,7 @@ static void test_coalescing_and_pointer_overflow(void)
     wait_phase(&context, PHASE_VISIBILITY, 4u);
 
     (void)pthread_mutex_lock(&context.lock);
-    for (display = 0u; display < MOCK_RENDERER_DISPLAY_COUNT; ++display) {
+    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
         assert(context.visibility[display].visibility ==
                999u + display * 10000u);
         assert(context.visibility[display].interactivity ==
@@ -593,43 +593,43 @@ static void test_coalescing_and_pointer_overflow(void)
         assert(context.pointer_x[index] == index + 8u);
         assert(context.pointer_actions[index] ==
                (((index + 8u) & 1u) != 0u
-                    ? MOCK_NAV_BACKEND_POINTER_RELEASE
-                    : MOCK_NAV_BACKEND_POINTER_PRESS));
+                    ? OPEN_NAVI_BACKEND_POINTER_RELEASE
+                    : OPEN_NAVI_BACKEND_POINTER_PRESS));
     }
     (void)pthread_mutex_unlock(&context.lock);
     finish_lifecycle();
 
     memset(&gps, 0, sizeof(gps));
-    assert(mock_renderer_notify_visibility(0u, 1u, 1u) == -1);
-    assert(mock_renderer_notify_screen(0u, 1u, 1u) == -1);
-    assert(mock_renderer_notify_gps(&gps) == -1);
+    assert(open_navi_renderer_notify_visibility(0u, 1u, 1u) == -1);
+    assert(open_navi_renderer_notify_screen(0u, 1u, 1u) == -1);
+    assert(open_navi_renderer_notify_gps(&gps) == -1);
 }
 
 static void test_cleanup_context_loss(void)
 {
     StressBackend context;
-    MockNavBackendV1 backend;
+    OpenNaviBackendV1 backend;
     backend_init(&context);
     backend = make_backend(&context);
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v1(&backend) == 0);
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v1(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&context, PHASE_RENDER, 1u);
     context.expect_surface_destroyed_current = 0;
-    mock_renderer_stub_set_begin_result(-1);
+    open_navi_renderer_stub_set_begin_result(-1);
     assert(timed_operation(0) == 0);
     wait_phase(&context, PHASE_SURFACE_DESTROYED, 1u);
     wait_phase(&context, PHASE_STOP, 1u);
-    mock_renderer_stub_set_begin_result(0);
-    mock_renderer_end_lifecycle();
-    assert(mock_navicore_backend_install_v1(NULL) == 0);
+    open_navi_renderer_stub_set_begin_result(0);
+    open_navi_renderer_end_lifecycle();
+    assert(open_navi_backend_install_v1(NULL) == 0);
 }
 
-static MockRendererStubRawEvent raw_touch(uint32_t type, uintptr_t window,
+static OpenNaviRendererStubRawEvent raw_touch(uint32_t type, uintptr_t window,
                                          uint32_t touch_id,
                                          int32_t x, int32_t y)
 {
-    MockRendererStubRawEvent raw;
+    OpenNaviRendererStubRawEvent raw;
     memset(&raw, 0, sizeof(raw));
     raw.type = type;
     raw.window = window;
@@ -645,17 +645,17 @@ static void test_platform_input_and_backpressure(void)
 {
     StressBackend context;
     StressBackend fresh;
-    MockNavBackendV1 backend;
-    MockRendererStubRawEvent raw;
-    MockRendererStubInputStats input_stats;
-    MockRendererPointerQueueStats queue_stats;
-    uintptr_t window = mock_renderer_stub_input_window();
+    OpenNaviBackendV1 backend;
+    OpenNaviRendererStubRawEvent raw;
+    OpenNaviRendererStubInputStats input_stats;
+    OpenNaviRendererPointerQueueStats queue_stats;
+    uintptr_t window = open_navi_renderer_stub_input_window();
     uint32_t index;
 
     backend_init(&context);
     backend = make_backend(&context);
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v1(&backend) == 0);
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v1(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&context, PHASE_RENDER, 1u);
 
@@ -664,41 +664,41 @@ static void test_platform_input_and_backpressure(void)
     /* More than one platform-drain batch of ignored traffic must not hide
      * the valid event behind it or wait for another provider wakeup. */
     for (index = 0u; index < 20u; ++index) {
-        raw = raw_touch(MOCK_RENDERER_STUB_RAW_TOUCH, window + 1u,
+        raw = raw_touch(OPEN_NAVI_RENDERER_STUB_RAW_TOUCH, window + 1u,
                         1u, 1, 2);
-        assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
+        assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
     }
-    raw = raw_touch(MOCK_RENDERER_STUB_RAW_TOUCH, window,
+    raw = raw_touch(OPEN_NAVI_RENDERER_STUB_RAW_TOUCH, window,
                     7u, 800, 20);
-    assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
-    raw = raw_touch(MOCK_RENDERER_STUB_RAW_TOUCH, window, 7u, 10, 20);
+    assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
+    raw = raw_touch(OPEN_NAVI_RENDERER_STUB_RAW_TOUCH, window, 7u, 10, 20);
     raw.touch_id_valid = 0u;
-    assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
+    assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
     raw.touch_id_valid = 1u;
-    assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
+    assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
     wait_phase(&context, PHASE_POINTER, 1u);
     (void)pthread_mutex_lock(&context.lock);
-    assert(context.pointer_actions[0] == MOCK_NAV_BACKEND_POINTER_PRESS);
+    assert(context.pointer_actions[0] == OPEN_NAVI_BACKEND_POINTER_PRESS);
     assert(context.pointer_x[0] == 10u);
     assert(context.pointer_visibility_seen[0] == 0u);
     (void)pthread_mutex_unlock(&context.lock);
 
-    assert(mock_renderer_notify_visibility(0u, 1u, 1u) == 0);
-    raw = raw_touch(MOCK_RENDERER_STUB_RAW_TOUCH, window, 8u, 30, 40);
-    assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
-    raw = raw_touch(MOCK_RENDERER_STUB_RAW_MOVE, window, 7u, 11, 21);
-    assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
-    raw = raw_touch(MOCK_RENDERER_STUB_RAW_RELEASE, window, 7u, 12, 22);
+    assert(open_navi_renderer_notify_visibility(0u, 1u, 1u) == 0);
+    raw = raw_touch(OPEN_NAVI_RENDERER_STUB_RAW_TOUCH, window, 8u, 30, 40);
+    assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
+    raw = raw_touch(OPEN_NAVI_RENDERER_STUB_RAW_MOVE, window, 7u, 11, 21);
+    assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
+    raw = raw_touch(OPEN_NAVI_RENDERER_STUB_RAW_RELEASE, window, 7u, 12, 22);
     raw.source_valid = 0u;
-    assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
+    assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
     wait_phase(&context, PHASE_POINTER, 3u);
     (void)pthread_mutex_lock(&context.lock);
-    assert(context.pointer_actions[1] == MOCK_NAV_BACKEND_POINTER_MOVE);
+    assert(context.pointer_actions[1] == OPEN_NAVI_BACKEND_POINTER_MOVE);
     assert(context.pointer_visibility_seen[1] == 1u);
-    assert(context.pointer_actions[2] == MOCK_NAV_BACKEND_POINTER_RELEASE);
+    assert(context.pointer_actions[2] == OPEN_NAVI_BACKEND_POINTER_RELEASE);
     assert(context.pointer_x[2] == 11u);
     (void)pthread_mutex_unlock(&context.lock);
-    mock_renderer_stub_input_stats(&input_stats);
+    open_navi_renderer_stub_input_stats(&input_stats);
     assert(input_stats.foreign_window == 20u);
     assert(input_stats.secondary_touch == 1u);
     assert(input_stats.property_errors == 2u);
@@ -710,27 +710,27 @@ static void test_platform_input_and_backpressure(void)
     context.block_phase = PHASE_POINTER;
     context.block_entered = 0;
     (void)pthread_mutex_unlock(&context.lock);
-    assert(mock_renderer_test_submit_pointer(
-               MOCK_NAV_BACKEND_POINTER_PRESS, 100, 200, 1u) == 0);
+    assert(open_navi_renderer_test_submit_pointer(
+               OPEN_NAVI_BACKEND_POINTER_PRESS, 100, 200, 1u) == 0);
     (void)pthread_mutex_lock(&context.lock);
     while (context.block_entered == 0)
         (void)pthread_cond_wait(&context.condition, &context.lock);
     (void)pthread_mutex_unlock(&context.lock);
     for (index = 0u; index < 15u; ++index) {
-        assert(mock_renderer_test_submit_pointer(
-                   MOCK_NAV_BACKEND_POINTER_MOVE, (int32_t)index, 0, 1u) == 0);
-        assert(mock_renderer_test_submit_pointer(
-                   MOCK_NAV_BACKEND_POINTER_PRESS, (int32_t)index, 0, 1u) == 0);
+        assert(open_navi_renderer_test_submit_pointer(
+                   OPEN_NAVI_BACKEND_POINTER_MOVE, (int32_t)index, 0, 1u) == 0);
+        assert(open_navi_renderer_test_submit_pointer(
+                   OPEN_NAVI_BACKEND_POINTER_PRESS, (int32_t)index, 0, 1u) == 0);
     }
-    assert(mock_renderer_test_submit_pointer(
-               MOCK_NAV_BACKEND_POINTER_MOVE, 500, 0, 1u) == -1);
-    assert(mock_renderer_test_submit_pointer(
-               MOCK_NAV_BACKEND_POINTER_PRESS, 501, 0, 1u) == 0);
-    assert(mock_renderer_test_submit_pointer(
-               MOCK_NAV_BACKEND_POINTER_RELEASE, 502, 0, 0u) == 0);
-    assert(mock_renderer_test_submit_pointer(
-               MOCK_NAV_BACKEND_POINTER_RELEASE, 503, 0, 0u) == 0);
-    mock_renderer_test_pointer_stats(&queue_stats);
+    assert(open_navi_renderer_test_submit_pointer(
+               OPEN_NAVI_BACKEND_POINTER_MOVE, 500, 0, 1u) == -1);
+    assert(open_navi_renderer_test_submit_pointer(
+               OPEN_NAVI_BACKEND_POINTER_PRESS, 501, 0, 1u) == 0);
+    assert(open_navi_renderer_test_submit_pointer(
+               OPEN_NAVI_BACKEND_POINTER_RELEASE, 502, 0, 0u) == 0);
+    assert(open_navi_renderer_test_submit_pointer(
+               OPEN_NAVI_BACKEND_POINTER_RELEASE, 503, 0, 0u) == 0);
+    open_navi_renderer_test_pointer_stats(&queue_stats);
     assert(queue_stats.move_dropped == 1u);
     assert(queue_stats.move_evicted == 1u);
     assert(queue_stats.edge_dropped == 0u);
@@ -743,12 +743,12 @@ static void test_platform_input_and_backpressure(void)
 
     /* Raw events queued after teardown are cleared by platform creation and
      * cannot cross into a new renderer lifecycle. */
-    raw = raw_touch(MOCK_RENDERER_STUB_RAW_TOUCH, window, 9u, 90, 91);
-    assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
+    raw = raw_touch(OPEN_NAVI_RENDERER_STUB_RAW_TOUCH, window, 9u, 90, 91);
+    assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
     backend_init(&fresh);
     backend = make_backend(&fresh);
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v1(&backend) == 0);
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v1(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&fresh, PHASE_RENDER, 1u);
     (void)pthread_mutex_lock(&fresh.lock);
@@ -757,72 +757,72 @@ static void test_platform_input_and_backpressure(void)
 
     /* A one-shot Screen API error is counted and retried, while loss of the
      * owned NAV_main window terminates the generation and rejects providers. */
-    mock_renderer_stub_set_poll_result(3);
-    raw = raw_touch(MOCK_RENDERER_STUB_RAW_TOUCH, window, 10u, 100, 101);
-    assert(mock_renderer_stub_queue_raw_input(&raw) == 0);
+    open_navi_renderer_stub_set_poll_result(3);
+    raw = raw_touch(OPEN_NAVI_RENDERER_STUB_RAW_TOUCH, window, 10u, 100, 101);
+    assert(open_navi_renderer_stub_queue_raw_input(&raw) == 0);
     wait_phase(&fresh, PHASE_POINTER, 1u);
-    mock_renderer_test_pointer_stats(&queue_stats);
+    open_navi_renderer_test_pointer_stats(&queue_stats);
     assert(queue_stats.platform_errors == 1u);
-    mock_renderer_stub_set_poll_result(-2);
+    open_navi_renderer_stub_set_poll_result(-2);
     wait_phase(&fresh, PHASE_STOP, 1u);
-    assert(mock_renderer_notify_visibility(0u, 1u, 1u) == -1);
+    assert(open_navi_renderer_notify_visibility(0u, 1u, 1u) == -1);
     assert(timed_operation(0) == 0);
-    mock_renderer_test_pointer_stats(&queue_stats);
+    open_navi_renderer_test_pointer_stats(&queue_stats);
     assert(queue_stats.platform_window_lost == 1u);
-    mock_renderer_end_lifecycle();
-    assert(mock_navicore_backend_install_v1(NULL) == 0);
+    open_navi_renderer_end_lifecycle();
+    assert(open_navi_backend_install_v1(NULL) == 0);
 
     /* MOVE callbacks retain the existing renderer-thread reentrant teardown
      * guarantee. */
     backend_init(&fresh);
     backend = make_backend(&fresh);
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v1(&backend) == 0);
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v1(&backend) == 0);
     assert(timed_operation(1) == 0);
-    assert(mock_renderer_test_submit_pointer(
-               MOCK_NAV_BACKEND_POINTER_PRESS, 1, 1, 1u) == 0);
+    assert(open_navi_renderer_test_submit_pointer(
+               OPEN_NAVI_BACKEND_POINTER_PRESS, 1, 1, 1u) == 0);
     wait_phase(&fresh, PHASE_POINTER, 1u);
     fresh.destroy_phase = PHASE_POINTER;
-    assert(mock_renderer_test_submit_pointer(
-               MOCK_NAV_BACKEND_POINTER_MOVE, 2, 2, 1u) == 0);
+    assert(open_navi_renderer_test_submit_pointer(
+               OPEN_NAVI_BACKEND_POINTER_MOVE, 2, 2, 1u) == 0);
     wait_phase(&fresh, PHASE_POINTER, 2u);
     assert(timed_operation(0) == 0);
     wait_phase(&fresh, PHASE_STOP, 1u);
-    mock_renderer_end_lifecycle();
-    assert(mock_navicore_backend_install_v1(NULL) == 0);
+    open_navi_renderer_end_lifecycle();
+    assert(open_navi_backend_install_v1(NULL) == 0);
 
     /* A perpetual full drain of unrelated Screen events must not bypass the
      * stop observation point or strand the thread owning destroy/join. */
     backend_init(&fresh);
     backend = make_backend(&fresh);
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v1(&backend) == 0);
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v1(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&fresh, PHASE_RENDER, 1u);
-    mock_renderer_stub_set_repeating_poll_result(2);
+    open_navi_renderer_stub_set_repeating_poll_result(2);
     assert(timed_operation(0) == 0);
     wait_phase(&fresh, PHASE_STOP, 1u);
-    mock_renderer_stub_set_repeating_poll_result(0);
-    mock_renderer_end_lifecycle();
-    assert(mock_navicore_backend_install_v1(NULL) == 0);
+    open_navi_renderer_stub_set_repeating_poll_result(0);
+    open_navi_renderer_end_lifecycle();
+    assert(open_navi_backend_install_v1(NULL) == 0);
 }
 
 static void test_v2_semantic_coalescing_and_lifecycle(void)
 {
     StressBackend context;
     StressBackend fresh;
-    MockNavBackendV2 backend;
-    MockGpsSnapshot gps;
+    OpenNaviBackendV2 backend;
+    OpenNaviGpsSnapshot gps;
     uint32_t index;
 
     backend_init(&context);
     context.block_phase = PHASE_VISIBILITY;
     backend = make_backend_v2(&context);
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v2(&backend) == 0);
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v2(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&context, PHASE_RENDER, 1u);
-    assert(mock_renderer_notify_visibility(0u, 1u, 1u) == 0);
+    assert(open_navi_renderer_notify_visibility(0u, 1u, 1u) == 0);
     (void)pthread_mutex_lock(&context.lock);
     while (context.block_entered == 0)
         (void)pthread_cond_wait(&context.condition, &context.lock);
@@ -830,16 +830,16 @@ static void test_v2_semantic_coalescing_and_lifecycle(void)
 
     memset(&gps, 0, sizeof(gps));
     for (index = 0u; index < 1000u; ++index) {
-        assert(mock_renderer_notify_vehicle_status(
+        assert(open_navi_renderer_notify_vehicle_status(
                    4u, 0u, (uint8_t)index) == 0);
-        assert(mock_renderer_notify_gps_interval(6u, 1000u + index) == 0);
-        assert(mock_renderer_notify_audio(
+        assert(open_navi_renderer_notify_gps_interval(6u, 1000u + index) == 0);
+        assert(open_navi_renderer_notify_audio(
                    19u, 0u, 7u + index, (uint8_t)(index + 1u)) == 0);
-        assert(mock_renderer_notify_vehicle_setting(
+        assert(open_navi_renderer_notify_vehicle_setting(
                    6u, 0u, (uint8_t)(index + 2u)) == 0);
-        assert(mock_renderer_notify_vehicle_speed(8u, 0x3f800000u + index) == 0);
+        assert(open_navi_renderer_notify_vehicle_speed(8u, 0x3f800000u + index) == 0);
         gps.latitude_e7 = (int32_t)index;
-        assert(mock_renderer_notify_gps(&gps) == 0);
+        assert(open_navi_renderer_notify_gps(&gps) == 0);
     }
     (void)pthread_mutex_lock(&context.lock);
     context.block_release = 1;
@@ -852,9 +852,9 @@ static void test_v2_semantic_coalescing_and_lifecycle(void)
     assert(context.gps_interval_calls == 1u);
     assert(context.audio_calls == 1u);
     assert(context.vehicle.valid_fields ==
-           (MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_STATUS |
-            MOCK_NAV_BACKEND_VEHICLE_DAY_NIGHT_SETTING |
-            MOCK_NAV_BACKEND_VEHICLE_SPEED));
+           (OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_STATUS |
+            OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING |
+            OPEN_NAVI_BACKEND_VEHICLE_SPEED));
     assert(context.vehicle.changed_fields == context.vehicle.valid_fields);
     assert(context.vehicle.day_night_status == (uint8_t)999u);
     assert(context.vehicle.day_night_setting == (uint8_t)1001u);
@@ -872,21 +872,21 @@ static void test_v2_semantic_coalescing_and_lifecycle(void)
     assert(context.state_order[4] == 30u);
     (void)pthread_mutex_unlock(&context.lock);
     finish_lifecycle();
-    assert(mock_renderer_notify_vehicle_status(4u, 0u, 1u) == -1);
-    assert(mock_renderer_notify_gps_interval(6u, 1000u) == -1);
-    assert(mock_renderer_notify_audio(19u, 0u, 1u, 15u) == -1);
+    assert(open_navi_renderer_notify_vehicle_status(4u, 0u, 1u) == -1);
+    assert(open_navi_renderer_notify_gps_interval(6u, 1000u) == -1);
+    assert(open_navi_renderer_notify_audio(19u, 0u, 1u, 15u) == -1);
 
     /* State accepted in an ended lifecycle must not cross into the next
      * renderer generation. */
     backend_init(&fresh);
     backend = make_backend_v2(&fresh);
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v2(&backend) == 0);
-    assert(mock_renderer_notify_vehicle_status(4u, 0u, 9u) == 0);
-    assert(mock_renderer_notify_gps_interval(6u, 9u) == 0);
-    assert(mock_renderer_notify_audio(19u, 0u, 9u, 9u) == 0);
-    mock_renderer_end_lifecycle();
-    mock_renderer_prepare_lifecycle();
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v2(&backend) == 0);
+    assert(open_navi_renderer_notify_vehicle_status(4u, 0u, 9u) == 0);
+    assert(open_navi_renderer_notify_gps_interval(6u, 9u) == 0);
+    assert(open_navi_renderer_notify_audio(19u, 0u, 9u, 9u) == 0);
+    open_navi_renderer_end_lifecycle();
+    open_navi_renderer_prepare_lifecycle();
     assert(timed_operation(1) == 0);
     wait_phase(&fresh, PHASE_RENDER, 1u);
     (void)pthread_mutex_lock(&fresh.lock);
@@ -898,12 +898,12 @@ static void test_v2_semantic_coalescing_and_lifecycle(void)
 
     /* Reinstalling a backend while no renderer exists starts a new backend
      * generation and drops semantic state queued for the prior descriptor. */
-    mock_renderer_prepare_lifecycle();
-    assert(mock_navicore_backend_install_v2(&backend) == 0);
-    assert(mock_renderer_notify_vehicle_status(4u, 0u, 7u) == 0);
-    assert(mock_renderer_notify_gps_interval(6u, 700u) == 0);
-    assert(mock_renderer_notify_audio(19u, 0u, 7u, 7u) == 0);
-    assert(mock_navicore_backend_install_v2(&backend) == 0);
+    open_navi_renderer_prepare_lifecycle();
+    assert(open_navi_backend_install_v2(&backend) == 0);
+    assert(open_navi_renderer_notify_vehicle_status(4u, 0u, 7u) == 0);
+    assert(open_navi_renderer_notify_gps_interval(6u, 700u) == 0);
+    assert(open_navi_renderer_notify_audio(19u, 0u, 7u, 7u) == 0);
+    assert(open_navi_backend_install_v2(&backend) == 0);
     assert(timed_operation(1) == 0);
     wait_phase(&fresh, PHASE_RENDER, 2u);
     (void)pthread_mutex_lock(&fresh.lock);
@@ -917,7 +917,7 @@ static void test_v2_semantic_coalescing_and_lifecycle(void)
 int main(void)
 {
     enum CallbackPhase phase;
-    mock_renderer_stub_reset();
+    open_navi_renderer_stub_reset();
     test_stale_service();
     for (phase = PHASE_START; phase <= PHASE_STOP; ++phase)
         test_reentrant_phase(phase);

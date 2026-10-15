@@ -78,10 +78,10 @@ target_include_directories(osmand_backend PRIVATE ${ONC_OSMAND_INCLUDES}
 target_compile_definitions(osmand_backend PRIVATE ${ONC_OSMAND_DEFINES})
 target_compile_options(osmand_backend PRIVATE ${ONC_WARNINGS} ${ONC_OSMAND_FLAGS})
 target_link_libraries(osmand_backend PRIVATE navigation_ui osmand_core EGL GLESv2 z c)
-set_target_properties(osmand_backend PROPERTIES OUTPUT_NAME MockNavBackendOsmAnd
+set_target_properties(osmand_backend PROPERTIES OUTPUT_NAME OpenNaviBackendOsmAnd
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} SKIP_BUILD_RPATH ON)
 target_link_options(osmand_backend PRIVATE -Wl,--as-needed -static-libstdc++ -static-libgcc
-  -Wl,-Bsymbolic -Wl,-soname,libMockNavBackendOsmAnd.so
+  -Wl,-Bsymbolic -Wl,-soname,libOpenNaviBackendOsmAnd.so
   -Wl,-rpath,/datastore/navicore-backend
   -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/osmand_backend.map
   -Wl,--gc-sections -Wl,--no-undefined -Wl,-z,text)

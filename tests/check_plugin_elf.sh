@@ -10,11 +10,11 @@ extract_exports() {
 
 check_exact_exports() {
     actual=$(printf '%s\n' "$1" | extract_exports)
-    test "$actual" = mock_nav_backend_query_v1
+    test "$actual" = open_navi_backend_query_v1
 }
 
 if [ "${1:-}" = --self-test ]; then
-    query='1: 00000001 4 FUNC GLOBAL DEFAULT 9 mock_nav_backend_query_v1'
+    query='1: 00000001 4 FUNC GLOBAL DEFAULT 9 open_navi_backend_query_v1'
     check_exact_exports "$query"
     object="$query
 2: 00002000 4 OBJECT GLOBAL DEFAULT 16 unexpected_object"
@@ -23,7 +23,7 @@ if [ "${1:-}" = --self-test ]; then
         exit 1
     fi
     prefixed_tls="$query
-3: 00002004 4 TLS GLOBAL DEFAULT 17 MOCK_NAV_BACKEND_REFERENCE_ESCAPE"
+3: 00002004 4 TLS GLOBAL DEFAULT 17 OPEN_NAVI_BACKEND_REFERENCE_ESCAPE"
     if check_exact_exports "$prefixed_tls"; then
         echo "exact-export self-test accepted a prefixed TLS symbol" >&2
         exit 1
@@ -76,7 +76,7 @@ check_exact_exports "$symbols" || {
     exit 1
 }
 value=$(printf '%s\n' "$symbols" | awk \
-    '$4 == "FUNC" && $5 == "GLOBAL" && $8 == "mock_nav_backend_query_v1" \
+    '$4 == "FUNC" && $5 == "GLOBAL" && $8 == "open_navi_backend_query_v1" \
      { print $2; exit }')
 test $((0x$value % 2)) -eq 1 || {
     echo "plugin query export is not Thumb: $value" >&2

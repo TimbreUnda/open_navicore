@@ -9,14 +9,14 @@ from tests.callback_symbols import callback_symbol
 
 
 ALLOWED_RAW_CALLBACKS = {
-    "mock_pas_17_4_raw",
-    "mock_pas_19_6_raw",
-    "mock_pas_31_6_raw",
-    "mock_pas_31_10_raw",
-    "mock_pas_31_13_raw",
+    "open_navi_pas_17_4_raw",
+    "open_navi_pas_19_6_raw",
+    "open_navi_pas_31_6_raw",
+    "open_navi_pas_31_10_raw",
+    "open_navi_pas_31_13_raw",
 }
 NUMBERED_CALLBACK = re.compile(
-    r"\bmock_pas_(?:root|all|[0-9]+)_[0-9]+(?:_[A-Za-z0-9_]+)?\b"
+    r"\bopen_navi_pas_(?:root|all|[0-9]+)_[0-9]+(?:_[A-Za-z0-9_]+)?\b"
 )
 
 

@@ -2,16 +2,16 @@
 # load); the outbound-test build also exercises the V3 outbound services.
 foreach(variant reference outbound_test)
   if(variant STREQUAL "reference")
-    set(name MockNavBackendReference)
+    set(name OpenNaviBackendReference)
   else()
-    set(name MockNavBackendOutboundTest)
+    set(name OpenNaviBackendOutboundTest)
   endif()
   add_library(${variant}_backend SHARED reference_backend.c)
   target_include_directories(${variant}_backend PRIVATE ${ONC_ROOT}/include)
   target_compile_options(${variant}_backend PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS}
                          ${ONC_THUMB} -fvisibility=hidden)
   if(variant STREQUAL "outbound_test")
-    target_compile_definitions(${variant}_backend PRIVATE MOCK_REF_PLUGIN_OUTBOUND_TEST=1)
+    target_compile_definitions(${variant}_backend PRIVATE OPEN_NAVI_REF_PLUGIN_OUTBOUND_TEST=1)
   endif()
   set_target_properties(${variant}_backend PROPERTIES OUTPUT_NAME ${name}
                         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
