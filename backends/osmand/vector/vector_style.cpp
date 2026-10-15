@@ -1,5 +1,6 @@
 #include "vector_style.h"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace navicore_vector {
@@ -15,7 +16,8 @@ constexpr Rgba rgb(std::uint32_t hex, std::uint8_t a = 255)
 struct Palette {
     Rgba land, water, park, forest, sand, hospital, education, plaza, building,
         building_outline, road, road_casing, minor_casing, trunk, trunk_casing,
-        motorway, motorway_casing, path, rail;
+        motorway, motorway_casing, path, rail, bridge_casing, bridge_deck, arrow,
+        zebra;
 };
 
 // Day: Google-Maps-like. Night: the dark navigation look (blue-grey land,
@@ -24,12 +26,14 @@ constexpr Palette kDay = {
     rgb(0xF5F4F1), rgb(0xAAD3F7), rgb(0xC5E8C4), rgb(0xAEDCAE), rgb(0xF6EDCB),
     rgb(0xFBE5E3), rgb(0xF2ECDF), rgb(0xFCFBF9), rgb(0xE5E3DF), rgb(0xD3D0CB),
     rgb(0xFFFFFF), rgb(0xD5D2CC), rgb(0xDEDBD6), rgb(0xFFE7A1), rgb(0xF0C25C),
-    rgb(0xFDD877), rgb(0xE9A93A), rgb(0xE1DED8), rgb(0xBDBCC2)};
+    rgb(0xFDD877), rgb(0xE9A93A), rgb(0xE1DED8), rgb(0xBDBCC2), rgb(0xA9A49B),
+    rgb(0xE8E6E1), rgb(0x8C9199), rgb(0xB9BDC4)};
 constexpr Palette kNight = {
     rgb(0x1F2835), rgb(0x0E1A2B), rgb(0x22343A), rgb(0x1D3133), rgb(0x2B2C2A),
     rgb(0x30282F), rgb(0x2A2D33), rgb(0x2A3240), rgb(0x2A323F), rgb(0x343D4B),
     rgb(0x3F4A5A), rgb(0x18202B), rgb(0x1B232E), rgb(0x6A6150), rgb(0x2A2620),
-    rgb(0x8A7247), rgb(0x3A2F1C), rgb(0x343C48), rgb(0x46505E)};
+    rgb(0x8A7247), rgb(0x3A2F1C), rgb(0x343C48), rgb(0x46505E), rgb(0x0B1017),
+    rgb(0x2E3644), rgb(0x8592A3), rgb(0x65707F)};
 
 const Palette& palette(bool night)
 {
@@ -125,6 +129,38 @@ bool treat_as_area(const Tags& tags, bool is_area_flag, bool closed)
     return true;
 }
 
+PoiStyle classify_control(const Tags& tags, int zoom)
+{
+    struct Rule {
+        const char* tag;
+        const char* value;
+        int rank;
+        const char* icon;
+        int min_zoom;
+    };
+    // Close in only; ranked among themselves (they have their own
+    // placement budget).
+    static const Rule rules[] = {
+        {"highway", "traffic_signals", 3, "c_highway_traffic_signals_map", 16},
+        {"railway", "level_crossing", 4, "c_level_crossing_map", 15},
+        {"highway", "stop", 5, "c_stop", 16},
+        {"highway", "give_way", 5, "c_give_way", 16},
+    };
+    PoiStyle style;
+    for (const auto& rule : rules) {
+        if (!is(find(tags, rule.tag), rule.value))
+            continue;
+        // Matched even when hidden at this zoom: not also a POI.
+        style.control = true;
+        style.show = zoom >= rule.min_zoom;
+        style.rank = rule.rank;
+        style.icon = rule.icon;
+        style.min_zoom = rule.min_zoom;
+        return style;
+    }
+    return style;
+}
+
 PoiStyle classify_poi(const Tags& tags, int zoom)
 {
     struct Rule {
@@ -187,7 +223,9 @@ PoiStyle classify_poi(const Tags& tags, int zoom)
         {"amenity", "theatre", 15, 0x0F9D98, "amenity_theatre", 16},
         {"amenity", "cinema", 15, 0x0F9D98, "amenity_cinema", 16},
     };
-    PoiStyle style;
+    PoiStyle style = classify_control(tags, zoom);
+    if (style.control)
+        return style;
     for (const auto& rule : rules) {
         if (!is(find(tags, rule.tag), rule.value))
             continue;
@@ -223,6 +261,52 @@ int place_label_rank(const std::string& place, int zoom)
     if (place == "quarter" && zoom >= 14 && zoom <= 16) return 3;
     if (place == "neighbourhood" && zoom >= 15) return 4;
     return -1;
+}
+
+std::uint8_t line_level(const Tags& tags)
+{
+    const auto* bridge = find(tags, "bridge");
+    const auto* tunnel = find(tags, "tunnel");
+    const auto* layer_tag = find(tags, "layer");
+    const int layer = layer_tag ? std::atoi(layer_tag->c_str()) : 0;
+    // A building passage is a short gap under a house, not a tunnel.
+    if ((tunnel && !is(tunnel, "no") && !is(tunnel, "building_passage")) || layer < 0)
+        return kTunnelLevel;
+    if ((bridge && !is(bridge, "no")) || layer > 0)
+        return layer >= 2 ? kUpperLevel : kBridgeLevel;
+    return kGroundLevel;
+}
+
+int oneway_direction(const Tags& tags)
+{
+    const auto* oneway = find(tags, "oneway");
+    if (any_of(oneway, {"yes", "true", "1"}))
+        return 1;
+    if (any_of(oneway, {"-1", "reverse"}))
+        return -1;
+    return 0;
+}
+
+bool marked_crossing(const Tags& tags)
+{
+    return is(find(tags, "highway"), "crossing") &&
+           !any_of(find(tags, "crossing"), {"unmarked", "no"});
+}
+
+Rgba oneway_arrow_colour(LineLayer layer, bool night)
+{
+    const Palette& p = palette(night);
+    // Yellow highways take their own outline colour; white roads grey.
+    if (layer == LineLayer::Motorway)
+        return p.motorway_casing;
+    if (layer == LineLayer::Trunk)
+        return p.trunk_casing;
+    return p.arrow;
+}
+
+Rgba zebra_colour(bool night)
+{
+    return palette(night).zebra;
 }
 
 Rgba land_colour(bool night)
@@ -280,9 +364,22 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night)
         } else if (highway && zoom >= 15) {
             style.has_area = true;
             style.area = {AreaLayer::Plaza, p.plaza};
+        } else if (is(find(tags, "man_made"), "bridge") && zoom >= 14) {
+            style.has_area = true;
+            style.area = {AreaLayer::BridgeDeck, p.bridge_deck};
         }
         return style;
     }
+
+    const std::uint8_t level = line_level(tags);
+    const auto on_bridge = [&](LineStyle& line) {
+        line.level = level;
+        if (level < kBridgeLevel)
+            return;
+        // Bridges: a darker, wider outline, also for paths and rails.
+        line.casing = p.bridge_casing;
+        line.casing_width = line.width + (line.width >= 4.0f ? 3.0f : 2.0f);
+    };
 
     if (highway) {
         if (road_style(*highway, zoom, p, style.line)) {
@@ -293,6 +390,7 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night)
                 style.line.casing = kNone;
                 style.line.casing_width = 0.0f;
             }
+            on_bridge(style.line);
         }
         return style;
     }
@@ -300,11 +398,13 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night)
         !is(find(tags, "tunnel"), "yes")) {
         style.has_line = true;
         style.line = road(LineLayer::Rail, p.rail, kNone, 1.6f, 0.0f);
+        on_bridge(style.line);
         return style;
     }
     if (is(railway, "tram") && zoom >= 15) {
         style.has_line = true;
         style.line = road(LineLayer::Rail, p.rail, kNone, 1.0f, 0.0f);
+        on_bridge(style.line);
         return style;
     }
     if (any_of(waterway, {"river", "canal"})) {

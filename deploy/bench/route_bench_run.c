@@ -1,9 +1,11 @@
-/* Loads /tmp/libroute_bench.so and runs it (bench only). ROUTE_BENCH_CORE
+/* Loads /tmp/libroute_bench.so and runs it (bench only); a first argument
+ * "map-tags" runs the map data survey instead. ROUTE_BENCH_CORE
  * names another libOsmAndCore_shared.so to load first (the library's RPATH
  * would otherwise win over LD_LIBRARY_PATH). */
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int main(int argc, char **argv)
 {
@@ -18,6 +20,14 @@ int main(int argc, char **argv)
     if (library == NULL) {
         fprintf(stderr, "dlopen: %s\n", dlerror());
         return 1;
+    }
+    if (argc > 1 && strcmp(argv[1], "map-tags") == 0) {
+        entry = (int (*)(int, char **))dlsym(library, "map_tags_main");
+        if (entry == NULL) {
+            fprintf(stderr, "dlsym: %s\n", dlerror());
+            return 1;
+        }
+        return entry(argc - 1, argv + 1);
     }
     entry = (int (*)(int, char **))dlsym(library, "route_bench_main");
     if (entry == NULL) {

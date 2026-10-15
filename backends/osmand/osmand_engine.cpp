@@ -313,7 +313,7 @@ bool OsmAndEngine::initialize(const Config& config,
         vector_cache_dir_ = config.vector_cache;
         vector_cache_identity_ = config.map + "|" +
             std::to_string(map_known ? map_info.st_size : 0) + "|" +
-            std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-2";
+            std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-3";
     }
     frame_metrics_ = FrameMetrics(config.performance_metrics);
 

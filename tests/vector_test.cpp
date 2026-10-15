@@ -1,6 +1,7 @@
 #include "vector/vector_style.h"
 #include "vector/vector_tessellator.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -161,6 +162,81 @@ int main()
     check(street_label_rank("footway") < 0, "no footway names");
     check(place_label_rank("suburb", 13) >= 0 && place_label_rank("suburb", 17) < 0,
           "suburb names zoomed out only");
+
+    // Levels: tunnels below ground, bridges above it, layer 2 above those.
+    check(line_level(tags({{"highway", "primary"}})) == kGroundLevel, "ground level");
+    check(line_level(tags({{"highway", "primary"}, {"tunnel", "yes"}})) == kTunnelLevel,
+          "tunnel level");
+    check(line_level(tags({{"highway", "service"}, {"tunnel", "building_passage"}})) ==
+              kGroundLevel, "building passage stays on the ground");
+    check(line_level(tags({{"highway", "primary"}, {"bridge", "yes"}})) == kBridgeLevel,
+          "bridge level");
+    check(line_level(tags({{"highway", "primary"}, {"bridge", "yes"}, {"layer", "2"}})) ==
+              kUpperLevel, "layer 2");
+    check(line_level(tags({{"highway", "primary"}, {"layer", "-1"}})) == kTunnelLevel,
+          "layer -1 below ground");
+    const auto bridge = classify(tags({{"highway", "residential"}, {"bridge", "yes"}}), false, 16);
+    const auto street = classify(tags({{"highway", "residential"}}), false, 16);
+    check(bridge.line.level == kBridgeLevel && bridge.line.casing_width > street.line.casing_width,
+          "bridge outline wider");
+    check(classify(tags({{"highway", "footway"}, {"bridge", "yes"}}), false, 16).line.casing_width > 0.0f,
+          "footbridge outlined");
+    check(classify(tags({{"man_made", "bridge"}}), true, 16).area.layer == AreaLayer::BridgeDeck,
+          "bridge deck");
+    {
+        TileTessellator levels;
+        LineStyle over = road;
+        over.level = kBridgeLevel;
+        levels.add_line({{10, 10}, {500, 10}}, over);
+        levels.add_line({{10, 50}, {500, 50}}, road);
+        const TileMesh m = levels.finish();
+        check(m.line_level_start[kGroundLevel] == 0 && m.line_level_start[kBridgeLevel] == 6 &&
+                  m.line_level_start[kLineLevels] == 12, "level ranges");
+        check(m.line_vertices[m.line_indices[6]].y == 10.0f, "bridge after ground");
+    }
+
+    // One-way arrows: direction, spacing, only inside the tile.
+    check(oneway_direction(tags({{"oneway", "yes"}})) == 1 &&
+              oneway_direction(tags({{"oneway", "-1"}})) == -1 &&
+              oneway_direction(tags({{"oneway", "no"}})) == 0 &&
+              oneway_direction(tags({{"highway", "primary"}})) == 0, "oneway direction");
+    {
+        TileTessellator arrows;
+        // 1200 units, spacing 200: arrows every 200 from 100 along the path,
+        // at x = -150, 50, ..., 850; the one outside the tile is dropped.
+        arrows.add_oneway_arrows({{-250, 20}, {950, 20}}, road, -1, {1, 2, 3, 255}, 200.0f);
+        const TileMesh m = arrows.finish();
+        // A shaft (4 vertices) and a head (3) each.
+        check(m.sprite_vertices.size() == 5 * 7, "arrow count");
+        check(m.sprite_vertices.front().dx < 0.0f && m.sprite_vertices.front().x == 50.0f,
+              "arrow against the way");
+        check(m.sprite_level_start[kGroundLevel + 1] == m.sprite_indices.size(),
+              "arrows on the road's level");
+    }
+    check(marked_crossing(tags({{"highway", "crossing"}})) &&
+              marked_crossing(tags({{"highway", "crossing"}, {"crossing", "traffic_signals"}})) &&
+              !marked_crossing(tags({{"highway", "crossing"}, {"crossing", "unmarked"}})),
+          "marked crossings");
+    {
+        TileTessellator zebra;
+        zebra.add_zebra({100, 100}, {1, 0}, 8.0f, kBridgeLevel, {9, 9, 9, 255}, 1.45f);
+        const TileMesh m = zebra.finish();
+        check(m.sprite_vertices.size() == 5 * 4 && m.sprite_level_start[kBridgeLevel] == 0 &&
+                  m.sprite_level_start[kBridgeLevel + 1] == 30, "zebra stripes");
+        float v_min = 1e9f, v_max = -1e9f;
+        for (const auto& v : m.sprite_vertices) {
+            v_min = std::min(v_min, v.v);
+            v_max = std::max(v_max, v.v);
+        }
+        check(v_max - v_min < 8.0f && v_max - v_min > 6.0f, "zebra inside the road");
+    }
+
+    // Traffic controls: icon only, not POIs, close in.
+    const auto signals = classify_poi(tags({{"highway", "traffic_signals"}}), 16);
+    check(signals.show && signals.control, "traffic signals");
+    check(!classify_poi(tags({{"highway", "traffic_signals"}}), 15).show, "signals hidden at z15");
+    check(classify_control(tags({{"highway", "stop"}}), 17).control, "stop sign");
+    check(!classify_control(tags({{"amenity", "fuel"}}), 17).control, "fuel is no control");
 
     // Night palette: dark land, roads darker than by day, same layers.
     const auto luma = [](Rgba c) { return 0.3 * c.r + 0.59 * c.g + 0.11 * c.b; };

@@ -95,7 +95,8 @@ add_custom_command(TARGET osmand_backend POST_BUILD
 # navigation.ifs). A shared library like the plugin (an executable cannot
 # link the core with a static libgcc) plus a dlopen launcher; both run from
 # /tmp on the radio against the /open-navicore libraries.
-add_library(route_bench SHARED ${ONC_ROOT}/deploy/bench/route_bench.cpp)
+add_library(route_bench SHARED ${ONC_ROOT}/deploy/bench/route_bench.cpp
+  ${ONC_ROOT}/deploy/bench/map_tags.cpp)
 target_include_directories(route_bench PRIVATE ${ONC_OSMAND_INCLUDES})
 target_compile_definitions(route_bench PRIVATE ${ONC_OSMAND_DEFINES})
 target_compile_options(route_bench PRIVATE ${ONC_OSMAND_FLAGS} -w)

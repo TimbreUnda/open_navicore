@@ -188,6 +188,20 @@ LabelImagePtr make_poi_icon(const OsmAnd::CoreResourcesEmbeddedBundle& resources
     return out;
 }
 
+// Traffic control: OsmAnd's colour map icon as it is (signal, stop sign,
+// give-way triangle, level crossing).
+LabelImagePtr make_control_icon(const OsmAnd::CoreResourcesEmbeddedBundle& resources,
+                                const char* icon)
+{
+    bool ok = false;
+    const QByteArray svg = resources.getResource(
+        QStringLiteral("map/icons/%1.svg").arg(QString::fromLatin1(icon)), &ok);
+    if (!ok || svg.isEmpty())
+        return nullptr;
+    constexpr int kSize = 18;
+    return image_from_skia(OsmAnd::SkiaUtilities::createImageFromVectorData(svg, kSize, kSize));
+}
+
 // Google-style location dot: soft blue halo, white rim, blue centre.
 LabelImagePtr make_location_dot()
 {
@@ -241,6 +255,7 @@ struct PoiLabel {
     Point pos;
     std::uint32_t rgb = 0;
     std::string icon;
+    bool control = false;         // traffic control: icon only, own budget
     std::uint64_t id_hash = 0;    // fade state of the icon (text: ^ kPoiTextSalt)
     std::uint64_t text_key = 0, icon_key = 0;
     LabelImagePtr text, icon_image;
@@ -278,7 +293,7 @@ struct BuiltTile {
 
 // Tile file: "NVT1", then the mesh arrays and the label records, compressed
 // with qCompress. Anything malformed is treated as a miss.
-constexpr std::uint32_t kTileFileMagic = 0x3154564Eu;  // "NVT1"
+constexpr std::uint32_t kTileFileMagic = 0x3254564Eu;  // "NVT2"
 
 class Writer {
 public:
@@ -346,6 +361,10 @@ std::vector<char> encode_tile(const TileMesh& mesh, const TileLabels& labels)
     w.array(mesh.area_indices);
     w.array(mesh.line_vertices);
     w.array(mesh.line_indices);
+    w.array(mesh.sprite_vertices);
+    w.array(mesh.sprite_indices);
+    w.pod(mesh.line_level_start);
+    w.pod(mesh.sprite_level_start);
     w.pod(static_cast<std::uint32_t>(labels.streets.size()));
     for (const auto& s : labels.streets) {
         w.str(s.id);
@@ -362,6 +381,7 @@ std::vector<char> encode_tile(const TileMesh& mesh, const TileLabels& labels)
         w.pod(p.pos);
         w.pod(p.rgb);
         w.str(p.icon);
+        w.pod(static_cast<std::uint8_t>(p.control ? 1 : 0));
     }
     w.pod(static_cast<std::uint32_t>(labels.places.size()));
     for (const auto& p : labels.places) {
@@ -378,13 +398,26 @@ bool decode_tile(const char* data, std::size_t size, TileMesh& mesh, TileLabels&
     std::uint32_t magic = 0, n = 0;
     if (!r.pod(magic) || magic != kTileFileMagic || !r.array(mesh.area_vertices) ||
         !r.array(mesh.area_indices) || !r.array(mesh.line_vertices) ||
-        !r.array(mesh.line_indices))
+        !r.array(mesh.line_indices) || !r.array(mesh.sprite_vertices) ||
+        !r.array(mesh.sprite_indices) || !r.pod(mesh.line_level_start) ||
+        !r.pod(mesh.sprite_level_start))
         return false;
-    // Indices must stay inside their vertex arrays.
+    // Indices must stay inside their vertex arrays, levels inside the indices.
     for (const auto i : mesh.area_indices)
         if (i >= mesh.area_vertices.size()) return false;
     for (const auto i : mesh.line_indices)
         if (i >= mesh.line_vertices.size()) return false;
+    for (const auto i : mesh.sprite_indices)
+        if (i >= mesh.sprite_vertices.size()) return false;
+    const auto ranges_ok = [](const std::array<std::uint32_t, kLineLevels + 1>& start,
+                              std::size_t count) {
+        for (int level = 0; level < kLineLevels; ++level)
+            if (start[level] > start[level + 1]) return false;
+        return start[0] == 0 && start[kLineLevels] == count;
+    };
+    if (!ranges_ok(mesh.line_level_start, mesh.line_indices.size()) ||
+        !ranges_ok(mesh.sprite_level_start, mesh.sprite_indices.size()))
+        return false;
     if (!r.pod(n) || n > 100000) return false;
     labels.streets.resize(n);
     for (auto& s : labels.streets) {
@@ -398,11 +431,13 @@ bool decode_tile(const char* data, std::size_t size, TileMesh& mesh, TileLabels&
     labels.pois.resize(n);
     for (auto& p : labels.pois) {
         std::int32_t rank = 0, min_zoom = 0;
+        std::uint8_t control = 0;
         if (!r.str(p.id) || !r.str(p.name) || !r.pod(rank) || !r.pod(min_zoom) ||
-            !r.pod(p.pos) || !r.pod(p.rgb) || !r.str(p.icon))
+            !r.pod(p.pos) || !r.pod(p.rgb) || !r.str(p.icon) || !r.pod(control))
             return false;
         p.rank = rank;
         p.min_zoom = min_zoom;
+        p.control = control != 0;
     }
     if (!r.pod(n) || n > 100000) return false;
     labels.places.resize(n);
@@ -927,6 +962,17 @@ private:
         std::vector<Ring> holes;
         double labels_ms = 0.0;
         const double tile_x1 = origin_x + size31, tile_y1 = origin_y + size31;
+        // Road markings (one-way arrows, zebras) at street detail only.
+        const bool markings = detail >= 16;
+        // Arrow spacing: about 100 px at zoom 16, in this tile's units.
+        const float arrow_spacing = static_cast<float>(
+            100.0 * kTileExtent / (kVectorTilePx * std::ldexp(1.0, 16 - key.z)));
+        struct RoadRef {
+            const OsmAnd::MapObject* object;
+            LineStyle style;
+        };
+        std::vector<RoadRef> roads;
+        std::vector<OsmAnd::PointI> crossings;
         for (const auto& object : block->objects) {
             if (!object || object->isCoastline || object->points31.isEmpty())
                 continue;
@@ -950,6 +996,8 @@ private:
                 collect_labels(*object, tags, area, origin_x, origin_y, to_local, out.labels);
                 labels_ms += ms_since(label_started);
             }
+            if (markings && object->points31.size() == 1 && marked_crossing(tags))
+                crossings.push_back(object->points31[0]);
             if (object->points31.size() < 2)
                 continue;
             const FeatureStyle style = classify(tags, area, detail, night);
@@ -966,8 +1014,18 @@ private:
                 if (area && outer.size() > 2 && !(outer.front() == outer.back()))
                     outer.push_back(outer.front());
                 tessellator.add_line(outer, style.line);
+                // Drivable roads (service and up; rail is below them).
+                if (markings && !area && style.line.layer >= LineLayer::Service) {
+                    roads.push_back({object.get(), style.line});
+                    if (const int direction = oneway_direction(tags))
+                        tessellator.add_oneway_arrows(
+                            outer, style.line, direction,
+                            oneway_arrow_colour(style.line.layer, night), arrow_spacing);
+                }
             }
         }
+        add_zebras(crossings, roads, origin_x, origin_y, tile_x1, tile_y1, to_local, night,
+                   tessellator);
         out.mesh = tessellator.finish();
         out.ok = true;
         out.build_ms = ms_since(build_started) - labels_ms;
@@ -984,6 +1042,62 @@ private:
         return out;
     }
 
+    // Zebras: each marked crossing node in the tile, on the nearest drawn
+    // road within about 1.5 m (the node is one of the road's points), across
+    // that road and on its level.
+    template <typename Road>
+    static void add_zebras(const std::vector<OsmAnd::PointI>& crossings,
+                           const std::vector<Road>& roads, double origin_x, double origin_y,
+                           double tile_x1, double tile_y1, double to_local, bool night,
+                           TileTessellator& tessellator)
+    {
+        constexpr double kSnap31 = 150.0;  // 31-bit units are ~1.2 cm at Kyiv
+        for (const auto& c : crossings) {
+            const double cx = c.x, cy = c.y;
+            if (cx < origin_x || cx >= tile_x1 || cy < origin_y || cy >= tile_y1)
+                continue;
+            double best = kSnap31 * kSnap31;
+            const Road* best_road = nullptr;
+            double along_x = 0.0, along_y = 0.0;
+            for (const auto& road : roads) {
+                const auto& box = road.object->bbox31;
+                if (box.right() > box.left() && box.bottom() > box.top() &&
+                    (cx < box.left() - kSnap31 || cx > box.right() + kSnap31 ||
+                     cy < box.top() - kSnap31 || cy > box.bottom() + kSnap31))
+                    continue;
+                const auto& points = road.object->points31;
+                for (int i = 0; i + 1 < points.size(); ++i) {
+                    const double ax = points[i].x, ay = points[i].y;
+                    const double dx = points[i + 1].x - ax, dy = points[i + 1].y - ay;
+                    const double length2 = dx * dx + dy * dy;
+                    if (length2 <= 0.0)
+                        continue;
+                    const double t =
+                        std::clamp(((cx - ax) * dx + (cy - ay) * dy) / length2, 0.0, 1.0);
+                    const double ex = ax + t * dx - cx, ey = ay + t * dy - cy;
+                    const double d2 = ex * ex + ey * ey;
+                    // At a junction node the wider road wins a tie.
+                    if (d2 < best || (best_road && d2 == best &&
+                                      road.style.width > best_road->style.width)) {
+                        best = d2;
+                        best_road = &road;
+                        along_x = dx;
+                        along_y = dy;
+                    }
+                }
+            }
+            if (!best_road)
+                continue;
+            const Point at{static_cast<float>((cx - origin_x) * to_local),
+                           static_cast<float>((cy - origin_y) * to_local)};
+            // Shown from about zoom 16.7 (scale 1.45), where stripes are
+            // more than a pixel wide.
+            tessellator.add_zebra(at, {static_cast<float>(along_x), static_cast<float>(along_y)},
+                                  best_road->style.width, best_road->style.level,
+                                  zebra_colour(night), 1.45f);
+        }
+    }
+
     // Street names (with the road's whole path), POIs and place names.
     // Point-like labels are kept only by the tile that contains them.
     void collect_labels(const OsmAnd::MapObject& object, const Tags& tags, bool area,
@@ -991,8 +1105,28 @@ private:
                         TileLabels& out)
     {
         const QString caption = object.getCaptionInNativeLanguage();
-        if (caption.isEmpty())
+        if (caption.isEmpty()) {
+            // Traffic controls have no name.
+            if (object.points31.size() != 1)
+                return;
+            const PoiStyle control = classify_control(tags, 99);
+            if (!control.control)
+                return;
+            const Point pos{static_cast<float>((object.points31[0].x - origin_x) * to_local),
+                            static_cast<float>((object.points31[0].y - origin_y) * to_local)};
+            if (pos[0] < 0.0f || pos[0] >= kTileExtent || pos[1] < 0.0f || pos[1] >= kTileExtent)
+                return;
+            PoiLabel label;
+            label.control = true;
+            label.rank = control.rank;
+            label.min_zoom = control.min_zoom;
+            label.pos = pos;
+            label.icon = control.icon;
+            label.id = "c|" + label.icon + "@" + std::to_string(object.points31[0].x) + "," +
+                       std::to_string(object.points31[0].y);
+            out.pois.push_back(std::move(label));
             return;
+        }
         const std::string name = caption.toStdString();
         const auto anchor = [&]() {
             double x, y;
@@ -1090,6 +1224,15 @@ private:
                                             [](const StreetLabel& l) { return !l.image; }),
                              labels.streets.end());
         for (auto& label : labels.pois) {
+            if (label.control) {
+                const std::string icon_key = "c|" + label.icon;
+                label.id_hash = fnv1a(label.id);
+                label.icon_key = fnv1a(icon_key);
+                label.icon_image = images_.get(icon_key, [&] {
+                    return make_control_icon(*resources_, label.icon.c_str());
+                });
+                continue;
+            }
             Rgba colour{static_cast<std::uint8_t>(label.rgb >> 16),
                         static_cast<std::uint8_t>(label.rgb >> 8),
                         static_cast<std::uint8_t>(label.rgb), 255};
@@ -1114,7 +1257,9 @@ private:
             });
         }
         labels.pois.erase(std::remove_if(labels.pois.begin(), labels.pois.end(),
-                                         [](const PoiLabel& l) { return !l.text || !l.icon_image; }),
+                                         [](const PoiLabel& l) {
+                                             return !l.icon_image || (!l.control && !l.text);
+                                         }),
                           labels.pois.end());
         for (auto& label : labels.places) {
             const std::uint32_t argb = night ? 0xFF9AA3AEu : 0xFF70757Au;
@@ -1238,6 +1383,29 @@ const char* kLineFs =
     "varying mediump float v_dist; varying mediump float v_half; varying lowp vec4 v_color;"
     "void main(){ float a = clamp(v_half - abs(v_dist), 0.0, 1.0);"
     "  gl_FragColor = vec4(v_color.rgb, v_color.a * a); }";
+// Sprites (one-way arrows, zebra stripes): a corner sits at its offset in
+// pixels, u along the projected direction and v across it, scaled with zoom
+// like line widths; below its minimum scale the shape collapses to a point.
+const char* kSpriteVs =
+    "attribute vec2 a_pos; attribute vec2 a_dir; attribute vec2 a_off;"
+    "attribute vec4 a_color; attribute float a_min;"
+    "uniform mat3 u_m; uniform vec2 u_half_vp; uniform float u_eps; uniform float u_wscale;"
+    "varying lowp vec4 v_color;"
+    "void main(){"
+    "  v_color = a_color;"
+    "  vec3 p = u_m * vec3(a_pos, 1.0);"
+    "  vec3 q = u_m * vec3(a_pos + normalize(a_dir) * u_eps, 1.0);"
+    "  vec2 sp = p.xy / p.z;"
+    "  vec2 d = (q.xy / q.z - sp) * u_half_vp;"
+    "  float len = length(d);"
+    "  vec2 t = len > 0.000001 ? d / len : vec2(1.0, 0.0);"
+    "  vec2 n = vec2(-t.y, t.x);"
+    "  float s = u_wscale >= a_min ? u_wscale : 0.0;"
+    "  vec2 off = (t * a_off.x + n * a_off.y) * s;"
+    "  gl_Position = vec4((sp + off / u_half_vp) * p.z, 0.0, p.z);"
+    "}";
+const char* kSpriteFs =
+    "varying lowp vec4 v_color; void main(){ gl_FragColor = v_color; }";
 const char* kLabelVs =
     "attribute vec2 a_pos; attribute vec2 a_uv; attribute float a_alpha;"
     "varying mediump vec2 v_uv; varying lowp float v_alpha;"
@@ -1346,6 +1514,10 @@ struct GpuMesh {
     GLuint buffers[4] = {};  // area vbo, area ibo, line vbo, line ibo
     GLsizei area_count = 0;
     GLsizei line_count = 0;
+    // Sprites follow the lines in the line buffers (byte offsets); both are
+    // split into levels (index ranges, see TileMesh).
+    std::size_t sprite_vertex_offset = 0, sprite_index_offset = 0;
+    std::array<std::uint32_t, kLineLevels + 1> line_start{}, sprite_start{};
     std::size_t bytes = 0;
     std::uint64_t last_used = 0;
     std::size_t capacity[4] = {};  // allocated bytes (dynamic meshes only)
@@ -1361,17 +1533,38 @@ GpuMesh upload(const TileMesh& mesh)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gpu.buffers[1]);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.area_indices.size() * 4,
                  mesh.area_indices.data(), GL_STATIC_DRAW);
+    // Lines, then sprites, in one buffer each for vertices and indices.
+    const auto both = [](GLenum target, const void* first, std::size_t first_bytes,
+                         const void* second, std::size_t second_bytes) {
+        if (!second_bytes) {
+            glBufferData(target, static_cast<GLsizeiptr>(first_bytes), first, GL_STATIC_DRAW);
+            return;
+        }
+        std::vector<char> joined(first_bytes + second_bytes);
+        if (first_bytes)
+            std::memcpy(joined.data(), first, first_bytes);
+        std::memcpy(joined.data() + first_bytes, second, second_bytes);
+        glBufferData(target, static_cast<GLsizeiptr>(joined.size()), joined.data(),
+                     GL_STATIC_DRAW);
+    };
+    const std::size_t line_vbytes = mesh.line_vertices.size() * sizeof(LineVertex);
+    const std::size_t line_ibytes = mesh.line_indices.size() * 4;
+    const std::size_t sprite_vbytes = mesh.sprite_vertices.size() * sizeof(SpriteVertex);
+    const std::size_t sprite_ibytes = mesh.sprite_indices.size() * 4;
     glBindBuffer(GL_ARRAY_BUFFER, gpu.buffers[2]);
-    glBufferData(GL_ARRAY_BUFFER, mesh.line_vertices.size() * sizeof(LineVertex),
-                 mesh.line_vertices.data(), GL_STATIC_DRAW);
+    both(GL_ARRAY_BUFFER, mesh.line_vertices.data(), line_vbytes, mesh.sprite_vertices.data(),
+         sprite_vbytes);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gpu.buffers[3]);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.line_indices.size() * 4,
-                 mesh.line_indices.data(), GL_STATIC_DRAW);
+    both(GL_ELEMENT_ARRAY_BUFFER, mesh.line_indices.data(), line_ibytes,
+         mesh.sprite_indices.data(), sprite_ibytes);
     gpu.area_count = static_cast<GLsizei>(mesh.area_indices.size());
     gpu.line_count = static_cast<GLsizei>(mesh.line_indices.size());
-    gpu.bytes = mesh.area_vertices.size() * sizeof(AreaVertex) +
-                mesh.line_vertices.size() * sizeof(LineVertex) +
-                (mesh.area_indices.size() + mesh.line_indices.size()) * 4;
+    gpu.sprite_vertex_offset = line_vbytes;
+    gpu.sprite_index_offset = line_ibytes;
+    gpu.line_start = mesh.line_level_start;
+    gpu.sprite_start = mesh.sprite_level_start;
+    gpu.bytes = mesh.area_vertices.size() * sizeof(AreaVertex) + line_vbytes + sprite_vbytes +
+                mesh.area_indices.size() * 4 + line_ibytes + sprite_ibytes;
     return gpu;
 }
 
@@ -1558,7 +1751,7 @@ struct VectorMap::Impl {
     // last frame first within each group; then rank, then input order.
     struct Candidate {
         int group, shown, rank;
-        int kind;  // 0 street, 1 poi, 2 place
+        int kind;  // 0 street, 1 poi, 2 place, 3 traffic control
         std::uint32_t order;
         const TileKey* key;
         const void* label;
@@ -1584,8 +1777,10 @@ struct VectorMap::Impl {
         std::vector<std::pair<std::uint64_t, ScreenPoint>> placed_streets;
         std::vector<ScreenPoint> screen_path;
         std::vector<float> lengths, cumulative;
+        std::vector<std::pair<const GpuMesh*, Placement>> draw_meshes;
         void reserve()
         {
+            draw_meshes.reserve(kMaxWantedTiles * 4);
             wanted.reserve(4096);
             request.reserve(kMaxWantedTiles + 32);
             draw_list.reserve(kMaxWantedTiles * 4);
@@ -1603,9 +1798,10 @@ struct VectorMap::Impl {
 
     TileBuilder builder;
     bool gl_ready = false;
-    GLuint area_prog = 0, line_prog = 0, label_prog = 0;
+    GLuint area_prog = 0, line_prog = 0, sprite_prog = 0, label_prog = 0;
     GLint area_m = -1, line_m = -1, line_half_vp = -1, line_eps = -1, line_wscale = -1,
-          line_casing = -1, label_tex = -1;
+          line_casing = -1, sprite_m = -1, sprite_half_vp = -1, sprite_eps = -1,
+          sprite_wscale = -1, label_tex = -1;
     LabelAtlas atlas;
     // Label buffers: a ring of three, filled with glBufferSubData into kept
     // storage. Re-specifying one buffer every frame (glBufferData) makes the
@@ -1723,8 +1919,9 @@ bool VectorMap::init_gl()
     d.area_prog = program(kAreaVs, kAreaFs, {"a_pos", "a_color"});
     d.line_prog = program(kLineVs, kLineFs,
                           {"a_pos", "a_normal", "a_side", "a_width", "a_cwidth", "a_fill", "a_casing"});
+    d.sprite_prog = program(kSpriteVs, kSpriteFs, {"a_pos", "a_dir", "a_off", "a_color", "a_min"});
     d.label_prog = program(kLabelVs, kLabelFs, {"a_pos", "a_uv", "a_alpha"});
-    if (!d.area_prog || !d.line_prog || !d.label_prog)
+    if (!d.area_prog || !d.line_prog || !d.sprite_prog || !d.label_prog)
         return false;
     d.area_m = glGetUniformLocation(d.area_prog, "u_m");
     d.line_m = glGetUniformLocation(d.line_prog, "u_m");
@@ -1732,6 +1929,10 @@ bool VectorMap::init_gl()
     d.line_eps = glGetUniformLocation(d.line_prog, "u_eps");
     d.line_wscale = glGetUniformLocation(d.line_prog, "u_wscale");
     d.line_casing = glGetUniformLocation(d.line_prog, "u_casing");
+    d.sprite_m = glGetUniformLocation(d.sprite_prog, "u_m");
+    d.sprite_half_vp = glGetUniformLocation(d.sprite_prog, "u_half_vp");
+    d.sprite_eps = glGetUniformLocation(d.sprite_prog, "u_eps");
+    d.sprite_wscale = glGetUniformLocation(d.sprite_prog, "u_wscale");
     d.label_tex = glGetUniformLocation(d.label_prog, "u_tex");
     d.atlas.init();
     glGenBuffers(d.kLabelRing, d.label_vbo);
@@ -1773,6 +1974,7 @@ void VectorMap::release_gl(bool context_lost)
         if (d.label_ibo[0]) glDeleteBuffers(d.kLabelRing, d.label_ibo);
         if (d.area_prog) glDeleteProgram(d.area_prog);
         if (d.line_prog) glDeleteProgram(d.line_prog);
+        if (d.sprite_prog) glDeleteProgram(d.sprite_prog);
         if (d.label_prog) glDeleteProgram(d.label_prog);
     }
     d.atlas.release(context_lost);
@@ -1791,7 +1993,7 @@ void VectorMap::release_gl(bool context_lost)
         d.label_vbo_capacity[i] = d.label_ibo_capacity[i] = 0;
     }
     d.label_slot = 0;
-    d.area_prog = d.line_prog = d.label_prog = 0;
+    d.area_prog = d.line_prog = d.sprite_prog = d.label_prog = 0;
     d.gl_ready = false;
 }
 
@@ -1897,6 +2099,7 @@ void upload_into(GpuMesh& gpu, const TileMesh& mesh)
     }
     gpu.area_count = static_cast<GLsizei>(mesh.area_indices.size());
     gpu.line_count = static_cast<GLsizei>(mesh.line_indices.size());
+    gpu.line_start = mesh.line_level_start;
 }
 
 // Route colours: Google blue ahead, grey behind the vehicle.
@@ -2482,15 +2685,20 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
     glUseProgram(line_prog);
     for (GLuint a = 0; a < 7; ++a)
         glEnableVertexAttribArray(a);
+    const float wscale =
+        static_cast<float>(std::pow(2.0, (zoom - 16.0) * (zoom < 16.0 ? 0.5 : 0.75)));
     glUniform2f(line_half_vp, view.width / 2.0f, view.height / 2.0f);
-    glUniform1f(line_wscale, static_cast<float>(std::pow(2.0, (zoom - 16.0) * (zoom < 16.0 ? 0.5 : 0.75))));
-    const auto draw_lines = [&](const GpuMesh& mesh, const Placement& placement) {
+    glUniform1f(line_wscale, wscale);
+    // About two pixels along a normal or direction, in local units.
+    const double px_per_unit31 = kVectorTilePx * std::pow(2.0, zoom) / std::ldexp(1.0, 31);
+    const auto eps = [&](const Placement& placement) {
+        return static_cast<float>(std::max(1e-3, 2.0 / (placement.k * px_per_unit31)));
+    };
+    const auto draw_lines = [&](const GpuMesh& mesh, const Placement& placement,
+                                std::uint32_t first, std::uint32_t count) {
         clip_matrix(view, placement, m);
         glUniformMatrix3fv(line_m, 1, GL_FALSE, m);
-        // About two pixels along the normal, in local units.
-        const double px_per_unit31 = kVectorTilePx * std::pow(2.0, zoom) / std::ldexp(1.0, 31);
-        glUniform1f(line_eps, static_cast<float>(
-                                  std::max(1e-3, 2.0 / (placement.k * px_per_unit31))));
+        glUniform1f(line_eps, eps(placement));
         glBindBuffer(GL_ARRAY_BUFFER, mesh.buffers[2]);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.buffers[3]);
         const GLsizei stride = sizeof(LineVertex);
@@ -2501,16 +2709,87 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
         glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(24));
         glVertexAttribPointer(5, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(28));
         glVertexAttribPointer(6, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(32));
-        glDrawElements(GL_TRIANGLES, mesh.line_count, GL_UNSIGNED_INT, nullptr);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(count), GL_UNSIGNED_INT,
+                       reinterpret_cast<void*>(static_cast<std::uintptr_t>(first) * 4u));
         ++calls;
     };
-    for (int pass = 0; pass < 2; ++pass) {
-        glUniform1f(line_casing, pass == 0 ? 1.0f : 0.0f);
-        for (const auto& key : draw_list) {
-            const auto& mesh = gpu[key];
-            if (mesh.line_count)
-                draw_lines(mesh, tile_placement(key));
+    const auto draw_sprites = [&](const GpuMesh& mesh, const Placement& placement,
+                                  std::uint32_t first, std::uint32_t count) {
+        clip_matrix(view, placement, m);
+        glUniformMatrix3fv(sprite_m, 1, GL_FALSE, m);
+        glUniform1f(sprite_eps, eps(placement));
+        glBindBuffer(GL_ARRAY_BUFFER, mesh.buffers[2]);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.buffers[3]);
+        const GLsizei stride = sizeof(SpriteVertex);
+        const auto at = [&](std::size_t offset) {
+            return reinterpret_cast<void*>(mesh.sprite_vertex_offset + offset);
+        };
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, at(0));
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, at(8));
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, at(16));
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, at(24));
+        glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride, at(28));
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(count), GL_UNSIGNED_INT,
+                       reinterpret_cast<void*>(mesh.sprite_index_offset +
+                                               static_cast<std::size_t>(first) * 4u));
+        ++calls;
+    };
+    // Levels bottom up (tunnels, ground, bridges, upper bridges): each
+    // level's casings, fills, then its one-way arrows and zebras, so a bridge
+    // covers what runs beneath it.
+    auto& meshes = scratch.draw_meshes;
+    meshes.clear();
+    bool level_lines[kLineLevels] = {}, level_sprites[kLineLevels] = {};
+    for (const auto& key : draw_list) {
+        const GpuMesh& mesh = gpu[key];
+        meshes.push_back({&mesh, tile_placement(key)});
+        for (int level = 0; level < kLineLevels; ++level) {
+            level_lines[level] |= mesh.line_start[level + 1] > mesh.line_start[level];
+            level_sprites[level] |= mesh.sprite_start[level + 1] > mesh.sprite_start[level];
         }
+    }
+    bool sprite_program = false;
+    for (int level = 0; level < kLineLevels; ++level) {
+        if (level_lines[level]) {
+            if (sprite_program) {
+                glUseProgram(line_prog);
+                glEnableVertexAttribArray(5);
+                glEnableVertexAttribArray(6);
+                sprite_program = false;
+            }
+            for (int pass = 0; pass < 2; ++pass) {
+                glUniform1f(line_casing, pass == 0 ? 1.0f : 0.0f);
+                for (const auto& entry : meshes) {
+                    const GpuMesh& mesh = *entry.first;
+                    const std::uint32_t first = mesh.line_start[level];
+                    const std::uint32_t count = mesh.line_start[level + 1] - first;
+                    if (count)
+                        draw_lines(mesh, entry.second, first, count);
+                }
+            }
+        }
+        if (level_sprites[level]) {
+            if (!sprite_program) {
+                glUseProgram(sprite_prog);
+                glDisableVertexAttribArray(5);
+                glDisableVertexAttribArray(6);
+                glUniform2f(sprite_half_vp, view.width / 2.0f, view.height / 2.0f);
+                glUniform1f(sprite_wscale, wscale);
+                sprite_program = true;
+            }
+            for (const auto& entry : meshes) {
+                const GpuMesh& mesh = *entry.first;
+                const std::uint32_t first = mesh.sprite_start[level];
+                const std::uint32_t count = mesh.sprite_start[level + 1] - first;
+                if (count)
+                    draw_sprites(mesh, entry.second, first, count);
+            }
+        }
+    }
+    if (sprite_program) {
+        glUseProgram(line_prog);
+        glEnableVertexAttribArray(5);
+        glEnableVertexAttribArray(6);
     }
     // Route above the roads, then the turn arrow, both below the labels.
     for (const GpuMesh* group : {&route_static, &arrow_lines}) {
@@ -2518,11 +2797,14 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
             glUniform1f(line_casing, pass == 0 ? 1.0f : 0.0f);
             if (group == &route_static) {
                 if (route_static.line_count)
-                    draw_lines(route_static, route_placement);
+                    draw_lines(route_static, route_placement, 0,
+                               static_cast<std::uint32_t>(route_static.line_count));
                 if (route_joint[joint_current].line_count)
-                    draw_lines(route_joint[joint_current], route_placement);
+                    draw_lines(route_joint[joint_current], route_placement, 0,
+                               static_cast<std::uint32_t>(route_joint[joint_current].line_count));
             } else if (arrow_lines.line_count) {
-                draw_lines(arrow_lines, route_placement);
+                draw_lines(arrow_lines, route_placement, 0,
+                           static_cast<std::uint32_t>(arrow_lines.line_count));
             }
         }
     }
@@ -2805,7 +3087,7 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
         }
         for (const auto& poi : it->second.pois)
             if (zoom >= poi.min_zoom)
-                add(2, poi.id_hash, poi.rank, 1, key, &poi);
+                add(2, poi.id_hash, poi.rank, poi.control ? 3 : 1, key, &poi);
     }
     // The order tie-break keeps equal candidates in input order (as a stable
     // sort would) without std::stable_sort's buffer.
@@ -2818,7 +3100,7 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
     // Pins of the street names placed this frame (at most 16: scanned).
     auto& placed_streets = scratch.placed_streets;
     placed_streets.clear();
-    std::size_t streets = 0, pois = 0, places = 0;
+    std::size_t streets = 0, pois = 0, places = 0, controls = 0;
     std::vector<ScreenPoint>& screen_path = scratch.screen_path;
     std::vector<float>& lengths = scratch.lengths;
     for (const auto& c : candidates) {
@@ -2898,6 +3180,21 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
                 emit_label(poi.id_hash ^ kPoiTextSalt, poi.text_key, *poi.text, text, anchor, at);
             }
             ++pois;
+        } else if (c.kind == 3) {
+            // Traffic controls: the icon only, not tappable.
+            if (controls >= 24) continue;
+            const auto& control = *static_cast<const PoiLabel*>(c.label);
+            bool ok = false;
+            const ScreenPoint at = to_screen(*c.key, control.pos, ok);
+            if (!ok) continue;
+            const auto& image = *control.icon_image;
+            const OrientedBox box{at.x, at.y, image.width / 2.0f, image.height / 2.0f, 0.0f};
+            if (!on_screen(box) || !free_of(box))
+                continue;
+            accepted.push_back(box);
+            emit_label(control.id_hash, control.icon_key, image, box, to_world(*c.key, control.pos),
+                       at);
+            ++controls;
         } else {
             if (places >= 6) continue;
             const auto& place = *static_cast<const PlaceLabel*>(c.label);
