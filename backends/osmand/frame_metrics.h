@@ -22,6 +22,9 @@ struct FrameMeasurement {
 
 // Allocation-free rolling telemetry for the context-owning render thread.
 // Buckets are one millisecond wide; the final bucket contains >=127 ms.
+// When enabled it also writes one line per frame to
+// /tmp/open-navicore-frames.log (exact 1% lows and per-hitch stage times;
+// buffered, flushed with each one-second report).
 class FrameMetrics {
 public:
     explicit FrameMetrics(bool enabled) noexcept;

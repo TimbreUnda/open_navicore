@@ -6,6 +6,25 @@
 #include <cstdio>
 
 namespace navicore_osmand {
+namespace {
+// One line per frame: outcome, time since start, present interval and stage
+// times in microseconds. A static buffer keeps the render thread off the
+// file system between the one-second flushes.
+std::FILE* frame_log()
+{
+    static std::FILE* const file = [] {
+        std::FILE* f = std::fopen("/tmp/open-navicore-frames.log", "w");
+        static char buffer[64 * 1024];
+        if (f) {
+            (void)std::setvbuf(f, buffer, _IOFBF, sizeof(buffer));
+            (void)std::fputs("# outcome t_ms interval_us total_us update_us prepare_us "
+                             "map_us ui_render_us ui_composite_us\n", f);
+        }
+        return f;
+    }();
+    return file;
+}
+} // namespace
 
 void FrameMetrics::Distribution::add(std::uint32_t microseconds) noexcept
 {
@@ -52,12 +71,14 @@ void FrameMetrics::record(const FrameMeasurement& measurement) noexcept
     if (!enabled_)
         return;
     const auto now = std::chrono::steady_clock::now();
+    std::int64_t interval_us = 0;
     switch (measurement.outcome) {
     case MeasuredFrameOutcome::Presented:
         ++presented_;
         if (last_presented_ != std::chrono::steady_clock::time_point{}) {
             const auto interval = std::chrono::duration_cast<
                 std::chrono::microseconds>(now - last_presented_).count();
+            interval_us = interval;
             if (interval < 1000000) {
                 // Upper bounds: 33, 50, 67, 100, 200 ms, then slower.
                 static constexpr std::int64_t bounds[] = {
@@ -82,6 +103,19 @@ void FrameMetrics::record(const FrameMeasurement& measurement) noexcept
     ui_render_.add(measurement.ui_render_us);
     ui_composite_.add(measurement.ui_composite_us);
     ui_upload_bytes_ += measurement.ui_upload_bytes;
+
+    if (std::FILE* log = frame_log()) {
+        static const char outcomes[] = {'P', 'p', 'r', 'F'};
+        (void)std::fprintf(
+            log, "%c %lld %lld %u %u %u %u %u %u\n",
+            outcomes[static_cast<int>(measurement.outcome)],
+            static_cast<long long>(std::chrono::duration_cast<
+                std::chrono::milliseconds>(now.time_since_epoch()).count()),
+            static_cast<long long>(interval_us), measurement.total_us,
+            measurement.update_us, measurement.prepare_us,
+            measurement.map_render_us, measurement.ui_render_us,
+            measurement.ui_composite_us);
+    }
 
     if (now - window_started_ >= std::chrono::seconds(1))
         report(now);
@@ -117,6 +151,8 @@ void FrameMetrics::report(std::chrono::steady_clock::time_point now) noexcept
         interval_bins_[3], interval_bins_[4], interval_bins_[5],
         interval_max_us_);
     trace(line);
+    if (std::FILE* log = frame_log())
+        (void)std::fflush(log);
     interval_bins_.fill(0u);
     interval_max_us_ = 0u;
 
