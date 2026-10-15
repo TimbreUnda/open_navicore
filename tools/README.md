@@ -8,7 +8,7 @@ not linked into `libNaviCore.so`.
 - `generators/` produces checked-in ABI manifests and callback stubs.
 - `abi/` builds compiler oracles for the QNX ARM calling convention.
 - `replay/` converts captures and executes bounded stock-code snapshots.
-- `qnx/` contains manually invoked service-control programs for the bench unit.
+
 
 Run Python tools from the repository root so their documented relative input
 and output paths remain stable.

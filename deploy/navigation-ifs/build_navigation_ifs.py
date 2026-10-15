@@ -9,8 +9,9 @@ STOCK_CFG    the unit's factory /pas/scfg/nv_navigation.cfg (not committed;
 PAYLOAD_DIR  directory for the image contents (created or refreshed).
 
 The image itself is packaged by ifs-build (CMakeLists.txt in this directory,
-`cmake --build <dir> --target ifs`). It is mounted at / by the boot hook
-(patch_boot_overlay.py) and adds only paths under /open-navicore/:
+`cmake --build <dir> --target ifs`). The boot overlay mounts it at / and runs
+its /open-navicore/boot.sh (README.md, "Boot"); it adds only paths under
+/open-navicore/:
 
   /open-navicore/libNaviCore.so      the provider
   /open-navicore/nv_navigation.cfg   the stock config with NaviDllName
@@ -49,7 +50,7 @@ def main():
     provider, stock_cfg, payload = sys.argv[1:4]
 
     # Inputs: the reviewed factory config and an ARM provider with the four
-    # PAS entry points (the same checks as deploy/prepare_bundle.sh).
+    # PAS entry points.
     text = open(stock_cfg, 'rb').read()
     if sha256(text) != STOCK_CFG_SHA256:
         raise SystemExit('unexpected factory nv_navigation.cfg revision')

@@ -4,8 +4,7 @@
 // plus street/POI/place labels, drawn with GLES2 under any camera that maps
 // the ground plane to the screen by a homography (2D or tilted 3D).
 //
-// Used by the navigation backend (camera from OsmAnd's renderer) and by the
-// standalone vector-poc tool (scripted camera).
+// Used by the navigation backend (camera from OsmAnd's renderer).
 
 #include <array>
 #include <cstdint>

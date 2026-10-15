@@ -60,11 +60,12 @@ add_ifs_package(navigation
     /open-navicore/libNaviCore.so=${payload}/libNaviCore.so
     /open-navicore/nv_navigation.cfg=${payload}/nv_navigation.cfg
     /open-navicore/.open_navicore_navigation_v1=${payload}/marker.txt
+    /open-navicore/boot.sh=${CMAKE_CURRENT_LIST_DIR}/boot.sh
     /open-navicore/.ifs_padding.txt=${payload}/padding.txt
   TARGET ifs)
 # Plain files are not dependencies of the mkifs step; add the payload.
 add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/ifs/navigation.ifs APPEND
-  DEPENDS ${payload_files})
+  DEPENDS ${payload_files} ${CMAKE_CURRENT_LIST_DIR}/boot.sh)
 
 # The image lives in /datastore/navicore (the boot hook's path) and is
 # mounted at boot, so it is replaced staged: upload as .new with ifs-deploy,

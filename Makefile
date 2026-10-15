@@ -57,13 +57,17 @@ LDFLAGS := -Vgcc_ntoarmv7le -shared -Wl,-soname,libNaviCore.so \
 	static-provider-coverage-selftest static-callback-coverage-selftest \
 	pas-proxy-coverage-selftest qnx-arm-abi-oracle-selftest \
 	arm-snapshot-replay-selftest raw-callback-capture navigation-ui-test \
-	raw-callback-capture-selftest portability-selftest osmand-backend \
+	raw-callback-capture-selftest portability-selftest osmand-backend provider backend \
 	osmand-obf-smoke osmand-plugin-smoke clean
 
 all: $(TARGET) $(SMOKE_TARGET) $(PLUGIN_TARGET) $(OUTBOUND_PLUGIN_TARGET) \
 	$(PLUGIN_SMOKE_TARGET)
 
 raw-callback-capture: $(RAW_CAPTURE_TARGET)
+
+# Product entry points: the provider (qcc) and the OsmAnd backend (osmand.mk).
+provider: $(TARGET)
+backend: osmand-backend
 
 include backends/osmand/osmand.mk
 
