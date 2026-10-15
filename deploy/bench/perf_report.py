@@ -83,7 +83,7 @@ def frames_report(path, seconds):
     work = outside = 0
     causes = {}
     for f in hitches:
-        stage = dict(zip(STAGES, f[5:10]))
+        stage = dict(zip(STAGES, f[4:9]))
         frame_work = f[3]
         if frame_work * 2 >= f[2] - 33333:
             work += 1
@@ -96,8 +96,8 @@ def frames_report(path, seconds):
           f'outside the frame (swap/pacing/scheduling) {outside}')
     print('worst 10: interval_ms total_ms ' + ' '.join(s[:-3] for s in STAGES))
     for f in sorted(presented, key=lambda f: -f[2])[:10]:
-        print('  ' + ' '.join(f'{v / 1000:.1f}' for v in (f[2], f[3], *f[5:10])))
-    for name, column in (('total', 3), *((s, 5 + i) for i, s in enumerate(STAGES))):
+        print('  ' + ' '.join(f'{v / 1000:.1f}' for v in (f[2], f[3], *f[4:9])))
+    for name, column in (('total', 3), *((s, 4 + i) for i, s in enumerate(STAGES))):
         v = sorted(f[column] / 1000 for f in presented)
         print(f'{name}: p50={v[len(v) // 2]:.1f} p99={v[int(len(v) * 0.99)]:.1f} '
               f'max={v[-1]:.1f} ms')
