@@ -22,6 +22,7 @@ struct Config {
     bool performance_metrics = false;  // enable-performance-metrics
     bool vector_upload_pool = false;   // vector-upload-pool
     int vector_upload_budget = 4;      // vector-upload-budget (tiles per frame)
+    bool vector_upload_thread = false; // vector-upload-thread
     double simulation_speed_metres_per_second = 20.0;
 
     static Config from_environment();

@@ -25,6 +25,8 @@
 #include <SkImageInfo.h>
 #include <OsmAndCore/restore_internal_warnings.h>
 
+#include "gpu_upload_context.h"
+
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
@@ -1368,6 +1370,115 @@ GpuMesh upload(const TileMesh& mesh)
     return gpu;
 }
 
+// Uploads finished tiles on its own thread with a shared GL context: the
+// render thread only adopts ready buffers. glFinish() before handing a mesh
+// over makes it complete for the render context (GLES2 has no fences). The
+// tile's CPU mesh is freed here too, off the render thread.
+class TileUploader {
+public:
+    struct Ready {
+        BuiltTile tile;  // mesh emptied; key, labels, timings kept
+        GpuMesh gpu;
+    };
+
+    bool start(EGLDisplay display, EGLContext shared_with)
+    {
+        if (!context_.create(display, shared_with))
+            return false;
+        thread_ = std::thread([this] { run(); });
+        return true;
+    }
+
+    // Render thread, context current: stops the thread, then frees what it
+    // left behind (unless the context is gone).
+    void stop(bool context_lost)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
+        }
+        wake_.notify_all();
+        if (thread_.joinable())
+            thread_.join();
+        if (!context_lost)
+            for (auto& ready : ready_)
+                glDeleteBuffers(4, ready.gpu.buffers);
+        ready_.clear();
+        pending_.clear();
+        context_.destroy();
+    }
+
+    void submit(std::vector<BuiltTile>& tiles)
+    {
+        if (tiles.empty())
+            return;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& tile : tiles)
+                pending_.push_back(std::move(tile));
+        }
+        tiles.clear();
+        wake_.notify_one();
+    }
+
+    void take(std::vector<Ready>& out)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& ready : ready_)
+            out.push_back(std::move(ready));
+        ready_.clear();
+    }
+
+    std::uint32_t upload_max_us() { return upload_max_us_.exchange(0); }
+
+private:
+    void run()
+    {
+        if (!context_.make_current())
+            return;
+        for (;;) {
+            std::vector<BuiltTile> batch;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                wake_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
+                if (stopping_)
+                    break;
+                batch.swap(pending_);
+            }
+            std::vector<Ready> done;
+            done.reserve(batch.size());
+            for (auto& tile : batch) {
+                const auto started = Clock::now();
+                Ready ready;
+                ready.gpu = upload(tile.mesh);
+                const auto us = static_cast<std::uint32_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        Clock::now() - started).count());
+                std::uint32_t seen = upload_max_us_.load();
+                while (us > seen && !upload_max_us_.compare_exchange_weak(seen, us)) {}
+                tile.mesh = TileMesh{};
+                ready.tile = std::move(tile);
+                done.push_back(std::move(ready));
+            }
+            glFinish();
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& ready : done)
+                ready_.push_back(std::move(ready));
+        }
+        context_.release_current();
+    }
+
+    navicore_osmand::GpuUploadContext context_;
+    std::thread thread_;
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    bool stopping_ = false;
+    std::vector<BuiltTile> pending_;
+    std::vector<Ready> ready_;
+    std::atomic<std::uint32_t> upload_max_us_{0};
+};
+
+
 // Local -> world: world31 = origin + local * k.
 struct Placement {
     double ox, oy, k;
@@ -1494,6 +1605,10 @@ struct VectorMap::Impl {
     GLuint label_vbo = 0, label_ibo = 0;
     PFNGLBINDVERTEXARRAYOESPROC bind_vao = nullptr;
     std::map<TileKey, GpuMesh> gpu;
+    // Tile uploads on their own thread (shared context), when enabled.
+    std::unique_ptr<TileUploader> uploader;
+    bool upload_thread_requested = false;
+    std::vector<TileUploader::Ready> uploaded;  // scratch
     // Buffers of evicted tiles kept for reuse (upload pool), and the policy.
     std::vector<GpuMesh> pool;
     bool use_pool = false;
@@ -1601,6 +1716,11 @@ VectorMap::~VectorMap() = default;
 bool VectorMap::init_gl()
 {
     auto& d = *impl_;
+    if (d.upload_thread_requested) {
+        d.uploader.reset(new TileUploader());
+        if (!d.uploader->start(eglGetCurrentDisplay(), eglGetCurrentContext()))
+            d.uploader.reset();
+    }
     d.area_prog = program(kAreaVs, kAreaFs, {"a_pos", "a_color"});
     d.line_prog = program(kLineVs, kLineFs,
                           {"a_pos", "a_normal", "a_side", "a_width", "a_cwidth", "a_fill", "a_casing"});
@@ -1638,6 +1758,10 @@ bool VectorMap::init_gl()
 void VectorMap::release_gl(bool context_lost)
 {
     auto& d = *impl_;
+    if (d.uploader) {
+        d.uploader->stop(context_lost);
+        d.uploader.reset();
+    }
     if (!context_lost) {
         for (auto& entry : d.gpu)
             glDeleteBuffers(4, entry.second.buffers);
@@ -1698,6 +1822,16 @@ void VectorMap::set_maneuver(bool show, std::size_t geometry_index)
     std::lock_guard<std::mutex> lock(impl_->route_mutex);
     impl_->maneuver_show = show;
     impl_->maneuver_index = geometry_index;
+}
+
+void VectorMap::set_upload_thread(bool on)
+{
+    impl_->upload_thread_requested = on;
+}
+
+bool VectorMap::upload_thread_active() const
+{
+    return impl_->uploader != nullptr;
 }
 
 void VectorMap::set_upload_policy(bool pool, int budget)
@@ -2462,6 +2596,49 @@ void VectorMap::Impl::take_tiles(std::uint64_t generation)
 {
     std::vector<BuiltTile>& arrivals = scratch.arrivals;
     builder.take(arrivals);
+    if (uploader) {
+        // Current-generation tiles go to the upload thread; ready ones are
+        // adopted here without GL uploads.
+        arrivals.erase(std::remove_if(arrivals.begin(), arrivals.end(),
+                                      [&](const BuiltTile& t) { return t.generation != generation; }),
+                       arrivals.end());
+        uploader->submit(arrivals);
+        uploaded.clear();
+        uploader->take(uploaded);
+        timing.upload_max_us = uploader->upload_max_us();
+        for (auto& ready : uploaded) {
+            auto& tile = ready.tile;
+            if (tile.generation != generation) {
+                glDeleteBuffers(4, ready.gpu.buffers);
+                continue;
+            }
+            {
+                std::lock_guard<std::mutex> lock(stats_mutex);
+                if (tile.from_disk) {
+                    ++stats.disk_hits;
+                    stats.disk_ms_total += tile.disk_ms;
+                } else {
+                    ++stats.tiles_built;
+                    stats.fetch_ms_total += tile.fetch_ms;
+                    stats.fetch_ms_max = percentile_max(stats.fetch_ms_max, tile.fetch_ms);
+                    stats.build_ms_total += tile.build_ms;
+                }
+                stats.labels_ms_total += tile.labels_ms;
+            }
+            GpuMesh mesh = ready.gpu;
+            mesh.last_used = frame;
+            gpu_bytes += mesh.bytes;
+            ++timing.uploads;
+            auto existing = gpu.find(tile.key);
+            if (existing != gpu.end()) {
+                glDeleteBuffers(4, existing->second.buffers);
+                gpu_bytes -= existing->second.bytes;
+            }
+            gpu[tile.key] = mesh;
+            labels[tile.key] = std::move(tile.labels);
+        }
+        return;
+    }
     std::size_t used = 0, uploaded = 0, bytes = 0;
     for (; used < arrivals.size(); ++used) {
         auto& tile = arrivals[used];

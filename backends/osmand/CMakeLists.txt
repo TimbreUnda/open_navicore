@@ -70,6 +70,7 @@ add_custom_target(build_info_git
 add_library(osmand_backend SHARED
   osmand_backend.cpp config.cpp session.cpp osmand_engine.cpp navigation_worker.cpp
   thread_priority.cpp crash_reporter.cpp frame_metrics.cpp build_info.cpp
+  gpu_upload_context.cpp
   ui/gl_overlay_compositor.cpp
   vector/vector_map.cpp vector/vector_style.cpp vector/vector_tessellator.cpp)
 add_dependencies(osmand_backend build_info_git)

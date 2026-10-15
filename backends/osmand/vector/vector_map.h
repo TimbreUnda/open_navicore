@@ -130,6 +130,10 @@ public:
     // of deleting and allocating new ones, and at most `budget` tiles per
     // frame (1..8).
     void set_upload_policy(bool pool, int budget);
+    // Upload tiles on a thread with a shared GL context (call before
+    // init_gl; falls back to render-thread uploads if the context fails).
+    void set_upload_thread(bool on);
+    bool upload_thread_active() const;
 
     // Draws map, route and labels into the current framebuffer; clear fills
     // it with the land colour first. Returns true while it wants more frames

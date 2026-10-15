@@ -401,6 +401,7 @@ bool OsmAndEngine::initialize(const Config& config,
     try {
         vector_map_.reset(new navicore_vector::VectorMap(
             obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); }));
+        vector_map_->set_upload_thread(config.vector_upload_thread);
         if (!vector_map_->init_gl())
             throw std::runtime_error("vector_map gl");
         if (!vector_cache_dir_.empty())
@@ -411,8 +412,9 @@ bool OsmAndEngine::initialize(const Config& config,
                                        config.vector_upload_budget);
         {
             char line[96];
-            std::snprintf(line, sizeof(line), "vector_upload pool=%d budget=%d",
-                          config.vector_upload_pool ? 1 : 0, config.vector_upload_budget);
+            std::snprintf(line, sizeof(line), "vector_upload pool=%d budget=%d thread=%d",
+                          config.vector_upload_pool ? 1 : 0, config.vector_upload_budget,
+                          vector_map_->upload_thread_active() ? 1 : 0);
             trace(line);
         }
         trace("init=vector_map");

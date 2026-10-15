@@ -47,6 +47,9 @@ Config Config::from_environment()
     config.vector_upload_pool = marker_or_environment(
         "OPEN_NAVICORE_OSMAND_VECTOR_UPLOAD_POOL",
         "/datastore/navicore-backend/vector-upload-pool");
+    config.vector_upload_thread = marker_or_environment(
+        "OPEN_NAVICORE_OSMAND_VECTOR_UPLOAD_THREAD",
+        "/datastore/navicore-backend/vector-upload-thread");
     if (std::FILE* budget = std::fopen("/datastore/navicore-backend/vector-upload-budget", "r")) {
         int value = 0;
         if (std::fscanf(budget, "%d", &value) == 1 && value >= 1 && value <= 8)
