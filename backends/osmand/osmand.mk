@@ -53,7 +53,8 @@ OSMAND_BINUTILS_STAMP := $(OSMAND_BINUTILS_DIR)/.ready
 OSMAND_PLUGIN_TARGET := $(OSMAND_BUILD_DIR)/libMockNavBackendOsmAnd.so
 OSMAND_OBJECTS := $(addprefix $(OSMAND_BUILD_DIR)/,osmand_backend.o config.o \
 	session.o diagnostics.o osmand_engine.o navigation_worker.o compact_text.o navigation_model.o \
-	camera_controller.o thread_priority.o crash_reporter.o label_geometry.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o overlay_occupancy.o recents_store.o frame_metrics.o)
+	camera_controller.o thread_priority.o crash_reporter.o label_geometry.o guidance_tracker.o navigation_view.o gl_overlay_compositor.o overlay_occupancy.o recents_store.o frame_metrics.o \
+	build_info.o)
 LVGL_SOURCES := $(shell find third_party/lvgl/src -type f -name '*.c')
 OSMAND_LVGL_OBJECTS := $(patsubst third_party/lvgl/src/%.c,$(OSMAND_BUILD_DIR)/lvgl/%.o,$(LVGL_SOURCES))
 OSMAND_OBJECTS += $(OSMAND_LVGL_OBJECTS)
@@ -120,6 +121,18 @@ $(OSMAND_BINUTILS_STAMP): | $(OSMAND_BUILD_DIR)
 $(OSMAND_BUILD_DIR)/%.o: backends/osmand/%.cpp \
 		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
 	$(OSMAND_COMPILE) -MMD -MP -c $< -o $@
+
+# Build information for the developer menu: rewritten only when the git
+# description changes, so a new commit rebuilds one small object.
+OSMAND_GIT_DESCRIBE := $(shell git describe --always --dirty --abbrev=12 --exclude='*' 2>/dev/null || echo unknown)
+$(OSMAND_BUILD_DIR)/build_info.txt: FORCE | $(OSMAND_BUILD_DIR)
+	@printf '%s\n' '$(OSMAND_GIT_DESCRIBE)' | cmp -s - $@ || \
+		printf '%s\n' '$(OSMAND_GIT_DESCRIBE)' > $@
+$(OSMAND_BUILD_DIR)/build_info.o: backends/osmand/build_info.cpp \
+		$(OSMAND_BUILD_DIR)/build_info.txt $(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)
+	$(OSMAND_COMPILE) -DOPEN_NAVICORE_GIT='"$(OSMAND_GIT_DESCRIBE)"' -MMD -MP -c $< -o $@
+.PHONY: FORCE
+FORCE:
 
 $(OSMAND_BUILD_DIR)/%.o: backends/osmand/ui/%.cpp \
 		$(OSMAND_CXX) $(OSMAND_BINUTILS_STAMP)

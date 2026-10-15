@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace navicore_osmand::ui {
@@ -151,6 +152,18 @@ struct MapPinch {
     int x1 = 0, y1 = 0;    // second finger
 };
 
+// Developer menu (bench diagnostics): read-only sections of key/value rows
+// filled by the engine, and toggles whose taps the engine applies.
+struct DevSection {
+    std::string title;
+    std::vector<std::pair<std::string, std::string>> rows;
+};
+struct DevToggle {
+    std::string label;
+    bool on = false;
+    std::string note;  // e.g. "next start"; empty for an action button
+};
+
 // Bare-map touches the engine acts on (taps pick POIs and places, a double
 // tap zooms in there, a long press drops a pin).
 enum class MapGesture { Tap, DoubleTap, LongPress };
@@ -213,6 +226,17 @@ public:
     bool take_map_touch(MapTouch& out) noexcept;
     const MapViewState& map_view() const noexcept { return map_view_; }
     bool set_map_view(const MapViewState& state) noexcept;
+
+    // Developer menu over free drive; never opens while moving.
+    bool dev_menu_open() const noexcept { return dev_open_ && screen_ == Screen::FreeDrive; }
+    bool open_dev_menu() noexcept;
+    bool close_dev_menu() noexcept;
+    const std::vector<DevSection>& dev_sections() const noexcept { return dev_sections_; }
+    const std::vector<DevToggle>& dev_toggles() const noexcept { return dev_toggles_; }
+    // True when the row/toggle layout changed (not only values).
+    bool set_dev_info(std::vector<DevSection> sections, std::vector<DevToggle> toggles);
+    void push_dev_action(std::size_t toggle) noexcept;
+    bool take_dev_action(std::size_t& toggle) noexcept;
 
     // Driver-distraction state: text entry is limited while moving.
     bool moving() const noexcept { return moving_; }
@@ -297,6 +321,11 @@ private:
     bool has_place_ = false;
     bool rerouting_ = false;
     bool direct_route_ = false;  // the route was picked from free drive
+    bool dev_open_ = false;
+    std::vector<DevSection> dev_sections_;
+    std::vector<DevToggle> dev_toggles_;
+    std::size_t dev_actions_[4] = {};
+    int dev_action_count_ = 0;
 };
 
 } // namespace navicore_osmand::ui

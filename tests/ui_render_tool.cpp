@@ -274,6 +274,39 @@ int main(int argc, char** argv)
         settle(view);
         ok = write(view, out + "/pin.argb") && ok;
     }
+    {
+        // Developer menu with typical rows.
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        settle(view);
+        (void)view.open_dev_menu();
+        std::vector<DevSection> sections = {
+            {"GPS", {{"Fix (raw)", "3 · position"}, {"Satellites", "9 used / 14 in view"},
+                     {"DOP (raw)", "H 14 · P 15 · V 16"}, {"Accuracy (raw)", "42"},
+                     {"Position", "50.450123, 30.523456"}, {"Course (raw)", "hdg 1234 · spd 56"},
+                     {"Quality / sync", "1 / 17"}, {"Last fix", "0.4 s ago"}, {"Rate", "1.0 Hz"}}},
+            {"POSITION AND CAMERA", {{"Motion", "42 km/h · 87°"},
+                                     {"Camera", "heading-up · z16.25 · 50°"},
+                                     {"Off route", "not guiding"}}},
+            {"MAP DATA", {{"Map file", "kyiv.obf · 31 MB"}, {"Cache free", "162 MB"},
+                          {"Tiles", "1234 new · 5678 disk · 96 GPU"}, {"GPU memory", "38.2 MB"},
+                          {"Wanted", "64 · prefetch 12 · z16"},
+                          {"Frames", "58.9 fps · 1% low 31.2 fps"},
+                          {"Heap", "84.1 MB used · 96.0 MB arena"}}},
+            {"BUILD", {{"Backend", "9a2d7ddb1fd1-dirty"}, {"Built", "Oct 15 2026 12:30:00"},
+                       {"Interfaces", "query V1 · contacts"}}}};
+        std::vector<DevToggle> toggles = {
+            {"Night map", true, ""}, {"3D view", false, ""},
+            {"Route simulation", true, "applies at next start"},
+            {"Performance metrics", false, "applies at next start"},
+            {"Input trace", false, "applies at next start"},
+            {"Benchmark autostart", false, "applies at next start"},
+            {"Simulate detour", false, "applies at next start"},
+            {"Clear vector cache", false, "rebuilds tiles from the map"}};
+        (void)view.set_dev_info(sections, toggles);
+        settle(view);
+        ok = write(view, out + "/dev.argb") && ok;
+    }
     std::puts(ok ? "ui-render-tool: ok" : "ui-render-tool: write failed");
     return ok ? 0 : 1;
 }

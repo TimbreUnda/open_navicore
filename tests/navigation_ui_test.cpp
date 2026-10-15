@@ -448,6 +448,56 @@ void test_place_card_and_back()
     assert(model.routes().empty() && !model.destination());
 }
 
+void test_dev_menu()
+{
+    NavigationModel model;
+    NavigationView view(model, 1024, 574);
+    settle(view, 31);
+    const int night_x = 1024 - 16 - 32, night_y = 16 + 32 + 4 * 72;
+    // A short tap on the day/night button still toggles day/night.
+    tap(view, night_x, night_y);
+    std::vector<MapCommand> taken;
+    model.take_map_commands(taken);
+    assert((taken == std::vector<MapCommand>{MapCommand::ToggleNight}));
+    // Holding it 1.5 s opens the developer menu instead (no toggle).
+    view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, night_x, night_y);
+    settle(view, 100);
+    view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, night_x, night_y);
+    settle(view, 2);
+    assert(model.dev_menu_open());
+    model.take_map_commands(taken);
+    assert(taken.empty());
+
+    // Rows update in place; a layout change rebuilds. Toggles push actions.
+    std::vector<DevSection> sections = {{"GPS", {{"Fix (raw)", "3"}, {"Rate", "1.0 Hz"}}},
+                                        {"BUILD", {{"Backend", "abc"}}}};
+    std::vector<DevToggle> toggles = {{"Night map", false, ""},
+                                      {"Route simulation", true, "applies at next start"}};
+    assert(view.set_dev_info(sections, toggles));
+    settle(view, 2);
+    sections[0].rows[1].second = "0.5 Hz";
+    assert(!model.set_dev_info(sections, toggles));  // values only
+    assert(view.set_dev_info(sections, toggles));
+    settle(view, 2);
+    // Toggle rows: right column, from y 16 + 72, 48 px tall, 54 apart.
+    const int toggle_x = 16 + (1024 - 32) - 16 - 125;
+    tap(view, toggle_x, 16 + 72 + 54 + 24);
+    std::size_t action = 99;
+    assert(model.take_dev_action(action) && action == 1u);
+    assert(!model.take_dev_action(action));
+    // Moving closes it; it does not open while moving.
+    assert(view.set_moving(true));
+    settle(view, 2);
+    assert(!model.dev_menu_open());
+    assert(!view.open_dev_menu());
+    assert(view.set_moving(false));
+    assert(view.open_dev_menu());
+    settle(view, 2);
+    // Close (top right of the panel).
+    tap(view, 16 + (1024 - 32) - 16 - 60, 16 + 12 + 24);
+    assert(!model.dev_menu_open());
+}
+
 // Key centres of the design keyboard (keyboard at x 16, y 268; 8 px
 // padding; rows 70 px apart; flex widths after 12 px button padding).
 int key_x(int count, float weights, const float* before, int index)
@@ -561,6 +611,7 @@ int main()
     test_recents_store();
     test_car_controls();
     test_place_card_and_back();
+    test_dev_menu();
     test_keyboard();
     test_reroute();
 

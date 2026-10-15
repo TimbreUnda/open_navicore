@@ -92,6 +92,11 @@ public:
         return map_drag_ && !map_dragging_ && !long_pressed_ && !pinching_ &&
                !gesture_consumed_ && pointer_down_;
     }
+    // Developer menu (free drive, not while moving): the engine refreshes
+    // its rows; values update in place unless the layout changed.
+    bool open_dev_menu();
+    bool close_dev_menu();
+    bool set_dev_info(std::vector<DevSection> sections, std::vector<DevToggle> toggles);
     // A late subtitle (dropped pin address) for the card showing `id`.
     bool set_place_subtitle(const std::string& id, std::string subtitle);
 
@@ -110,6 +115,7 @@ private:
     void build_recent_card(int y);
     void build_place_card();
     void build_arrival_card();
+    void build_dev_menu();
     // Arrival countdown: returns to free drive when it runs out.
     void update_arrival();
     void refresh_guidance();
@@ -151,6 +157,10 @@ private:
     static void place_close_cb(lv_event_t* event);
     static void place_navigate_cb(lv_event_t* event);
     static void preview_back_cb(lv_event_t* event);
+    static void night_short_cb(lv_event_t* event);
+    static void dev_open_cb(lv_event_t* event);
+    static void dev_close_cb(lv_event_t* event);
+    static void dev_toggle_cb(lv_event_t* event);
 
     NavigationModel& model_;
     Screen built_screen_ = Screen::FreeDrive;
@@ -212,6 +222,8 @@ private:
     int32_t second_y_ = 0;
     int32_t last_tap_y_ = 0;
     lv_obj_t* pin_marker_ = nullptr;
+    std::vector<lv_obj_t*> dev_values_;  // one label per row, in order
+    bool dev_built_ = false;
     bool pin_visible_ = false;
     int pin_x_ = 0;
     int pin_y_ = 0;

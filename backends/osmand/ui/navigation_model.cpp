@@ -259,6 +259,60 @@ bool NavigationModel::set_moving(bool moving) noexcept
     if (moving == moving_)
         return false;
     moving_ = moving;
+    if (moving)
+        dev_open_ = false;  // never while driving
+    return true;
+}
+
+bool NavigationModel::open_dev_menu() noexcept
+{
+    if (dev_open_ || moving_ || screen_ != Screen::FreeDrive)
+        return false;
+    dev_open_ = true;
+    cancel_direct_route();
+    has_place_ = false;
+    return true;
+}
+
+bool NavigationModel::close_dev_menu() noexcept
+{
+    if (!dev_open_)
+        return false;
+    dev_open_ = false;
+    return true;
+}
+
+bool NavigationModel::set_dev_info(std::vector<DevSection> sections,
+                                   std::vector<DevToggle> toggles)
+{
+    bool layout = sections.size() != dev_sections_.size() ||
+                  toggles.size() != dev_toggles_.size();
+    for (std::size_t i = 0; !layout && i < sections.size(); ++i)
+        layout = sections[i].title != dev_sections_[i].title ||
+                 sections[i].rows.size() != dev_sections_[i].rows.size();
+    for (std::size_t i = 0; !layout && i < toggles.size(); ++i)
+        layout = toggles[i].label != dev_toggles_[i].label ||
+                 toggles[i].on != dev_toggles_[i].on ||
+                 toggles[i].note != dev_toggles_[i].note;
+    dev_sections_ = std::move(sections);
+    dev_toggles_ = std::move(toggles);
+    return layout;
+}
+
+void NavigationModel::push_dev_action(std::size_t toggle) noexcept
+{
+    if (dev_action_count_ < 4)
+        dev_actions_[dev_action_count_++] = toggle;
+}
+
+bool NavigationModel::take_dev_action(std::size_t& toggle) noexcept
+{
+    if (dev_action_count_ == 0)
+        return false;
+    toggle = dev_actions_[0];
+    for (int i = 1; i < dev_action_count_; ++i)
+        dev_actions_[i - 1] = dev_actions_[i];
+    --dev_action_count_;
     return true;
 }
 

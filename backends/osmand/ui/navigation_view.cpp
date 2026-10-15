@@ -372,6 +372,8 @@ void NavigationView::create_display()
     lv_indev_set_display(indev_, display_);
     lv_indev_set_user_data(indev_, this);
     lv_indev_set_read_cb(indev_, pointer_cb);
+    // Only LVGL long press: the developer menu (day/night button).
+    lv_indev_set_long_press_time(indev_, 1500);
     // Read on demand from process_input(), not on LVGL's 33 ms timer.
     lv_indev_set_mode(indev_, LV_INDEV_MODE_EVENT);
     rebuild();
@@ -459,6 +461,10 @@ void NavigationView::build_free_drive()
     const int top = content_top(height_);
     build_vehicle_marker();  // below the cards
     build_pin_marker();
+    if (model_.dev_menu_open()) {
+        build_dev_menu();
+        return;
+    }
 
     lv_obj_t* search = box(screen_, margin, top + margin, column, tile, surface, 8, true);
     card_shadow(search);
@@ -572,7 +578,13 @@ void NavigationView::build_map_controls(bool full)
         control_tilt_ = design::text(add(MapCommand::ToggleTilt), "2D", &nav_font_20_700,
                                      text1, 0, 20);
         lv_obj_align(control_tilt_, LV_ALIGN_TOP_MID, 0, 20);
-        control_night_ = icon(add(MapCommand::ToggleNight), &nav_icon_sun_26, text1, 19, 19);
+        lv_obj_t* night = add(MapCommand::ToggleNight);
+        // A short tap toggles day/night; holding 1.5 s (standing still)
+        // opens the developer menu instead.
+        lv_obj_remove_event_cb(night, map_command_cb);
+        lv_obj_add_event_cb(night, night_short_cb, LV_EVENT_SHORT_CLICKED, this);
+        lv_obj_add_event_cb(night, dev_open_cb, LV_EVENT_LONG_PRESSED, this);
+        control_night_ = icon(night, &nav_icon_sun_26, text1, 19, 19);
         // Recenter sits apart at the bottom so it is found without looking
         // at the zoom column; it only shows while the camera is free.
         lv_obj_t* recenter = box(screen_, x, area.y + area.height - margin - tile,
@@ -635,6 +647,134 @@ void NavigationView::build_pin_marker()
     icon(badge, &nav_icon_badge_place_26, white, 7, 7);
     lv_obj_set_hidden(pin, true);
     pin_marker_ = pin;
+}
+
+// Developer menu (polish list): sections of key/value rows in two columns
+// and a column of toggles, over the free-drive map. Opened by holding the
+// day/night button; never while moving (the model closes it).
+void NavigationView::build_dev_menu()
+{
+    using namespace design;
+    dev_built_ = true;
+    dev_values_.clear();
+    const int top = content_top(height_);
+    const int width = static_cast<int>(width_) - 2 * margin;
+    const int height = content_height(height_) - 2 * margin;
+    lv_obj_t* panel = box(screen_, margin, top + margin, width, height, surface, 12, true);
+    shadow(panel, 8, 28, 0.5f);
+    design::text(panel, "Developer", &nav_font_24_700, text1, 20, 18);
+    lv_obj_t* close = box(panel, width - 16 - 120, 12, 120, 48, control, 8, true);
+    design::text(close, "Close", &nav_font_20_600, text1,
+                 (120 - text_width("Close", &nav_font_20_600)) / 2, 14);
+    lv_obj_add_event_cb(close, dev_close_cb, LV_EVENT_CLICKED, this);
+
+    // Toggles on the right, 48 px rows 6 px apart (a bench screen: below
+    // the 64 px driving target on purpose, to fit every switch).
+    constexpr int toggle_width = 250;
+    const int toggle_x = width - 16 - toggle_width;
+    int y = 72;
+    const auto& toggles = model_.dev_toggles();
+    for (std::size_t i = 0; i < toggles.size() && y + 48 <= height - 8; ++i) {
+        const auto& toggle = toggles[i];
+        lv_obj_t* row = box(panel, toggle_x, y, toggle_width, 48,
+                            toggle.on ? maneuver : control, 8, true);
+        clipped_text(row, toggle.label.c_str(), &nav_font_20_600, white, 14,
+                     toggle.note.empty() ? 12 : 3, toggle_width - 28);
+        if (!toggle.note.empty())
+            clipped_text(row, toggle.note.c_str(), &nav_font_14_400, text2, 14, 26,
+                         toggle_width - 28);
+        lv_obj_add_event_cb(row, dev_toggle_cb, LV_EVENT_CLICKED, this);
+        lv_obj_set_user_data(row, reinterpret_cast<void*>(i + 1));
+        y += 48 + 6;
+    }
+
+    // Sections flow down two columns left of the toggles, 20 px rows.
+    const int columns_width = toggle_x - 16 - 20;
+    const int column_width = (columns_width - 16) / 2;
+    const int key_width = 124;
+    int column = 0;
+    y = 72;
+    for (const auto& section : model_.dev_sections()) {
+        const int needed = 24 + 20 * static_cast<int>(section.rows.size()) + 10;
+        if (y + needed > height - 8 && column == 0) {
+            column = 1;
+            y = 72;
+        }
+        const int x = 20 + column * (column_width + 16);
+        lv_obj_t* title = design::text(panel, section.title.c_str(), &nav_font_14_800, text3, x, y);
+        lv_obj_set_style_text_letter_space(title, 1, 0);
+        y += 24;
+        for (const auto& row : section.rows) {
+            clipped_text(panel, row.first.c_str(), &nav_font_14_400, text2, x, y, key_width - 8);
+            dev_values_.push_back(clipped_text(panel, row.second.c_str(), &nav_font_14_600,
+                                               text1, x + key_width, y,
+                                               column_width - key_width));
+            y += 20;
+        }
+        y += 10;
+    }
+}
+
+bool NavigationView::open_dev_menu()
+{
+    if (!model_.open_dev_menu())
+        return false;
+    trace("ui=dev_menu");
+    rebuild();
+    return true;
+}
+
+bool NavigationView::close_dev_menu()
+{
+    if (!model_.close_dev_menu())
+        return false;
+    rebuild();
+    return true;
+}
+
+bool NavigationView::set_dev_info(std::vector<DevSection> sections,
+                                  std::vector<DevToggle> toggles)
+{
+    const bool layout = model_.set_dev_info(std::move(sections), std::move(toggles));
+    if (!dev_built_ || !model_.dev_menu_open())
+        return false;
+    if (layout) {
+        rebuild();
+        return true;
+    }
+    std::size_t index = 0;
+    for (const auto& section : model_.dev_sections())
+        for (const auto& row : section.rows) {
+            if (index < dev_values_.size())
+                set_label_text(dev_values_[index], row.second.c_str());
+            ++index;
+        }
+    return true;
+}
+
+void NavigationView::night_short_cb(lv_event_t* event)
+{
+    static_cast<NavigationView*>(lv_event_get_user_data(event))
+        ->model_.push_map_command(MapCommand::ToggleNight);
+}
+
+void NavigationView::dev_open_cb(lv_event_t* event)
+{
+    (void)static_cast<NavigationView*>(lv_event_get_user_data(event))->open_dev_menu();
+}
+
+void NavigationView::dev_close_cb(lv_event_t* event)
+{
+    (void)static_cast<NavigationView*>(lv_event_get_user_data(event))->close_dev_menu();
+}
+
+void NavigationView::dev_toggle_cb(lv_event_t* event)
+{
+    auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));
+    const auto value = reinterpret_cast<std::size_t>(
+        lv_obj_get_user_data(static_cast<lv_obj_t*>(lv_event_get_current_target(event))));
+    if (value)
+        self->model_.push_dev_action(value - 1);
 }
 
 void NavigationView::set_pin_marker(bool visible, int x, int y)
@@ -711,7 +851,7 @@ bool NavigationView::set_moving(bool moving)
 {
     if (!model_.set_moving(moving))
         return false;
-    if (built_screen_ == Screen::Search)
+    if (built_screen_ == Screen::Search || (dev_built_ && !model_.dev_menu_open()))
         rebuild();
     return true;
 }
@@ -1523,6 +1663,8 @@ void NavigationView::clear_object_references() noexcept
     control_night_ = nullptr;
     vehicle_marker_ = nullptr;
     marker_visible_ = false;
+    dev_values_.clear();
+    dev_built_ = false;
     pin_marker_ = nullptr;
     pin_visible_ = false;
     map_drag_ = false;

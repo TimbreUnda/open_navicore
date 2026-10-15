@@ -298,6 +298,14 @@ vehicle moves. The camera keeps the vehicle low in the map in heading-up mode,
 zooms out with speed, extrapolates between 1 Hz GPS fixes and returns to
 following ten seconds after the last touch.
 
+Developer menu: hold the day/night button for 1.5 s in free drive while
+standing still (a short tap still toggles day/night; moving closes it). It
+shows raw GPS fields, the camera, map file and vector cache space, tile and
+GPU memory counts, frame rate and 1% low over the last 240 frames, heap use
+and the backend's git description; and switches for night, 3D, the bench
+markers above plus `enable-input-trace` (each applied at the next start),
+and clearing the vector cache (a few files per frame).
+
 ## Stationary bench qualification checklist
 
 1. Preserve stock/active-file backups and recovery access. Record the complete

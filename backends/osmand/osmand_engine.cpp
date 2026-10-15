@@ -1,4 +1,5 @@
 #include "engine.h"
+#include "build_info.h"
 #include "camera_controller.h"
 #include "crash_reporter.h"
 #include "session.h"
@@ -31,6 +32,15 @@
 #include <cstdio>
 #include <dlfcn.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <array>
+#include <cstdarg>
+#include <dirent.h>
+#include <fcntl.h>
+#include <unistd.h>
+#if defined(__QNXNTO__)
+#include <malloc.h>
+#endif
 
 namespace navicore_osmand {
 namespace {
@@ -107,6 +117,21 @@ private:
     bool apply_drag(const ui::MapDrag& drag);
     void handle_map_tap(int x, int y);
     void handle_map_touch(const ui::MapTouch& touch);
+    // Developer menu: rows refreshed twice a second while it is open,
+    // toggles applied, the vector cache cleared a little each frame.
+    void update_dev_menu();
+    void apply_dev_action(std::size_t toggle);
+    bool step_cache_clear();
+    std::chrono::steady_clock::time_point dev_updated_at_{};
+    std::array<float, 240> frame_intervals_ms_{};
+    std::size_t frame_interval_count_ = 0, frame_interval_next_ = 0;
+    std::chrono::steady_clock::time_point last_presented_at_{};
+    std::array<std::chrono::steady_clock::time_point, 16> gps_times_{};
+    std::size_t gps_time_count_ = 0, gps_time_next_ = 0;
+    struct CacheClearDir { std::string path; };
+    std::vector<CacheClearDir> cache_clear_;
+    std::size_t cache_cleared_files_ = 0;
+    bool cache_clear_done_ = false;
     bool apply_pinch(const ui::MapPinch& pinch);
     bool pinch_valid_ = false;
     double pinch_grab_x_ = 0.0, pinch_grab_y_ = 0.0;
@@ -118,6 +143,7 @@ private:
     bool unproject_lat_lon(int x, int y, OsmAnd::LatLon& out) const;
     std::string with_distance(std::string text, const OsmAnd::LatLon& location) const;
     std::string pin_id_;                  // the pin whose address is pending
+    Config config_;
     std::uint64_t address_revision_ = 0;
     ui::MapTouch map_touch_;
     std::chrono::steady_clock::time_point clock_origin_ =
@@ -236,6 +262,7 @@ bool OsmAndEngine::initialize(const Config& config,
                              const MockNavBackendRenderTargetV1& target,
                              std::shared_ptr<Wakeup> wakeup)
 {
+    config_ = config;
     simulation_enabled_ = config.simulate_route;
     simulate_detour_ = config.simulate_detour;
     if (simulate_detour_)
@@ -749,6 +776,244 @@ bool OsmAndEngine::apply_drag(const ui::MapDrag& drag)
     return drag.active;
 }
 
+namespace {
+const char* const kMarkerDir = "/datastore/navicore-backend/";
+// Bench markers shown as switches; read at backend (or provider) start.
+struct DevMarker { const char* label; const char* file; };
+constexpr DevMarker kDevMarkers[] = {
+    {"Route simulation", "enable-route-simulation"},
+    {"Performance metrics", "enable-performance-metrics"},
+    {"Input trace", "enable-input-trace"},
+    {"Benchmark autostart", "enable-benchmark-autostart"},
+    {"Simulate detour", "simulate-detour"},
+};
+constexpr std::size_t kDevToggleNight = 0, kDevToggleTilt = 1, kDevMarkerFirst = 2;
+constexpr std::size_t kDevClearCache = kDevMarkerFirst + sizeof(kDevMarkers) / sizeof(kDevMarkers[0]);
+
+bool file_exists(const std::string& path)
+{
+    struct stat info {};
+    return ::stat(path.c_str(), &info) == 0;
+}
+
+std::string printf_string(const char* format, ...)
+{
+    char text[160] = {};
+    va_list arguments;
+    va_start(arguments, format);
+    std::vsnprintf(text, sizeof(text), format, arguments);
+    va_end(arguments);
+    return text;
+}
+} // namespace
+
+void OsmAndEngine::update_dev_menu()
+{
+    const bool clearing = step_cache_clear();
+    if (!navigation_->dev_menu_open())
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!clearing && dev_updated_at_ != std::chrono::steady_clock::time_point{} &&
+        now - dev_updated_at_ < std::chrono::milliseconds(500))
+        return;
+    dev_updated_at_ = now;
+    std::vector<ui::DevSection> sections;
+
+    // GPS: several fields are raw values without qualified units
+    // (api-ui-restrictions.md), shown raw and labelled so.
+    ui::DevSection gps{"GPS", {}};
+    const auto& g = latest_gps_;
+    gps.rows.push_back({"Fix (raw)", printf_string("%u%s", g.fix_type,
+                                                   has_valid_position_ ? " · position" : " · none")});
+    gps.rows.push_back({"Satellites", printf_string("%u used / %u in view", g.satellites_used,
+                                                    g.satellites_in_view)});
+    gps.rows.push_back({"DOP (raw)", printf_string("H %u · P %u · V %u", g.hdop_raw, g.pdop_raw,
+                                                   g.vdop_raw)});
+    gps.rows.push_back({"Accuracy (raw)", printf_string("%u", g.accuracy_raw)});
+    gps.rows.push_back({"Position", printf_string("%.6f, %.6f", g.latitude_e7 / 1e7,
+                                                  g.longitude_e7 / 1e7)});
+    gps.rows.push_back({"Course (raw)", printf_string("hdg %u · spd %u", g.heading_raw,
+                                                      g.speed_raw_masked)});
+    gps.rows.push_back({"Quality / sync", printf_string("%u / %u", g.quality_status,
+                                                        g.sync_counter)});
+    if (gps_time_count_ == 0) {
+        gps.rows.push_back({"Last fix", "never"});
+        gps.rows.push_back({"Rate", "-"});
+    } else {
+        const auto last = gps_times_[(gps_time_next_ + gps_times_.size() - 1) % gps_times_.size()];
+        const auto first = gps_times_[gps_time_count_ < gps_times_.size() ? 0 : gps_time_next_];
+        gps.rows.push_back({"Last fix", printf_string("%.1f s ago",
+            std::chrono::duration<double>(now - last).count())});
+        const double span = std::chrono::duration<double>(last - first).count();
+        gps.rows.push_back({"Rate", gps_time_count_ > 1 && span > 0.0
+            ? printf_string("%.1f Hz", (gps_time_count_ - 1) / span) : std::string("-")});
+    }
+    sections.push_back(std::move(gps));
+
+    ui::DevSection position{"POSITION AND CAMERA", {}};
+    const double now_s = std::chrono::duration<double>(now - clock_origin_).count();
+    const auto vehicle = motion_.predict(now_s);
+    position.rows.push_back({"Motion", vehicle.valid
+        ? printf_string("%.0f km/h · %.0f°", vehicle.speed_mps * 3.6, vehicle.heading_degrees)
+        : std::string("no position")});
+    const char* mode = "free";
+    switch (camera_.mode()) {
+    case CameraController::Mode::HeadingUp: mode = "heading-up"; break;
+    case CameraController::Mode::NorthUp: mode = "north-up"; break;
+    case CameraController::Mode::Free: mode = "free"; break;
+    case CameraController::Mode::Overview: mode = "overview"; break;
+    }
+    position.rows.push_back({"Camera", printf_string("%s · z%.2f · %.0f°", mode,
+        applied_pose_.zoom, applied_pose_.elevation_degrees)});
+    const auto& guidance = navigation_->guidance();
+    position.rows.push_back({"Off route", navigation_->screen() == ui::Screen::Guidance
+        ? printf_string("%.0f m%s", guidance.off_route_metres,
+                        guidance.recalculating ? " · recalculating" : "")
+        : std::string("not guiding")});
+    sections.push_back(std::move(position));
+
+    ui::DevSection map{"MAP DATA", {}};
+    {
+        struct stat info {};
+        const auto slash = config_.map.rfind('/');
+        const std::string name = slash == std::string::npos ? config_.map : config_.map.substr(slash + 1);
+        map.rows.push_back({"Map file", ::stat(config_.map.c_str(), &info) == 0
+            ? printf_string("%s · %.0f MB", name.c_str(), info.st_size / 1048576.0)
+            : name + " · missing"});
+        struct statvfs space {};
+        map.rows.push_back({"Cache free", !config_.vector_cache.empty() &&
+                                ::statvfs(config_.vector_cache.c_str(), &space) == 0
+            ? printf_string("%.0f MB", static_cast<double>(space.f_bavail) * space.f_frsize / 1048576.0)
+            : std::string("off")});
+    }
+    if (vector_map_) {
+        const auto stats = vector_map_->stats();
+        map.rows.push_back({"Tiles", printf_string("%llu new · %llu disk · %zu GPU",
+            static_cast<unsigned long long>(stats.tiles_built),
+            static_cast<unsigned long long>(stats.disk_hits), stats.gpu_tiles)});
+        map.rows.push_back({"GPU memory", printf_string("%.1f MB", stats.gpu_bytes / 1048576.0)});
+        map.rows.push_back({"Wanted", printf_string("%zu · prefetch %zu · z%d",
+            stats.wanted_tiles, stats.prefetch_tiles, stats.tile_zoom)});
+    }
+    if (frame_interval_count_ > 0) {
+        std::array<float, 240> sorted{};
+        std::copy_n(frame_intervals_ms_.begin(), frame_interval_count_, sorted.begin());
+        std::sort(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(frame_interval_count_));
+        float total = 0.0f;
+        for (std::size_t i = 0; i < frame_interval_count_; ++i)
+            total += sorted[i];
+        const float p99 = sorted[std::min(frame_interval_count_ - 1,
+                                          frame_interval_count_ * 99 / 100)];
+        map.rows.push_back({"Frames", printf_string("%.1f fps · 1%% low %.1f fps",
+            1000.0f * frame_interval_count_ / std::max(total, 1.0f), 1000.0f / std::max(p99, 1.0f))});
+    }
+#if defined(__QNXNTO__)
+    {
+        const struct mallinfo heap = ::mallinfo();
+        map.rows.push_back({"Heap", printf_string("%.1f MB used · %.1f MB arena",
+            heap.uordblks / 1048576.0, heap.arena / 1048576.0)});
+    }
+#endif
+    sections.push_back(std::move(map));
+
+    ui::DevSection build{"BUILD", {}};
+    build.rows.push_back({"Backend", build_git()});
+    build.rows.push_back({"Built", build_date()});
+    build.rows.push_back({"Interfaces", "query V1 · contacts"});
+    sections.push_back(std::move(build));
+
+    std::vector<ui::DevToggle> toggles;
+    toggles.push_back({"Night map", night_, ""});
+    toggles.push_back({"3D view", camera_.tilted(), ""});
+    for (const auto& marker : kDevMarkers)
+        toggles.push_back({marker.label, file_exists(std::string(kMarkerDir) + marker.file),
+                           "applies at next start"});
+    toggles.push_back({"Clear vector cache", false,
+                       !cache_clear_.empty() ? printf_string("clearing · %zu files", cache_cleared_files_)
+                       : cache_clear_done_ ? printf_string("cleared %zu files", cache_cleared_files_)
+                                           : std::string("rebuilds tiles from the map")});
+    (void)view_->set_dev_info(std::move(sections), std::move(toggles));
+
+    std::size_t action = 0;
+    while (navigation_->take_dev_action(action))
+        apply_dev_action(action);
+}
+
+void OsmAndEngine::apply_dev_action(std::size_t toggle)
+{
+    dev_updated_at_ = {};  // show the result at once
+    if (toggle == kDevToggleNight) {
+        navigation_->push_map_command(ui::MapCommand::ToggleNight);
+    } else if (toggle == kDevToggleTilt) {
+        navigation_->push_map_command(ui::MapCommand::ToggleTilt);
+    } else if (toggle >= kDevMarkerFirst && toggle < kDevClearCache) {
+        const std::string path = std::string(kMarkerDir) + kDevMarkers[toggle - kDevMarkerFirst].file;
+        if (file_exists(path)) {
+            (void)::unlink(path.c_str());
+        } else {
+            const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT, 0644);
+            if (fd >= 0)
+                (void)::close(fd);
+        }
+        trace_result("dev=marker", toggle, file_exists(path) ? 1u : 0u);
+    } else if (toggle == kDevClearCache && cache_clear_.empty() && !config_.vector_cache.empty()) {
+        cache_clear_.push_back({config_.vector_cache});
+        cache_cleared_files_ = 0;
+        cache_clear_done_ = false;
+        trace("dev=clear_vector_cache");
+    }
+}
+
+// Removes the vector cache a few files per frame (it can be thousands of
+// files on flash); the cache writer recreates directories as needed. The
+// cache root itself stays.
+bool OsmAndEngine::step_cache_clear()
+{
+    if (cache_clear_.empty())
+        return false;
+    std::size_t budget = 32;
+    while (budget > 0 && !cache_clear_.empty()) {
+        const std::string path = cache_clear_.back().path;
+        DIR* directory = ::opendir(path.c_str());
+        if (!directory) {
+            cache_clear_.pop_back();
+            continue;
+        }
+        std::vector<std::string> children;
+        std::size_t removed = 0;
+        while (const dirent* entry = ::readdir(directory)) {
+            const std::string name = entry->d_name;
+            if (name == "." || name == "..")
+                continue;
+            const std::string full = path + "/" + name;
+            struct stat info {};
+            if (::lstat(full.c_str(), &info) != 0)
+                continue;
+            if (S_ISDIR(info.st_mode)) {
+                children.push_back(full);
+            } else if (removed < budget && ::unlink(full.c_str()) == 0) {
+                ++removed;
+            }
+        }
+        ::closedir(directory);
+        cache_cleared_files_ += removed;
+        budget -= std::min(budget, removed + 1);
+        if (!children.empty()) {
+            for (auto& child : children)
+                cache_clear_.push_back({std::move(child)});
+        } else if (removed == 0) {
+            if (cache_clear_.size() > 1)
+                (void)::rmdir(path.c_str());
+            cache_clear_.pop_back();
+        }
+    }
+    if (cache_clear_.empty()) {
+        cache_clear_done_ = true;
+        trace_result("dev=vector_cache_cleared", cache_cleared_files_, 0u);
+    }
+    return true;
+}
+
 // Two fingers: their distance zooms (log2 of the ratio), their angle
 // rotates, and the ground point grabbed under their midpoint is kept under
 // it the same way a drag keeps its point (corrected each frame).
@@ -965,6 +1230,17 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     };
     const auto finish = [&](FrameResult result,
                             MeasuredFrameOutcome outcome) -> FrameResult {
+        if (outcome == MeasuredFrameOutcome::Presented) {
+            const auto now = Clock::now();
+            if (last_presented_at_ != Clock::time_point{}) {
+                frame_intervals_ms_[frame_interval_next_] =
+                    std::chrono::duration<float, std::milli>(now - last_presented_at_).count();
+                frame_interval_next_ = (frame_interval_next_ + 1) % frame_intervals_ms_.size();
+                frame_interval_count_ = std::min(frame_interval_count_ + 1,
+                                                 frame_intervals_ms_.size());
+            }
+            last_presented_at_ = now;
+        }
         measurement.outcome = outcome;
         measurement.total_us = elapsed_us(frame_started);
         frame_metrics_.record(measurement);
@@ -1169,6 +1445,7 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         }
     }
     advance_benchmark_autostart();
+    update_dev_menu();
     // Recents change only on guidance start; save outside the hot path.
     if (recents_store_ &&
         navigation_->recents_revision() != saved_recents_revision_) {
@@ -1179,6 +1456,7 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     return finish({FrameOutcome::Presented, PendingStage::None,
                    guidance_changed || camera_animating || vector_wants_frames ||
                        (overlay_enabled_ && view_->wants_frames()) ||
+                       navigation_->dev_menu_open() || !cache_clear_.empty() ||
                        !renderer_->isIdle() ||
                        (autostart_ != Autostart::Off &&
                         autostart_ != Autostart::Done)},
@@ -1344,6 +1622,9 @@ int OsmAndEngine::gps(const MockNavBackendGpsV1& event)
     latest_gps_ = event;
     has_valid_position_ = valid_coordinates(event);
     gps_dirty_ = true;
+    gps_times_[gps_time_next_] = std::chrono::steady_clock::now();
+    gps_time_next_ = (gps_time_next_ + 1) % gps_times_.size();
+    gps_time_count_ = std::min(gps_time_count_ + 1, gps_times_.size());
     if (!gps_state_observed_ || has_valid_position_ != last_logged_gps_valid_) {
         trace(has_valid_position_ ? "gps=position_received"
                                   : "gps=position_unavailable");
