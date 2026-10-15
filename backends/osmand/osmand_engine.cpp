@@ -407,6 +407,14 @@ bool OsmAndEngine::initialize(const Config& config,
             vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
                                         200ull << 20);
         vector_map_->set_night(night_);
+        vector_map_->set_upload_policy(config.vector_upload_pool,
+                                       config.vector_upload_budget);
+        {
+            char line[96];
+            std::snprintf(line, sizeof(line), "vector_upload pool=%d budget=%d",
+                          config.vector_upload_pool ? 1 : 0, config.vector_upload_budget);
+            trace(line);
+        }
         trace("init=vector_map");
     } catch (...) {
         if (vector_map_)
@@ -1520,6 +1528,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         measurement.vec_draw_us = vt.draw_us;
         measurement.vec_labels_us = vt.labels_us;
         measurement.vec_evict_us = vt.evict_us;
+        measurement.vec_upload_max_us = vt.upload_max_us;
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();

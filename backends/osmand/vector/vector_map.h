@@ -89,6 +89,7 @@ struct VectorFrameTiming {
     std::uint32_t draw_us = 0;    // GL draw calls (tiles, route, arrow)
     std::uint32_t labels_us = 0;  // label placement and label GL
     std::uint32_t evict_us = 0;   // LRU eviction (glDeleteBuffers, builder.forget)
+    std::uint32_t upload_max_us = 0;  // slowest single tile upload
 };
 
 class VectorMap {
@@ -125,6 +126,10 @@ public:
     void set_overzoom(bool on);
     // Night palette; tiles are rebuilt (or read from their own cache).
     void set_night(bool night);
+    // Tile uploads (render thread): reuse evicted tiles' GL buffers instead
+    // of deleting and allocating new ones, and at most `budget` tiles per
+    // frame (1..8).
+    void set_upload_policy(bool pool, int budget);
 
     // Draws map, route and labels into the current framebuffer; clear fills
     // it with the land colour first. Returns true while it wants more frames

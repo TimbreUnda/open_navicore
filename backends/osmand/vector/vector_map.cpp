@@ -1494,6 +1494,20 @@ struct VectorMap::Impl {
     GLuint label_vbo = 0, label_ibo = 0;
     PFNGLBINDVERTEXARRAYOESPROC bind_vao = nullptr;
     std::map<TileKey, GpuMesh> gpu;
+    // Buffers of evicted tiles kept for reuse (upload pool), and the policy.
+    std::vector<GpuMesh> pool;
+    bool use_pool = false;
+    int upload_budget = 4;
+    static constexpr std::size_t kPoolMeshes = 24;
+    void retire(GpuMesh& mesh)
+    {
+        if (use_pool && pool.size() < kPoolMeshes && mesh.buffers[0]) {
+            mesh.last_used = 0;
+            pool.push_back(mesh);
+        } else {
+            glDeleteBuffers(4, mesh.buffers);
+        }
+    }
     std::map<TileKey, TileLabels> labels;
     std::size_t gpu_bytes = 0;
     std::uint64_t frame = 0;
@@ -1627,6 +1641,8 @@ void VectorMap::release_gl(bool context_lost)
     if (!context_lost) {
         for (auto& entry : d.gpu)
             glDeleteBuffers(4, entry.second.buffers);
+        for (auto& mesh : d.pool)
+            glDeleteBuffers(4, mesh.buffers);
         for (GpuMesh* mesh : {&d.route_static, &d.route_joint[0], &d.route_joint[1],
                               &d.arrow_lines, &d.arrow_head})
             if (mesh->buffers[0])
@@ -1637,6 +1653,7 @@ void VectorMap::release_gl(bool context_lost)
         if (d.line_prog) glDeleteProgram(d.line_prog);
         if (d.label_prog) glDeleteProgram(d.label_prog);
     }
+    d.pool.clear();
     d.atlas.release(context_lost);
     for (const auto& entry : d.gpu)
         d.builder.forget(entry.first);
@@ -1683,6 +1700,12 @@ void VectorMap::set_maneuver(bool show, std::size_t geometry_index)
     impl_->maneuver_index = geometry_index;
 }
 
+void VectorMap::set_upload_policy(bool pool, int budget)
+{
+    impl_->use_pool = pool;
+    impl_->upload_budget = std::clamp(budget, 1, 8);
+}
+
 void VectorMap::set_overzoom(bool on)
 {
     impl_->overzoom_requested = on;
@@ -1705,7 +1728,7 @@ void VectorMap::Impl::apply_night()
     overzoom = wanted_overzoom;
     // Every tile and label image was made for the old palette.
     for (auto& entry : gpu)
-        glDeleteBuffers(4, entry.second.buffers);
+        retire(entry.second);
     gpu.clear();
     labels.clear();
     fade.clear();
@@ -2407,7 +2430,7 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
                 oldest = it;
         if (oldest->second.last_used == frame)
             break;
-        glDeleteBuffers(4, oldest->second.buffers);
+        retire(oldest->second);
         gpu_bytes -= oldest->second.bytes;
         labels.erase(oldest->first);
         builder.forget(oldest->first);
@@ -2444,7 +2467,8 @@ void VectorMap::Impl::take_tiles(std::uint64_t generation)
         auto& tile = arrivals[used];
         if (tile.generation != generation)
             continue;
-        if (uploaded >= 4 || (uploaded > 0 && bytes >= (1u << 20)))
+        if (uploaded >= static_cast<std::size_t>(upload_budget) ||
+            (uploaded > 0 && bytes >= (1u << 20)))
             break;
         {
             std::lock_guard<std::mutex> lock(stats_mutex);
@@ -2459,7 +2483,21 @@ void VectorMap::Impl::take_tiles(std::uint64_t generation)
             }
             stats.labels_ms_total += tile.labels_ms;
         }
-        GpuMesh mesh = upload(tile.mesh);
+        const auto upload_started = Clock::now();
+        GpuMesh mesh;
+        if (use_pool && !pool.empty()) {
+            mesh = pool.back();
+            pool.pop_back();
+            upload_into(mesh, tile.mesh);
+            mesh.bytes = tile.mesh.area_vertices.size() * sizeof(AreaVertex) +
+                         tile.mesh.line_vertices.size() * sizeof(LineVertex) +
+                         (tile.mesh.area_indices.size() + tile.mesh.line_indices.size()) * 4;
+        } else {
+            mesh = upload(tile.mesh);
+        }
+        timing.upload_max_us = std::max(timing.upload_max_us, static_cast<std::uint32_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                Clock::now() - upload_started).count()));
         ++timing.uploads;
         mesh.last_used = frame;
         gpu_bytes += mesh.bytes;
@@ -2467,7 +2505,7 @@ void VectorMap::Impl::take_tiles(std::uint64_t generation)
         ++uploaded;
         auto existing = gpu.find(tile.key);
         if (existing != gpu.end()) {
-            glDeleteBuffers(4, existing->second.buffers);
+            retire(existing->second);
             gpu_bytes -= existing->second.bytes;
         }
         gpu[tile.key] = mesh;
