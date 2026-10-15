@@ -493,6 +493,50 @@ that this is realistic.
 - Rendering is event-driven when stationary and paced to display cadence while
   the camera is moving. It must not busy-loop from `!renderer->isIdle()`.
 
+### Hitch sources and fixes (2026-10-15)
+
+Bench drives: the autostart route simulation (about 290 s, 30 fps cap),
+`enable-performance-metrics`, analysed with `deploy/bench/perf_report.py`
+from the provider's swap-to-swap histograms (true presents) and the
+backend's per-frame log (`/tmp/open-navicore-frames.log`: stage and
+sub-stage times plus the render thread's CPU time per frame).
+
+The slow frames were waiting, not working: median CPU/wall 0.16.
+`nv_navigation` is pinned to one core (System Manager run mask `0x02`) with
+its workers and other services. Sampling the render thread (`psnap`) showed
+its external waits almost all on Screen, which hosts the GPU services and
+composites the display: GL calls that allocate or fill buffers, and the
+input poll, wait while Screen is busy.
+
+| Source | Fix (default now) | Effect |
+|---|---|---|
+| Render thread preempted at the inherited priority 15 | priority 20 at the first frame (`nav-render-priority` overrides; 25 was no better) | presents >= 40 ms 232 -> 25 per drive |
+| Tile `glBufferData` on the render thread, 19-136 ms waits | upload thread with a shared pbuffer context (`GpuUploadContext`), `glFinish` before hand-over | render-thread upload cost <= 1 ms |
+| Label buffers re-specified every frame | ring of three buffers with kept storage | labels gone from the slow frames |
+| OsmAnd `renderFrame()` with no layers, 20-38 ms waits | skipped while the vector map draws the frame | work >= 25 ms 9 -> 4 |
+| `screen_get_event()` IPC every loop (up to 14 ms) | Screen `SCREEN_NOTIFY_EVENT` pulse, poll only then (+500 ms safety) | polls 31/s -> 2/s; no visible change in presents |
+
+Not effective: reusing evicted tile buffers (`glBufferSubData` waited too)
+and a smaller per-frame upload budget. The dev-tools heap tracker
+(`libvpspy-mem` via `LD_PRELOAD`) showed about 78,000 allocations per second
+in the first minute, mostly OsmAnd core's `operator new` and Qt containers,
+but its own cost stalled the process and it attributes only to the immediate
+caller (core links libstdc++ and Qt statically), so it was not used further.
+
+Result with the defaults (`d09f696`, no bench markers):
+
+| | Before | After |
+|---|---:|---:|
+| fps | 29.91 | 30.00 |
+| 1% low | 19.2 | 25.3 |
+| 0.1% low | 15.9 | 20.2 |
+| presents >= 40 / 50 / 62 ms | 232 / 44 / 8 | 25 / 4 / 0 |
+| frames with >= 25 ms of work | 140 | 3 |
+
+The remaining mild late presents (36-44 ms, about 5 per minute) are not
+frame work, swap or input: the render thread starts late between frames,
+consistent with other activity on the shared core.
+
 ## Delivery sequence
 
 ### Gate 0: measure the current pipeline
