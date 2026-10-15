@@ -10,15 +10,22 @@ Two independent pieces, two paths:
 | Piece | On the unit | Takes effect | How |
 |---|---|---|---|
 | Backend plugin (OsmAnd, UI, map) | `/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so` | when `nv_navigation` restarts | `deploy/backend/deploy_backend.sh` |
-| Provider + config (`navigation.ifs`) | `/datastore/navicore/navigation.ifs`, mounted at boot by the boot overlay | next boot (one reboot) | `cmake --build build/navigation-ifs --target deploy-navigation` |
+| Provider + config (`navigation.ifs`) | `/datastore/navicore/navigation.ifs`, mounted at boot by the boot overlay | next boot (one reboot) | `deploy/navigation-ifs/deploy_navigation_ifs.sh` |
 
 Most changes are backend-only (UI, map, camera, guidance). Rebuild and
 redeploy `navigation.ifs` only when `src/`, `include/` (the provider side of
 the ABI) or the config change.
 
+The provider loads the backend by its fixed file name,
+`libOpenNaviBackendOsmAnd.so` (renamed from `libMockNavBackendOsmAnd.so`,
+2026-10-15): a provider image built after that rename needs the backend under
+the new name already on the unit before its first boot. Install the backend
+first, then the image, then the one reboot.
+
 ## 0. Before touching the unit
 
-- Build first (skill `build-open-navicore`); `make test-host` passes.
+- Build first (skill `build-open-navicore`): `make test` and `make` (and
+  `make ifs` for a provider change) pass.
 - Follow the workspace skill `record-unit-modification`: confirm the unit's
   identity, write the ledger entry first (`pending restart`), update it
   after the check.
@@ -32,7 +39,7 @@ the ABI) or the config change.
 ## 1. Backend
 
 ```sh
-deploy/backend/deploy_backend.sh dist/libOpenNaviBackendOsmAnd.so <suffix> --running
+deploy/backend/deploy_backend.sh build/qnx/libOpenNaviBackendOsmAnd.so <suffix> --running
 ```
 
 `<suffix>` names the one-time backup (`.pre-<suffix>`), e.g. a short commit
@@ -50,8 +57,10 @@ ssh <unit> '/bin/slay -s TERM -f nv_navigation'
 ## 2. Provider image (navigation.ifs)
 
 ```sh
-cmake --build build/navigation-ifs --target deploy-navigation-dry-run   # plan only
-cmake --build build/navigation-ifs --target deploy-navigation
+deploy/navigation-ifs/deploy_navigation_ifs.sh build/qnx/ifs/navigation.ifs \
+    <ifs-build>/bin/ifs-deploy --dry-run     # plan only
+deploy/navigation-ifs/deploy_navigation_ifs.sh build/qnx/ifs/navigation.ifs \
+    <ifs-build>/bin/ifs-deploy
 ```
 
 It uploads with ifs-build's `ifs-deploy` as `navigation.ifs.new` (read-back

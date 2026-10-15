@@ -12,10 +12,9 @@ Describe the problem and the smallest coherent change that solves it.
 ## Verification
 
 - [ ] Focused tests added or updated
-- [ ] `make test-host`
-- [ ] `make check-contracts`
-- [ ] QNX verification recorded when target ABI code changed
-- [ ] Stock replay recorded when replay code or fixtures changed
+- [ ] `make test`
+- [ ] `make` (QNX build and its post-link checks) recorded when target code changed
+- [ ] `open_navicore-re` checks recorded when contracts changed
 - [ ] No proprietary binaries, SDK files, credentials, or personal data added
 - [ ] No live test was performed on a moving or unauthorized device
 

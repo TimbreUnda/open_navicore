@@ -158,27 +158,14 @@ claim that a different core has identical behavior.
 
 ## Build and dependency bundle
 
-The optional Make targets need:
-
-- `OSMAND_QNX_ROOT`: workspace with `source/core`, `gcc-out` and PIC Qt;
-- `OSMAND_CORE_LIB_DIR`: renderer-enabled `libOsmAndCore_shared.so` and resource
-  bundle (default `source/binaries/qnx/gcc-armv7/Release` below the root);
-- `OSMAND_LEGACY_ROOT`: matching `core-legacy` sources used by offline routing
-  (default `source/core-legacy` below the root);
-- `OSMAND_QT_PREFIX`: the PIC Qt build used by that core (default `qt-pic-prefix`);
-- `OSMAND_CXX`: its matching C++17 ARM/QNX compiler (default under `gcc-out/bin`);
-- `QNX_SDK` and `QNX_HOST_LIBS`: licensed SDK and required host libraries;
-- `OSMAND_BUNDLE_ID`: a versioned external-bundle identity; defaults to
-  `local-unqualified` for exploration.
-
-```sh
-make osmand-check osmand-obf-smoke osmand-route-smoke \
-  osmand-plugin-smoke osmand-manifest \
-  QNX_SDK=/path/to/qnx660-sdk \
-  QNX_HOST_LIBS=/path/to/qnx-host-libs \
-  OSMAND_QNX_ROOT=/path/to/osmand-qnx-build \
-  OSMAND_BUNDLE_ID=reviewed-bundle-001
-```
+The backend is part of the product build (`make` at the repository root,
+CMake, `build/qnx/libOpenNaviBackendOsmAnd.so`). It needs the OsmAnd QNX build
+tree, `OSMAND_QNX_ROOT`: `gcc-out` (the GCC 8.5 ARM/QNX cross compiler the
+whole product uses), `source/core` with a renderer-enabled
+`libOsmAndCore_shared.so` and resource bundle in
+`source/binaries/qnx/gcc-armv7/Release`, the matching `source/core-legacy`
+sources used by offline routing, and the Qt build in `qt-prefix`. Plus
+`QNX_SDK` and `QNX_HOST_LIBS` (see `cmake/qnx-armv7.cmake`).
 
 The external Core must export its legacy native routing implementation. Apply
 [`qnx-legacy-routing.patch`](../../patches/osmand-core/qnx-legacy-routing.patch)
@@ -195,38 +182,19 @@ git apply --ignore-space-change \
 `--ignore-space-change` accommodates the CRLF line endings retained by the
 legacy transport source; it does not broaden the patch's file or hunk scope.
 
-Objects and linked artifacts live in `build/osmand/<configuration-key>/`,
-independent of the shared legacy `BUILD_DIR`. The key includes worktree,
-toolchain/SDK roots, flags, dependency paths and bundle ID. Override
-`OSMAND_BUILD_ROOT` to relocate that tree. Header dependency files are generated;
-the core binary and compiler executable are explicit prerequisites.
-Every requested public build target copies its selected artifact to `dist/`,
-so switching back to an earlier configuration cannot leave a newer, unrelated
-artifact selected there.
+After linking, `tests/check_osmand_elf.sh` checks ELF32 ARM EABI5 soft-float,
+the exact export and dependency sets, SONAME, absence of TEXTREL/RUNPATH and
+the sole permitted RPATH (`/datastore/navicore-backend`). The backend's
+host-testable parts (session and C entry, UI, camera, labels, vector style)
+run in `make test` without Qt, EGL, OsmAnd or QNX. The on-target smokes
+`osmand_obf_smoke`, `osmand_route_smoke` and `osmand_plugin_smoke` are built
+in `build/qnx/tests/`.
 
-Change `OSMAND_BUNDLE_ID` when replacing a dependency bundle in place.
-Dependency files and timestamps cannot detect all compiler-internal, archived
-source or timestamp-preserving changes. This is configuration isolation and
-invalidation, not a hermetic build of external dependencies.
-
-`make osmand-check` checks ELF32 ARM EABI5 soft-float, exact export/dependency
-sets, SONAME, absence of TEXTREL/RUNPATH and the sole permitted target RPATH.
-It has a separate checker; the strict reference-plugin checker remains unchanged.
-`make osmand-session-test` runs the fake-engine/C-entry tests without Qt, EGL,
-OsmAnd or QNX. It is also part of `make test-host`.
-
-`make osmand-manifest` writes `bundle-manifest.json` beside the build artifacts.
-It inventories plugin/core/resources, installed Qt archives, compiler, runtime
-archives, selected SDK libraries/tools and the inspected core source files.
-Generated paths are local evidence and are not committed. Preserve alongside it
-the complete source archives/revisions, patches, build scripts, Qt configuration,
-compiler recipe, SDK version and link flags. This repository does not build or
-supply those external dependencies; the generated inventory alone cannot
-reproduce them.
-
-The plugin still uses the existing query build ID expected by the provider.
-That handshake is an ABI/deployment label, not a unique content identity.
-Record the manifest and deployed provider/plugin/core set together.
+This repository does not build or supply the external dependencies (OsmAnd
+core, Qt, compiler, SDK); record their revisions and the deployed
+provider/plugin/core set together. The plugin's query build ID is an
+ABI/deployment label, not a content identity; the developer menu shows the
+backend's git description.
 
 ### Runtime assets
 

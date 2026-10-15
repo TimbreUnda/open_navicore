@@ -12,7 +12,7 @@ a normal build needs none of these tools.
 | `compare.py RENDER DESIGN OUT` | per-state diff images | numpy, Pillow |
 
 `compare.py` checks the implementation against the mockups: build
-`make ui-render-tool`, run it into a directory, and compare with screenshots
+`make test` (it builds `build/host/tests/ui_render_tool`), run it into a directory, and compare with screenshots
 of the design boards (`<state>_full.png`, and `<state>_map.png` with the UI
 hidden) for `free`, `preview` and `guidance`.
 

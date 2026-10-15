@@ -11,12 +11,13 @@
 [![License](https://img.shields.io/badge/license-not_yet_granted-lightgrey?style=flat-square)](#license)
 
 Open NaviCore replaces the proprietary `libNaviCore.so` provider while keeping
-its native integration with the stock navigation process and HMI. It exposes a
-versioned backend seam hosting an optional OsmAnd renderer without replacing
-the surrounding vehicle UI. Navigation behavior remains future work.
+its native integration with the stock navigation process and HMI. Behind a
+versioned backend seam, an OsmAnd-based backend provides the navigation: a GPU
+vector map, offline search, routing and turn-by-turn guidance in the stock
+UI's navigation screen.
 
 [Status](#current-status) · [Architecture](#architecture) · [Build](#building) ·
-[Contributing](CONTRIBUTING.md) · [Technical reference](TECHNICAL.md)
+[Contributing](CONTRIBUTING.md) · [Technical reference](docs/technical.md)
 
 </div>
 
@@ -51,10 +52,10 @@ provider initialization, all requested adapters, recurrent HMI replies, GPS
 updates, GLES rendering, and Apps → Navigation hide/show all passed without a
 radio reboot.
 
-The optional [OsmAnd backend](backends/osmand/README.md) has rendered a fixed
-Kyiv map in the stock UI on that bench. Its architecture refactor is verified
-offline; repeat rendering, restart and context-loss qualification is still
-required before treating the refactored binary set as bench-qualified.
+The [OsmAnd backend](backends/osmand/README.md) runs as the unit's navigation
+on that bench, installed as the default provider by `navigation.ifs`: vector
+map, search, routing and guidance with the Uconnect-style UI, with Open
+NaviCore loaded on every boot.
 
 ABI completeness is not feature parity. Of the 199 application callbacks, 80
 are currently emitted and 119 are typed dormant seams awaiting meaningful
@@ -69,7 +70,7 @@ flowchart LR
     NAV -->|140-call provider ABI| CORE[Open NaviCore<br/>libNaviCore.so]
     CORE -->|199 typed PAS callbacks| PAS[Stock PAS services]
     CORE <-->|Backend API v5| ENGINE[Navigation backend]
-    ENGINE --> OSM[Optional OsmAnd Kyiv renderer]
+    ENGINE --> OSM[OsmAnd backend: map, search, routing, guidance]
     CORE --> EGL[Screen / EGL / GLES2]
     CORE --> DATA[GPS · vehicle · input · audio · cluster]
 ```
@@ -81,10 +82,10 @@ The provider is intentionally split into three layers:
 2. **State and lifecycle layer** — owned copies, asynchronous request/reply
    correlation, rendering lifecycle, and bounded telemetry.
 3. **Backend plugin API** — a versioned C interface that can be implemented by
-   the reference renderer and optional OsmAnd map renderer.
+   the reference renderer and the OsmAnd backend.
 
-See [TECHNICAL.md](TECHNICAL.md) for the complete object model, recovered
-contracts, ownership rules, and runtime behavior.
+See [docs/technical.md](docs/technical.md) for the complete object model,
+recovered contracts, ownership rules, and runtime behavior.
 
 For product and UI work, read the
 [current API/UI restrictions](docs/design/api-ui-restrictions.md) before
@@ -94,62 +95,45 @@ treating a recovered callback or stock-looking control as an available feature.
 
 | Path | Purpose |
 |---|---|
-| [`src/`](src) | Provider, lifecycle, renderer, backend loader, and callback code |
-| [`include/`](include) | Public and internal ABI declarations |
-| [`backends/`](backends) | Reference backend and optional OsmAnd backend |
+| [`src/`](src) | Provider: compatibility layer, lifecycle, renderer, backend loader (private headers in `src/include/`) |
+| [`include/open_navicore/`](include/open_navicore) | Public backend plugin ABI |
+| [`backends/`](backends) | OsmAnd backend (the navigation) and the reference backend |
 | [`contracts/`](contracts) | Checked provider and callback compatibility contracts |
-| [`evidence/`](evidence) | Static, cross-version, and compiler-oracle evidence |
-| [`tests/`](tests) | Host, ARM ABI, lifecycle, stress, and manifest checks |
-| [`tools/`](tools) | Ghidra scripts, ABI oracles, generators, and replay tooling |
-| [`fixtures/`](fixtures) | Deterministic original-code replay fixtures |
-| [`deploy/`](deploy) | Bench deployment and control helpers |
-| [`docs/`](docs) | ABI, design constraints, development, and validation documentation |
+| [`tests/`](tests) | Host, lifecycle, stress, ABI and contract checks |
+| [`deploy/`](deploy) | `navigation.ifs` (ifs-build) and the backend install |
+| [`docs/`](docs) | Technical reference, design constraints, development notes |
+| [`cmake/`](cmake) | QNX toolchain file, build helpers |
 
-Generated ARM callback tables and checked CSV manifests are intentionally
-versioned. Verification compares regenerated output against them.
+The reverse-engineering evidence and tooling behind the contracts (Ghidra
+scripts, static and cross-version inventories, QNX compiler oracles, the
+stock-code replay and the raw-callback capture probe) live in the sibling
+research repository `open_navicore-re`, which checks them against this
+repository.
 
 ## Building
 
 ### Requirements
 
-- Linux host with `make`, C99 and C++17 compilers, Python 3, and POSIX threads
-- QNX SDP 6.6 ARMv7 toolchain for target artifacts
-- Target headers/libraries for Screen, EGL, and GLES2
-- Ghidra only when regenerating static-analysis evidence
-
-No workstation paths are embedded in the project. Set `QNX_SDK` and
-`QNX_HOST_LIBS` when building target artifacts; `BUILD_DIR` and `DIST_DIR`
-remain optional overrides. For example, sibling tool directories can be used
-with `QNX_SDK=../qnx660-sdk QNX_HOST_LIBS=../qnx-host-libs make verify-qnx`.
+- Linux host with `make`, CMake 3.21+, a C99/C++17 compiler and Python 3
+  (host tests)
+- For the radio: the QNX SDP 6.6 SDK (sysroot, binutils, mkifs), the OsmAnd
+  QNX build tree (GCC 8.5 cross compiler, OsmAnd core, Qt) and, for the
+  image, the workspace's `ifs-build`
 
 ```sh
-git clone https://github.com/TimbreUnda/open_navicore.git
-cd open_navicore
-
-make test
+make          # the product for the radio (build/qnx)
+make ifs      # navigation.ifs (build/qnx/ifs/navigation.ifs)
+make test     # host tests and contract checks (build/host; CI)
 ```
 
-`make test` is the portable host suite and requires no QNX SDK or stock
-firmware. Target verification is intentionally explicit:
-
-```sh
-make verify-qnx    # licensed QNX SDP 6.6 and target graphics libraries
-make replay-stock  # locally supplied stock ELF plus Unicorn/Capstone
-make verify        # both target and replay verification
-```
-
-Useful focused checks:
-
-```sh
-make pas-proxy-coverage-selftest
-make qnx-arm-abi-oracle-selftest
-make arm-snapshot-replay-selftest
-make raw-callback-capture-selftest
-```
-
-Target artifacts are written to `dist/`, which is intentionally ignored by
-Git. See [validation tiers](docs/development/validation-tiers.md) for the exact
-claims and inputs of every check.
+`make test` needs no QNX SDK or stock firmware. Toolchain locations come from
+`QNX_SDK`, `QNX_HOST_LIBS`, `OSMAND_QNX_ROOT` and `IFSBUILD_DIR` (make
+variables or environment; the defaults are the workspace that holds this
+repository, see `cmake/qnx-armv7.cmake`). `make ifs` also needs
+`STOCK_NV_NAVIGATION_CFG=<the unit's factory nv_navigation.cfg>` once. No
+workstation paths are embedded in the project. See
+[validation tiers](docs/development/validation-tiers.md) for what each check
+claims.
 
 ## Evidence model
 
@@ -160,9 +144,11 @@ Compatibility claims are kept deliberately narrow:
 - runtime traces establish only paths that were actually observed;
 - semantic labels never promote a typed telemetry seam into a claimed feature.
 
-The manifests and negative-mutation tests are part of the product: they prevent
-a generic stub, wrong vtable slot, unsafe pointer promotion, or accidental ABI
-drift from looking like compatibility.
+The manifests and their checks are part of the product: they prevent a generic
+stub, wrong vtable slot, unsafe pointer promotion, or accidental ABI drift from
+looking like compatibility. The evidence-side checks (regenerating the
+manifests from static inventories, compiler oracles, replay) run in
+`open_navicore-re`.
 
 ## Roadmap
 
@@ -180,9 +166,9 @@ current implementation parity.
 - [x] Recover all application callback ABIs
 - [x] Establish a versioned rendering/data backend seam
 - [x] Validate initialization and HMI lifecycle on a bench unit
-- [ ] Rename internal `open_navi_*` implementation identifiers in ABI-safe stages
+- [x] Rename the former `mock_*` implementation identifiers to `open_navi_*`
 - [x] Add an OsmAnd rendering backend
-- [x] Validate the initial OsmAnd Kyiv-map backend on the bench radio
+- [x] Validate the OsmAnd backend on the bench radio (map, search, routing, guidance)
 - [ ] Map remaining raw vehicle and cluster enum semantics
 - [ ] Expand route guidance, audio prompts, and cluster presentation
 

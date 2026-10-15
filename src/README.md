@@ -10,8 +10,11 @@ backend API and renderer implementation:
 - `backend/` discovers a backend plugin and supplies the built-in fallback.
 - `renderer/` owns platform-neutral render and screen-input coordination.
 - `platform/` contains the host and QNX renderer adapters.
-- `capture/` is the standalone raw-callback evidence probe; generated sources
-  are isolated below `capture/generated/`.
+- `include/` holds the provider's private headers (the public plugin ABI is
+  `include/open_navicore/` at the repository root).
+
+The raw-callback capture probe that used to live here is in the research
+repository `open_navicore-re`.
 
 Dependencies should point inward from `compat/` and `platform/` toward the
 runtime/backend interfaces. Backend plugins use the public headers under

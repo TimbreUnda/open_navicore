@@ -3,13 +3,13 @@
 
   build_navigation_ifs.py PROVIDER STOCK_CFG PAYLOAD_DIR
 
-PROVIDER     the Open NaviCore provider (dist/libNaviCore.so, `make`).
+PROVIDER     the Open NaviCore provider (build/qnx/libNaviCore.so, `make`).
 STOCK_CFG    the unit's factory /pas/scfg/nv_navigation.cfg (not committed;
              take it from the firmware dump or a read-only copy of the unit).
 PAYLOAD_DIR  directory for the image contents (created or refreshed).
 
 The image itself is packaged by ifs-build (CMakeLists.txt in this directory,
-`cmake --build <dir> --target ifs`). The boot overlay mounts it at / and runs
+`make ifs`). The boot overlay mounts it at / and runs
 its /open-navicore/boot.sh (README.md, "Boot"); it adds only paths under
 /open-navicore/:
 

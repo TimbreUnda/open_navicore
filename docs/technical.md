@@ -5,7 +5,7 @@ This is a standalone open ARM/QNX replacement provider for the QR39.5/QR39.6
 `libNaviCore.so`.
 
 The recovered ABI is documented in
-[`analysis/open_navi_abi.md`](../analysis/open_navi_abi.md). The mock
+[`analysis/mock_navicore_abi.md`](../../analysis/mock_navicore_abi.md). The provider
 implements its four unmangled C exports:
 
 - `panaVersionCheck(ServerVersionHeadUnit, client_out, compatibility_out)`
@@ -16,94 +16,81 @@ implements its four unmangled C exports:
 ## Build and verification
 
 ```sh
-make
-make verify
-make test
+make          # build/qnx: provider, OsmAnd backend, reference backends, smokes
+make ifs      # build/qnx/ifs/navigation.ifs (STOCK_NV_NAVIGATION_CFG=... once)
+make test     # build/host: host tests and contract checks (ctest)
 ```
 
-The QNX 6.6 ARMv7 little-endian artifacts are `dist/libNaviCore.so` and the
-standalone `dist/open_navi_smoke` loader test.
-Intermediate files default to `/tmp/open-navi-navicore-build`. The SDK locations
-can be overridden with `QNX_SDK`, `HOST_LIBS`, `BUILD_DIR`, and `DIST_DIR`.
+One toolchain builds everything for the radio: GCC 8.5 from the OsmAnd QNX
+build with the QNX 6.6 SDK's sysroot and binutils (`cmake/qnx-armv7.cmake`).
+The provider `libNaviCore.so` is checked after linking: ELF32/ARM/EABI5
+soft-float, SONAME, exactly the four stock exports with Thumb symbol values
+(`tests/check_elf.sh`), and the argument passing of every recovered entry
+point and callback wrapper (`tests/check_arm_abi.py`, frame-aware so it does
+not depend on one compiler's register allocation). The reference and OsmAnd
+plugins get their own ELF checks.
 
-`make verify` checks ELF32/ARM/little-endian metadata, EABI5 soft-float flags,
-SONAME, the four stock exports plus V1/V2 backend-registration exports, and their
-Thumb-bit symbol values. `make test` runs host-native ABI behavior,
-lifecycle/concurrency, backend event-loop, and file-trace
-tests. The ABI test
-checks the 24-byte server-version call, all client-version output fields,
+`make test` runs the host-native ABI behavior, lifecycle/concurrency, backend
+event-loop and file-trace tests, the plugin loader tests, the OsmAnd
+backend's logic and UI tests, and the contract checks. The ABI test checks
+the 24-byte server-version call, all client-version output fields,
 initialization status, root identity, root vtable slot 3, stable identity for
-all 256 per-enum mock adapters, and all 128 dummy virtual slots on each. The
-trace test verifies append output and preservation of the caller's `errno`.
-The host build substitutes a deterministic renderer stub and verifies that
+all 256 per-enum adapters, and all 128 dummy virtual slots on each. The trace
+test verifies append output and preservation of the caller's `errno`. The
+host build substitutes a deterministic renderer stub and verifies that
 renderer creation occurs exactly once between adapter 6 and adapter 10, and
-that teardown occurs exactly once after the worker is quiescent. The lifecycle
-test covers COLD/STARTING/ACTIVE/STOPPING serialization, COLD and STOPPING
-rejection across provider classes, reentrant and concurrent teardown,
-callback-triggered teardown from producer and readiness-worker paths, producer
-races, epoch-qualified callback telemetry, and a clean second worker/renderer
-lifecycle. The fake-backend suite verifies callback ordering, hide/show,
-screen, GPS, pointer press/release, frame requests, nonzero callback status,
-stale-service rejection across backend replacement, latest-state coalescing,
-observable pointer overflow, timeout-bounded reentrant teardown at every
-callback phase, interleaved final state for all three displays, atomic HMI
-capacity rejection, forced cleanup context loss, concurrent teardown, and
-rejected ABI registrations.
+that teardown occurs exactly once after the worker is quiescent. The
+lifecycle test covers COLD/STARTING/ACTIVE/STOPPING serialization, COLD and
+STOPPING rejection across provider classes, reentrant and concurrent
+teardown, callback-triggered teardown from producer and readiness-worker
+paths, producer races, epoch-qualified callback telemetry, and a clean second
+worker/renderer lifecycle. The fake-backend suite verifies callback ordering,
+hide/show, screen, GPS, pointer press/release, frame requests, nonzero
+callback status, stale-service rejection across backend replacement,
+latest-state coalescing, observable pointer overflow, timeout-bounded
+reentrant teardown at every callback phase, interleaved final state for all
+three displays, atomic HMI capacity rejection, forced cleanup context loss,
+concurrent teardown, and rejected ABI registrations.
 
-Both targets also run the fail-closed provider API coverage gate. The
-machine-readable [`contracts/qr39/provider/api-coverage.csv`](contracts/qr39/provider/api-coverage.csv)
+The contract checks include the fail-closed provider API coverage gate. The
+machine-readable [`contracts/qr39/provider/api-coverage.csv`](../contracts/qr39/provider/api-coverage.csv)
 contains exactly the 36 adapter/slot pairs observed in the v11 provider trace
-plus separately recovered GPS 9/4. Each row records the recovered prototype and
-canonical argument shape, concrete function and vtable, compiler-checked C
-type, behavioral level, test evidence, lifecycle rejection, and backend route.
-The checker compares that catalog to the authoritative provider and pointer
-matrices, expands the real vtables, and rejects missing, duplicate, mismatched,
-generic, or variadic observed entries. `make provider-coverage-selftest`
-additionally proves that duplicate, missing, prototype-corrupt, and
-generic-symbol manifests fail.
+plus separately recovered GPS 9/4. Each row records the recovered prototype
+and canonical argument shape, concrete function and vtable, compiler-checked
+C type, behavioral level, test evidence, lifecycle rejection, and backend
+route. The checker compares that catalog to the authoritative provider and
+pointer matrices, expands the real vtables, and rejects missing, duplicate,
+mismatched, generic, or variadic observed entries.
 
-The broader
-[`contracts/qr39/provider/slot-manifest.csv`](contracts/qr39/provider/slot-manifest.csv) is the
-QR39.6 static-call-graph boundary. It records 140 root/adapter slots reachable
-by the stock executable and eight code-present slots belonging to adapters 21,
-27, and 28 that stock `getAdapter` deliberately rejects. Recovered but not yet
-semantically decoded calls use fixed, compiler-checked AAPCS word signatures;
-they never dereference or retain an opaque word and return zero only while the
-provider is ACTIVE. Known pointer layouts continue to use their narrower typed
-implementations and bounded copies. `tests/check_static_provider_slots.py`
-independently embeds the expected slot/word catalog, expands every concrete
-vtable, checks the generated declarations, and rejects any reachable generic
-or variadic binding. `make static-provider-coverage-selftest` proves seven
-negative corruptions fail. The host smoke test invokes every generated method
-both ACTIVE (success) and after teardown (rejection).
-The manifest's repeated per-adapter `static_evidence` addresses are provenance
-anchors, not a claim that every row originates at the same instruction; their
-interpretation, input-only rule, and ABI limits are recorded in
-[`docs/abi/provider-boundary.md`](docs/abi/provider-boundary.md).
+The broader [`contracts/qr39/provider/slot-manifest.csv`](../contracts/qr39/provider/slot-manifest.csv)
+is the QR39.6 static-call-graph boundary. It records 140 root/adapter slots
+reachable by the stock executable and eight code-present slots belonging to
+adapters 21, 27, and 28 that stock `getAdapter` deliberately rejects.
+Recovered but not yet semantically decoded calls use fixed, compiler-checked
+AAPCS word signatures; they never dereference or retain an opaque word and
+return zero only while the provider is ACTIVE. Known pointer layouts continue
+to use their narrower typed implementations and bounded copies.
+`tests/check_static_provider_slots.py` independently embeds the expected
+slot/word catalog, expands every concrete vtable, checks the generated
+declarations, and rejects any reachable generic or variadic binding. The
+host smoke test invokes every generated method both ACTIVE (success) and
+after teardown (rejection).
 
-The static evidence was checked against the QR39.6 executable with SHA-256
-`8c8b5010d3db9062f2c970a8c932d707615eb7c40e1d4e9ad8f8eb9060b796ae`.
-Its SI function/call graph and addresses match QR39.5; the binary difference is
-outside these provider dispatches.
+The evidence behind these contracts (static and cross-version inventories,
+QNX ARM compiler oracles, the stock-code snapshot replay and the raw-callback
+capture probe) lives in the sibling research repository `open_navicore-re`,
+which checks it against this repository's contracts and sources.
 
-The first executable original-code fragment oracle is documented in
-[`docs/development/arm-snapshot-replay.md`](docs/development/arm-snapshot-replay.md). It replays a guarded stock
-Thumb callback thunk with explicit register, stack, object-graph, external-call,
-fault, and execution-budget state. `make arm-snapshot-replay-selftest` proves
-the baseline plus lane/return counterfactuals, graph relocation, null branch,
-and failure guards. This is deliberately bounded fragment evidence, not a
-claim to emulate the complete QNX process.
-
-The behavioral labels are deliberately bounded: `semantic` means the mock has
-an asynchronous/reply or renderer/backend effect, `owned_copy` means caller
-pointer storage is synchronously copied into mock-owned state, and
+The behavioral labels are deliberately bounded: `semantic` means the provider
+has an asynchronous/reply or renderer/backend effect, `owned_copy` means
+caller pointer storage is synchronously copied into provider-owned state, and
 `typed_telemetry` means the ABI and values are preserved but no stock feature
 semantics are claimed. Coverage therefore establishes safe typed reception and
 lifecycle behavior, not complete parity for optional diagnosis, connectivity,
 phone, SiriusXM, or other telemetry-only services. GPS engineering units and
 some recovered enum dictionaries also remain unknown.
 
-## Mock object model
+## Provider object model
 
 The root is an explicit C representation of an Itanium-layout C++ object.
 Its first word is a vtable pointer and its second word is a writable,
@@ -127,7 +114,7 @@ static object is freed during deinitialization, making repeated teardown safe.
 
 Adapter 9 has a separate `SI_GPSData` vtable. Stock provider target offset
 `0x2d7440` proves slot 4 uses the two-register ABI
-`slot4(self, const void *gpsRecord)`. The mock accepts both non-null and null
+`slot4(self, const void *gpsRecord)`. The provider accepts both non-null and null
 record pointers and returns success synchronously. Static analysis of
 `SI_GPSData::OnLocationUpdateEvent` proves the input is a `0x120`-byte
 little-endian record. Slot 4 copies exactly those bytes to a local array before
@@ -172,7 +159,7 @@ instructions load the provider object into `r0`, execute `vmov r1,s14`, load
 vtable byte offset `0x20`, and `blx` it. Thus this QNX soft-float boundary
 carries the float's exact 32-bit representation in `r1`; the typed C method and
 backend preserve both its float value and diagnostic bit pattern. Disassembly
-of the QNX ARM mock object independently shows `open_navi_vehicle_speed` moving
+of the QNX ARM provider object independently shows `open_navi_vehicle_speed` moving
 incoming `r1` unchanged into the backend call.
 
 `open_navi_scalar_backend` synchronously copies these values under a mutex and is
@@ -269,10 +256,10 @@ transitions queued through provider slot
 in FIFO order. Replies are delayed briefly to keep them observably
 asynchronous. Stock `nv_navigation` decompilation shows its screen-change path
 calling provider vtable byte offset `0x24` (slot 9) with the generated handle,
-display zero, screen type, and two zero fields; the mock replies through host
+display zero, screen type, and two zero fields; the provider replies through host
 slot 10 as `(handle, 0 /* success */, screenType)`. The theme path calls
 provider byte offset `0x28` (slot 10) with its generated handle and theme-name
-pointer; the mock replies through host slot 12 with that same handle. This
+pointer; the provider replies through host slot 12 with that same handle. This
 handle-paired behavior applies to every request, including repeated Apps-to-
 Navigation cycles; there are no fixed startup-only handles. HMI slot 2 is not
 repeated, and no slot-8 callback or navigation-ready retry is generated. The
@@ -293,7 +280,7 @@ also makes immediate same-process reinitialization safe.
 
 ## Typed callback backend seam
 
-The reverse NaviCore-to-PAS calls used by the mock no longer share a variadic
+The reverse NaviCore-to-PAS calls used by the provider no longer share a variadic
 or fixed two-word scalar dispatcher. Every emitted call uses its recovered
 zero-, one-, two-, three-, or pointer-argument ABI. Callback results are
 recorded in a bounded mutex-protected backend and classified as either
@@ -340,7 +327,7 @@ mock has no corresponding backend instead of synthesizing stale settings.
 
 ## Instrument-cluster backend and OsmAnd mapping
 
-[`include/open_navicore/cluster.h`](include/open_navicore/cluster.h) is the
+[`include/open_navicore/cluster.h`](../include/open_navicore/cluster.h) is the
 public producer boundary for a future OsmAnd adapter. It exposes route and
 navigation state, numeric destination and maneuver distances plus recovered
 units, ETA/RTA bytes, bounded road text, lane-active state, bar fill, compass,
@@ -404,181 +391,6 @@ table. Bar fill is accepted only in `0..100`. The time bytes remain unbounded
 because static evidence proves only their byte width, not clock validation
 rules.
 
-## Reverse callback catalog coverage
-
-`open_navi_pas_callbacks` is the typed NaviCore-to-PAS dispatch catalog. Its methods
-take an explicit registered proxy and use a distinct recovered adapter/slot
-signature; catalog presence never causes an emission. Existing startup,
-HMI-reply, audio-transition, cluster, voice-provider-reply, and real thread
-paths invoke the catalog, while optional methods remain callable seams for a
-future backend.
-
-[`contracts/qr39/callbacks/runtime-coverage.csv`](contracts/qr39/callbacks/runtime-coverage.csv) accounts for every one of the
-61 rows in the authoritative v11 callback matrix:
-
-| Coverage state | Rows |
-|---|---:|
-| `implemented_typed` | 61 |
-| `disabled_needs_trace` | 0 |
-| `unknown_not_emitted` | 0 |
-
-All callback matrix rows now have typed callable seams. This does not enable
-optional emissions: catalog methods remain dormant until a real backend event
-or provider request justifies them. Cluster 17/3 now has a semantic producer
-for every proven field while unknown record spans, symbol values, and lane
-encoding remain deliberately uninterpreted.
-
-The 61-row matrix is runtime-observed coverage. A subsequent audit of stock
-provider SHA-256 `fd1e9314...64842` proved seven additional
-dispatches: root 5, HMI 1/4 and 1/5, GPS 9/6, Connectivity 20/6, TTS 24/4,
-and Phone 26/4. They are recorded in
-[`contracts/qr39/callbacks/dispatch-additions.csv`](contracts/qr39/callbacks/dispatch-additions.csv).
-None is emitted. Exact concrete GPS and Phone receivers now prove both former
-pointer layouts and their typed dormant seams.
-[`docs/abi/callback-boundary.md`](docs/abi/callback-boundary.md) documents the
-reproducible Ghidra extraction. The 35 statically recovered dense-thunk ABI
-gaps are recorded in
-[`contracts/qr39/callbacks/static-contracts.csv`](contracts/qr39/callbacks/static-contracts.csv):
-all 35 have typed dormant seams after concrete-consumer recovery of the final
-three pointer-bearing rows. The independent checker reconciles 61 runtime + 7 prior static +
-35 recovered rows + 14 Audio concrete-consumer rows + 63 complete
-cross-version concrete-vtable rows and runs negative
-mutations. The 59-thunk dense block is
-closed: 56 thunks have positive CI ownership and contracts, while three are
-whole-image-unreferenced callback-shaped orphans explicitly excluded by the
-machine-readable guard.
-
-The callback proxy surface itself is independently complete in
-[`evidence/qr39/static/pas-proxy-vtables.csv`](evidence/qr39/static/pas-proxy-vtables.csv) and
-[`contracts/qr39/callbacks/proxy-slot-manifest.csv`](contracts/qr39/callbacks/proxy-slot-manifest.csv).
-QR39.6 contains 25 `IF_Server*Proxy` vtables with 249 true entries: 50 C++
-destructors and 199 abstract application slots. The earlier 252-row extraction
-had crossed three vtable tails into the same unrelated
-`std::ios_base::Init::~Init` pointer; the corrected dumper requires each
-abstract application tail to remain on `__cxa_pure_virtual` and asserts the
-25/249 identity. All 199 application slots have fixed typed seams (80
-currently emitted surface rows and 119 dormant); no pointer or aggregate
-contract remains fail-closed. No ABI-unrecovered slot remains and no
-generic or variadic emitter is generated. The five safe scalar direct-static rows
-that formerly lacked functions now have tested dormant seams. Fourteen
-AudioHandling seams come from exact QR39.6/QR40 concrete receiver alignment;
-[`docs/abi/cross-version.md`](docs/abi/cross-version.md)
-records the binaries, slots, operands, and limits.
-
-A subsequent bounded concrete-vtable pass covers all 63 former ABI gaps. The independent
-[`evidence/qr39/cross-version/concrete-vtable-audit.csv`](evidence/qr39/cross-version/concrete-vtable-audit.csv)
-partitions all 63 as fixed typed-capable contracts. The exact pointer roles,
-extents, lifetime, and AAPCS
-alignment recovered for the former pointer-fail-closed set are documented in
-[`docs/abi/pointer-callbacks.md`](docs/abi/pointer-callbacks.md).
-QR39.6 and QR40 resolve every row to the same concrete target and have
-identical complete target listings. All 63 rows now have fixed dormant
-production seams and host smoke coverage; the pointer rows retain their
-invalid-extent tests. The four by-value layouts have a separate QNX compiler
-oracle and are documented in
-[`docs/abi/aggregate-callbacks.md`](docs/abi/aggregate-callbacks.md).
-None of the 63 dormant seams has a provider-side emitter.
-
-The remaining 1,740 exact syntactic chains are no longer an unaccounted blob.
-[`evidence/qr39/static/callback-outside-inventory.csv`](evidence/qr39/static/callback-outside-inventory.csv)
-classifies every chain using callback-object and call-receiver provenance: nine
-are receiver-proven callbacks already present in the runtime/static catalogs,
-498 are excluded by concrete proxy-slot or receiver evidence, and 1,233 remain
-explicitly unresolved and non-callable. The reproducible Ghidra p-code
-definition/use artifact
-[`evidence/qr39/static/callback-receiver-dataflow.csv`](evidence/qr39/static/callback-receiver-dataflow.csv)
-accounts for all 1,799 raw chains and proves 103 outside-dense exclusions
-where the actual `r0` and vtable-source objects have disjoint origins. The
-SHA/image-base-guarded instruction artifact
-[`evidence/qr39/static/callback-arm-slices.csv`](evidence/qr39/static/callback-arm-slices.csv) analyzes all
-657 unresolved decompiler receiver gaps: 646 prove machine receiver equality,
-ten prove disjoint origins, and one call-clobbered pair remains ambiguous.
-Equality is not ownership, so no contract was
-promoted. The pass also corrected a false hand-audited mismatch at `0x00386e64`
-back to fail-closed unresolved. Unique CI caller adjacency is not enough; in
-total, 114 callback-shaped chains are now proven to call on a different `r0`
-receiver. The unresolved split and next
-proof for every slot group are in
-[`evidence/qr39/static/callback-unresolved-next-actions.csv`](evidence/qr39/static/callback-unresolved-next-actions.csv).
-The independent inventory checker fixes both raw key digests and the dataflow
-relation totals, reconciles the nine callbacks to existing contracts, checks
-all classification invariants and next-action totals, and runs nine negative
-mutations. Of the 1,233 remaining chains, 1,142 have instruction-proven local
-receiver equality but still lack registered-CI ownership, while 91 retain
-conditional/loop ambiguity. Whole-provider callback closure is still
-pending those concrete object-origin proofs; none is silently promoted or
-treated as safe merely because it matches the object+4/vtable/slot syntax.
-
-The historical ABI-gap set also has a reproducible QNX compiler oracle; see
-[`docs/abi/qnx-arm-oracle.md`](docs/abi/qnx-arm-oracle.md). It compiles 30 paired
-caller/callee declaration families (60 functions) with the installed QNX 6.6
-ARM compiler, including 0–10 scalar words, 64-bit alignment, soft float/double,
-POD-by-value, hidden sret, pointers/references, and C++ member/virtual forms.
-The bounded declaration permuter records normalized instruction/dataflow
-fingerprints, exact flags, match and runner-up scores, and permits only unique
-exact two-sided hazard-free matches to become ABI-equivalent candidates. The
-oracle continues to assess the historical 63 rows and reports zero oracle
-promotions because no independently owned provider callsite is present on
-both sides of that matcher. Separate identical QR39.6/QR40 concrete-consumer
-evidence resolves 59 fixed dormant seams. A separate exact aggregate oracle,
-combined with the concrete message-builder copies, resolves the final four.
-This separation prevents
-compiler similarity from being mistaken for source-level type or ownership
-proof. Slot 2 remains the abstract common `adapterReady` application method,
-not a reserved ABI slot; its recovered concrete implementations are handled
-by the same evidence rule.
-
-The equal-receiver subset now has a second, context-sensitive ownership pass.
-[`evidence/qr39/static/callback-field-origins.csv`](evidence/qr39/static/callback-field-origins.csv)
-preserves field offsets and expands direct incoming call arguments and return
-paths for all 1,142 targets: 494 reach interprocedural terminals, one uses the
-independent long-timeout local p-code result, and 647 remain machine-only
-because Ghidra exposes no receiver varnode at the indirect call.
-[`evidence/qr39/static/callback-field-origin-groups.csv`](evidence/qr39/static/callback-field-origin-groups.csv)
-collapses address-only differences into 132 reproducible shapes with exact slot
-counts and next actions. It promotes zero callbacks and positively identifies
-two slot-2 candidates as provider-constructed non-callback objects; no callback
-contract is invented. The
-checker reconciles the exact target set, regenerates the groups, and includes
-negative tests against forged ownership and incomplete evidence.
-
-HMI 1/13 is now the exact typed `signalPressStateAnimation` seam. Its callback
-shape is `(self, press_state, unused_r2, x, y)`: `press_state` arrives in `r1`,
-the ignored-but-required placeholder remains in `r2`, `x` arrives in `r3`, and
-`y` is incoming stack word zero. Stock accepts states 1 (press/down) and 2
-(release/up), converts unsigned integer x/y to floats for the PAS event, and
-returns 2 for other states. The mock catalog deliberately forwards every raw
-state and placeholder unchanged; validation remains consumer-side, and no
-touch event is synthesized by the provider.
-
-Logging 6/4 is the exact typed `signalWriteLogData` seam
-`(self, methods, reserved_ignored, encoding, severity, byte_count, text)`.
-The placeholder stays in `r2`; encoding stays in `r3`; severity, count, and
-text occupy outgoing stack words 0, 1, and 2. The wrapper performs no string
-inspection, encoding validation, or copy because the recovered stock consumer
-handles its call-scoped pointer synchronously.
-
-Voice 25/19 is correctly identified as `replyLocationGet`, not route guidance.
-It forwards the ignored handle, result, seven-entry type-list pointer, and four
-string pointers unchanged and synchronously. No enum labels, tokenization, or
-string bounds are invented in the provider wrapper. The stock callback owns
-validation and returns its status directly.
-
-Formerly unclassified slot 3 is now proven to be root
-`SI_SoftwareInfrastructure` slot 3. `open_navi_pas_root_3` exposes its exact no-arg
-callback ABI, but the public method name remains unknown and the mock does not
-emit it.
-
-Pointer-bearing catalog calls copy before invoking PAS: timezone is exactly
-`0x22c` bytes, software version is exactly four bytes, cluster is exactly
-`0xa5c`, data-exchange arrays are capped at 64 `uint32_t` elements and permit
-only the proven `count=0, pointer=NULL` special case, and diagnostic/thread wide
-strings are copied into bounded terminated arrays. The catalog does not retain
-caller pointers and never holds callback telemetry mutexes across PAS calls.
-`tests/check_callback_coverage.sh` compares matrix and manifest keys, rejects
-duplicates or invalid states, and verifies every callback currently referenced
-by the provider source is represented by an implemented typed row.
-
 ## Native Screen/EGL milestone
 
 The readiness worker creates a minimal native renderer after adapter 6 is
@@ -603,7 +415,7 @@ protocol sequence.
 
 ## Versioned map-backend seam
 
-[`include/open_navicore/backend.h`](include/open_navicore/backend.h) is the stable C
+[`include/open_navicore/backend.h`](../include/open_navicore/backend.h) is the stable C
 boundary used by the optional in-process OsmAnd adapter. `OpenNaviBackendV1`
 and every payload start with `abi_version` and `struct_size`; descriptors are
 copied at registration, and all event payloads are owned copies. The v1
@@ -783,7 +595,7 @@ application context and that its source coordinates match the rendered
 The optional OsmAnd backend introduced by PR #2 rendered a fixed Kyiv map
 through the provider-owned EGL surface in the stock UI. The foundation
 refactor separates its C entry points, session policy and concrete engine;
-see [the backend runtime contract](backends/osmand/README.md) for failure,
+see [the backend runtime contract](../backends/osmand/README.md) for failure,
 context-loss and pending-frame behavior. Offline tests do not requalify that
 refactored binary set on the bench.
 
@@ -841,7 +653,7 @@ callback. Normal cleanup calls every successfully surfaced backend's
 again. Stale copied frame services remain rejected by the renderer generation
 token.
 
-`dist/libOpenNaviBackendReference.so` is a tiny, visibly rendering QNX ARM
+`build/qnx/libOpenNaviBackendReference.so` is a tiny, visibly rendering QNX ARM
 reference plugin, not OsmAnd. In `render_frame` it uses the provider-current
 GLES2 context, resets the framebuffer, scissor, color-mask, and viewport state,
 clears the complete target to cyan, finishes the draw, and reports any GL
@@ -864,7 +676,7 @@ rejection, cleanup ordering, and pinned handles.
 `tests/check_plugin_elf.sh` additionally enforces ARM/EABI metadata,
 the exact export set, no RPATH/RUNPATH/TEXTREL, and an allowlist containing
 only `libc.so.3` and the SDK's actual `libGLESv2.so.1` SONAME.
-`dist/libOpenNaviBackendOutboundTest.so` is the separately named QNX build of
+`build/qnx/libOpenNaviBackendOutboundTest.so` is the separately named QNX build of
 that controlled path. Once per successful service-enabled lifecycle, on render sequence
 one, it publishes cluster valid mask `0x0003` (follow-street `1`, no-route
 `3`), audio availability `1`, and thread `(id=1, status=1,
@@ -872,13 +684,13 @@ name=ref-worker)`. Its trace records the trigger, all values, and each service
 return code. It is a live-test artifact and must not replace the production
 reference plugin after the test.
 At the typed PAS boundary the provider also records one bounded line per
-attempt in `/tmp/open-navi-navicore.log`: cluster adapter/slot, fixed `0xa5c` size,
+attempt in `/tmp/open-navi.log`: cluster adapter/slot, fixed `0xa5c` size,
 route/navigation bytes, little-endian changed/valid masks and PAS status;
 audio adapter 10 slot 10, state and status; and root slot 10, thread ID,
 normalized ASCII name (at most 63 bytes), thread status and PAS status. These
 records are emitted after the synchronous PAS call returns and do not change
 callback results or accepted-history behavior.
-`dist/open_navi_backend_plugin_smoke` is an ARM/QNX loader
+`build/qnx/tests/plugin_smoke` is an ARM/QNX loader
 harness for the production provider bootstrap. On a target, install the
 reviewed reference plugin at the production absolute path, then run
 `open_navi_backend_plugin_smoke ./libNaviCore.so`; it succeeds only if
@@ -909,7 +721,7 @@ lifecycle/context-loss tests for the foundation refactor remain a bench task.
 ## Observable startup trace
 
 Every exported call and adapter request is sent to syslog and also appended to
-`/tmp/open-navi-navicore.log`. The file trace uses only libc/POSIX
+`/tmp/open-navi.log`. The file trace uses only libc/POSIX
 `open(O_APPEND)`, `write`, and `close`; it is best effort, bounded to one short
 line per event, preserves the caller's `errno`, and never changes an ABI return
 value. This provides direct proof of how far the loader progressed even when
@@ -935,7 +747,7 @@ for adapter enum 0, calls deinitialization, and closes the DSO. It prints each
 checkpoint and exits zero only after the complete sequence. This is a
 standalone provider test; it does not start, stop, configure, or replace the
 stock navigation service. The provider also records the calls in
-`/tmp/open-navi-navicore.log`.
+`/tmp/open-navi.log`.
 
 ## Current safety boundary
 
@@ -956,7 +768,7 @@ are root slot 3 `getAdapter(self, enum, void **)`, which writes `NULL` before
 any rejection and a stable object only on success, and exported
 `panaVersionCheck`, which initializes every field of each non-null client and
 compatibility output. Full rules and provenance are in
-[`docs/abi/provider-boundary.md`](docs/abi/provider-boundary.md).
+[`open_navicore-re/docs/abi/provider-boundary.md`](../../open_navicore-re/docs/abi/provider-boundary.md).
 
 The target is 32-bit ARM EABI5 soft-float. Opaque scalar/pointer calls are
 represented by one 32-bit `uintptr_t` per proven core-register/stack word;
@@ -969,16 +781,16 @@ Many fixed-word methods deliberately provide only lifecycle/status acceptance
 and diagnostics. Their domain state machines, enum meanings, callback/reply
 requirements, timing, and payload semantics are not recovered, the three stock
 unavailable adapters remain unavailable. The reference backend's solid-color
-surface is a rendering-contract probe, while the optional OsmAnd backend
-renders a fixed map. Neither claims stock feature parity or production
-navigation readiness.
+surface is a rendering-contract probe; the OsmAnd backend is the navigation
+(map, search, routing, guidance). Neither claims stock feature parity for the
+services listed above.
 
-This project performs no deployment and makes no changes to a radio. Preserve
-the production provider and establish an independent rollback path before any
-controlled device-side experiment.
+Installing on a radio is described in `deploy/` (`navigation-ifs/README.md`,
+`backend/deploy_backend.sh`): keep the stock provider and an independent
+rollback path (the disable marker, SD recovery) before any device change.
 
-For ABI discovery beyond guessed C prototypes, the optional
-[`docs/development/raw-callback-capture.md`](docs/development/raw-callback-capture.md) component generates a
+For ABI discovery beyond guessed C prototypes, the research repository's
+[`open_navicore-re/docs/development/raw-callback-capture.md`](../../open_navicore-re/docs/development/raw-callback-capture.md) component generates a
 prototype-free ARM forwarding trampoline for every one of the 199 application
 slots in the 25 PAS callback interfaces. It records bounded register/stack and
 return snapshots into a nonblocking fixed ring and converts drained records

@@ -9,7 +9,7 @@ no fallback to the native NaviCore.
 |---|---|---|
 | `navigation.ifs`: provider, `nv_navigation.cfg` and `boot.sh` under `/open-navicore` | `/datastore/navicore/navigation.ifs` | `CMakeLists.txt` (ifs-build) + `build_navigation_ifs.py` (payload) |
 | Boot overlay: mounts the image at boot and runs its `boot.sh` | `/datastore/ifs-overrides/boot_overlay.ifs` | not this repository (see "Boot") |
-| Backend plugin, OsmAnd, resources, maps, vector cache | `/datastore/navicore-backend/` | `make backend`, `deploy/backend/deploy_backend.sh` |
+| Backend plugin, OsmAnd, resources, maps, vector cache | `/datastore/navicore-backend/` | `make`, `deploy/backend/deploy_backend.sh` |
 
 The config is the factory `nv_navigation.cfg` with one change,
 `NaviDllName=/open-navicore/libNaviCore.so`. The provider loads the backend
@@ -40,50 +40,52 @@ not run.
 
 ## Build (host)
 
-The image is packaged by [ifs-build](../../../ifs-build), the workspace's
-IFS packaging project (a sibling checkout of this repository, like
-dev-tools). This directory only declares the contents.
+The image is packaged by [ifs-build](../../../ifs-build), the workspace's IFS
+packaging project (a sibling checkout of this repository, like dev-tools); this
+directory only declares the contents (`CMakeLists.txt`, part of the product
+build).
 
 ```sh
-make provider                         # dist/libNaviCore.so
-cmake -S deploy/navigation-ifs -B build/navigation-ifs \
-      -DSTOCK_NV_NAVIGATION_CFG=<factory nv_navigation.cfg>
-      # from a linked worktree also: -DIFSBUILD_DIR=<ifs-build checkout>
-cmake --build build/navigation-ifs --target ifs
-      # build/navigation-ifs/ifs/navigation.{build,ifs}, payload/SHA256SUMS
+make ifs STOCK_NV_NAVIGATION_CFG=<factory nv_navigation.cfg>
+      # build/qnx/ifs/navigation.{build,ifs}; the setting is remembered
 ```
 
 The factory config must have SHA-256 `c889c2b4…d680e` (QR39.5); it is not
 committed. The image is stored `+raw` (uncompressed), so the provider inside
-is byte-identical to `dist/libNaviCore.so`; all entries are mode 0555. The
-QNX SDK is found by ifs-build's toolchain (`-DQNX_SDK=` or `$QNX_SDK` to
-override).
+is byte-identical to `build/qnx/libNaviCore.so`; all entries are mode 0555.
+A changed provider rebuilds the image.
 
 ## Install (unit)
 
 ```sh
-cmake --build build/navigation-ifs --target deploy-navigation-dry-run   # the plan
-cmake --build build/navigation-ifs --target deploy-navigation
+deploy/navigation-ifs/deploy_navigation_ifs.sh build/qnx/ifs/navigation.ifs \
+    <ifs-build>/bin/ifs-deploy --dry-run          # the plan
+deploy/navigation-ifs/deploy_navigation_ifs.sh build/qnx/ifs/navigation.ifs \
+    <ifs-build>/bin/ifs-deploy
 ```
 
-`deploy_navigation_ifs.sh` uploads the image as
-`/datastore/navicore/navigation.ifs.new` with ifs-build's `ifs-deploy`
-(read-back verified), keeps the current image (pulled to
-`./ifs-deploy-backups/` and copied on the unit to `navigation.pre-<stamp>.ifs`),
-then swaps by `rm` + `cp -p`, flushes and verifies, restoring the previous
-image on a mismatch. A mounted IFS is never overwritten in place (unit
-ledger, 2026-10-13: a truncated in-place copy made `mountifs` crash at boot).
-Do not use the `deploy-ifs` target that ifs-build also defines: it uploads to
-`/datastore/ifs-overrides`, where the overlay does not look for navigation.
+It uploads the image as `/datastore/navicore/navigation.ifs.new` with
+ifs-build's `ifs-deploy` (read-back verified), keeps the current image (pulled
+to `./ifs-deploy-backups/` and copied on the unit to
+`navigation.pre-<stamp>.ifs`), then swaps by `rm` + `cp -p`, flushes and
+verifies, restoring the previous image on a mismatch. A mounted IFS is never
+overwritten in place (unit ledger, 2026-10-13: a truncated in-place copy made
+`mountifs` crash at boot). Do not use ifs-build's generic `deploy-ifs` target
+for this image: it uploads to `/datastore/ifs-overrides`, where the overlay does
+not look for navigation.
 
-Then reboot once (the provider is mapped by the running `nv_navigation`;
-the new image is mounted at the next boot) and check
-`/datastore/boot_overlay.log` for `open_navicore_mount_rc=0` and
-`open_navicore_config_link_rc=0`, and that `nv_navigation` maps
-`/open-navicore/libNaviCore.so`. Record the change in the unit ledger.
+The provider and the backend are installed together: the provider loads
+`/datastore/navicore-backend/libOpenNaviBackendOsmAnd.so`, so install that
+(`deploy/backend/deploy_backend.sh`) before rebooting into a new image.
 
-Settings: `RADIO_HOST`, `RADIO_SSH_KEY`, `NAVIGATION_IFS_DIR`, `BACKUP_DIR`
-and `RADIO_SYNC` (the unit's flush helper; it has no `sync`), see the script
+Then reboot once (the provider is mapped by the running `nv_navigation`; the
+new image is mounted at the next boot) and check `/datastore/boot_overlay.log`
+for `open_navicore_mount_rc=0` and `open_navicore_config_link_rc=0`, and that
+`nv_navigation` maps `/open-navicore/libNaviCore.so`. Record the change in the
+unit ledger.
+
+Settings: `RADIO_HOST`, `RADIO_SSH_KEY`, `NAVIGATION_IFS_DIR`, `BACKUP_DIR` and
+`RADIO_SYNC` (the unit's flush helper; it has no `sync`), see the script
 header.
 
 ## Rollback

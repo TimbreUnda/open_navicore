@@ -37,7 +37,7 @@
 #define OPEN_NAVI_TRANSITION_QUEUE_CAPACITY 8u
 #define OPEN_NAVI_HMI_EVENT_QUEUE_CAPACITY 16u
 #ifndef OPEN_NAVI_TRACE_PATH
-#define OPEN_NAVI_TRACE_PATH "/tmp/open-navi-navicore.log"
+#define OPEN_NAVI_TRACE_PATH "/tmp/open-navi.log"
 #endif
 #if defined(__QNXNTO__)
 /*

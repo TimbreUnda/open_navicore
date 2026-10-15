@@ -28,7 +28,7 @@ Initialize submodules before building:
 
 ```sh
 git submodule update --init --recursive
-make navigation-ui-test
+make test   # or: ctest --test-dir build/host -R navigation_ui_test
 ```
 
 `navigation-ui-test` builds the pinned LVGL source with the same project config
