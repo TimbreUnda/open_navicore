@@ -1,3 +1,4 @@
+#include "cluster_payload.h"
 #include "guidance_tracker.h"
 #include "ui/compact_text.h"
 #include "ui/navigation_model.h"
@@ -5,6 +6,7 @@
 #include "ui/overlay_occupancy.h"
 #include "ui/recents_store.h"
 #include <open_navicore/backend.h>
+#include <open_navicore/cluster.h>
 
 #include <algorithm>
 #include <cassert>
@@ -448,6 +450,121 @@ void test_place_card_and_back()
     assert(model.routes().empty() && !model.destination());
 }
 
+// The provider's serializer rules (src/runtime/mock_cluster_backend.c):
+// only supported fields, values inside the recovered ranges.
+void check_cluster_valid(const navicore_osmand::ClusterPayload& payload)
+{
+    const auto& c = payload.cluster;
+    const unsigned valid = c.valid_attributes;
+    assert(c.abi_version == MOCK_NAV_BACKEND_PAYLOAD_ABI_V1 && c.struct_size == sizeof(c));
+    assert((valid & ~unsigned(MOCK_CLUSTER_SEMANTIC_SUPPORTED_MASK)) == 0u);
+    if (valid & MOCK_CLUSTER_ROUTE_GUIDANCE_STATE)
+        assert(c.route_guidance_state >= 1 && c.route_guidance_state <= 7);
+    if (valid & MOCK_CLUSTER_NAVIGATION_STATUS)
+        assert(c.navigation_status >= 1 && c.navigation_status <= 8);
+    if (valid & MOCK_CLUSTER_DISTANCE_DESTINATION)
+        assert(c.distance_destination_unit >= 1 && c.distance_destination_unit <= 5 &&
+               c.distance_destination <= 65535u);
+    if (valid & MOCK_CLUSTER_DISTANCE_MANEUVER)
+        assert(c.distance_maneuver_unit >= 1 && c.distance_maneuver_unit <= 5 &&
+               c.distance_maneuver_tenths <= 65535u);
+    if (valid & MOCK_CLUSTER_BAR_PERCENT)
+        assert(c.bar_percent <= 100);
+    if (valid & MOCK_CLUSTER_COMPASS)
+        assert(c.compass >= 1 && c.compass <= 8);
+    if (valid & MOCK_CLUSTER_SPEED_LIMIT)
+        assert(c.speed_unit >= 1 && c.speed_unit <= 2);
+    assert(c.current_road.byte_count == payload.current_road.size());
+    assert(c.next_road.byte_count == payload.next_road.size());
+    assert(c.reserved0[0] == 0 && c.reserved0[1] == 0);
+}
+
+void test_cluster_payload()
+{
+    using navicore_osmand::ClusterInputs;
+    using navicore_osmand::build_cluster_payload;
+    ClusterInputs in;
+    in.now = 12 * 3600;  // fixed clock
+    // Not guiding: "no route"; while a route is calculated: "calculation".
+    auto p = build_cluster_payload(in);
+    check_cluster_valid(p);
+    assert(p.cluster.valid_attributes == MOCK_CLUSTER_NAVIGATION_STATUS);
+    assert(p.cluster.navigation_status == MOCK_CLUSTER_NAV_NO_ROUTE);
+    in.calculating_route = true;
+    assert(build_cluster_payload(in).cluster.navigation_status ==
+           MOCK_CLUSTER_NAV_ROUTE_CALCULATION);
+    // Guidance without a fix.
+    in.screen = Screen::Guidance;
+    p = build_cluster_payload(in);
+    check_cluster_valid(p);
+    assert(p.cluster.navigation_status == MOCK_CLUSTER_NAV_DIRECTION_NOT_AVAILABLE);
+    // 250 m before a left turn, 2.4 km and 7 min to go, heading east.
+    in.guidance.position_available = true;
+    in.guidance.distance_to_maneuver_metres = 250.0;
+    in.guidance.maneuver.kind = ManeuverKind::Left;
+    in.guidance.maneuver.road = "вулиця Антоновича";
+    in.guidance.road = "бульвар Тараса Шевченка";
+    in.guidance.remaining_metres = 2400.0;
+    in.guidance.remaining_seconds = 420.0;
+    in.guidance.speed_limit_kmh = 50;
+    in.heading_valid = true;
+    in.heading_degrees = 90.0;
+    p = build_cluster_payload(in);
+    check_cluster_valid(p);
+    const auto& c = p.cluster;
+    assert(c.route_guidance_state == MOCK_CLUSTER_ROUTE_MANOEUVRE_ANNOUNCEMENT);
+    assert(!(c.valid_attributes & MOCK_CLUSTER_NAVIGATION_STATUS));
+    assert(c.distance_destination == 2 &&
+           c.distance_destination_unit == MOCK_CLUSTER_DISTANCE_KILOMETRES);
+    assert(c.distance_maneuver_tenths == 2500 &&
+           c.distance_maneuver_unit == MOCK_CLUSTER_DISTANCE_METRES);
+    assert(c.rta_hour == 0 && c.rta_minute == 7);
+    assert(c.valid_attributes & MOCK_CLUSTER_ETA);
+    assert(c.bar_percent == 63);
+    assert(c.compass == MOCK_CLUSTER_COMPASS_E);
+    assert(c.speed_limit == 50 && c.speed_unit == MOCK_CLUSTER_SPEED_KMH);
+    assert(p.current_road == "бульвар Тараса Шевченка" && p.next_road == "вулиця Антоновича");
+    assert(std::string(c.current_road.bytes, c.current_road.byte_count) == p.current_road);
+    // A copy compares equal and rebinds its spans to its own strings.
+    auto copy = p;
+    copy.bind();
+    assert(copy.same_as(p) && copy.cluster.current_road.bytes == copy.current_road.data());
+    // At the turn; far from it (no countdown); km distances in tenths.
+    in.guidance.distance_to_maneuver_metres = 30.0;
+    assert(build_cluster_payload(in).cluster.route_guidance_state ==
+           MOCK_CLUSTER_ROUTE_MANOEUVRE);
+    in.guidance.distance_to_maneuver_metres = 1250.0;
+    p = build_cluster_payload(in);
+    check_cluster_valid(p);
+    assert(p.cluster.route_guidance_state == MOCK_CLUSTER_ROUTE_FOLLOW_STREET);
+    assert(!(p.cluster.valid_attributes & MOCK_CLUSTER_BAR_PERCENT));
+    assert(p.cluster.distance_maneuver_tenths == 13 &&
+           p.cluster.distance_maneuver_unit == MOCK_CLUSTER_DISTANCE_KILOMETRES);
+    assert(!p.same_as(copy));
+    // Compass sectors around north.
+    const std::vector<std::pair<double, int>> sectors = {
+        {0.0, MOCK_CLUSTER_COMPASS_N}, {359.0, MOCK_CLUSTER_COMPASS_N},
+        {337.4, MOCK_CLUSTER_COMPASS_NW}, {22.6, MOCK_CLUSTER_COMPASS_NE},
+        {-90.0, MOCK_CLUSTER_COMPASS_W}, {180.0, MOCK_CLUSTER_COMPASS_S}};
+    for (const auto& sector : sectors) {
+        in.heading_degrees = sector.first;
+        assert(build_cluster_payload(in).cluster.compass == sector.second);
+    }
+    // Recalculating; arrived (no distances).
+    in.guidance.recalculating = true;
+    p = build_cluster_payload(in);
+    assert(p.cluster.route_guidance_state == MOCK_CLUSTER_ROUTE_RECALCULATION &&
+           p.cluster.navigation_status == MOCK_CLUSTER_NAV_ROUTE_CALCULATION);
+    in.guidance.recalculating = false;
+    in.guidance.arrived = true;
+    p = build_cluster_payload(in);
+    check_cluster_valid(p);
+    assert(p.cluster.route_guidance_state == MOCK_CLUSTER_ROUTE_DESTINATION_REACHED);
+    assert(!(p.cluster.valid_attributes &
+             (MOCK_CLUSTER_DISTANCE_DESTINATION | MOCK_CLUSTER_DISTANCE_MANEUVER |
+              MOCK_CLUSTER_BAR_PERCENT)));
+}
+
 void test_dev_menu()
 {
     NavigationModel model;
@@ -612,6 +729,7 @@ int main()
     test_car_controls();
     test_place_card_and_back();
     test_dev_menu();
+    test_cluster_payload();
     test_keyboard();
     test_reroute();
 

@@ -1,6 +1,7 @@
 #include "engine.h"
 #include "build_info.h"
 #include "camera_controller.h"
+#include "cluster_payload.h"
 #include "crash_reporter.h"
 #include "session.h"
 #include "diagnostics.h"
@@ -12,6 +13,8 @@
 #include "ui/navigation_view.h"
 #include "ui/recents_store.h"
 #include "vector/vector_map.h"
+
+#include <open_navicore/cluster.h>
 
 #include <OsmAndCore.h>
 #include <OsmAndCore/CoreResourcesEmbeddedBundle.h>
@@ -35,6 +38,8 @@
 #include <sys/statvfs.h>
 #include <array>
 #include <cstdarg>
+#include <cstring>
+#include <ctime>
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -54,6 +59,13 @@ public:
                     std::shared_ptr<Wakeup>) override;
     FrameResult frame(const MockNavBackendRenderTargetV1&) override;
     int gps(const MockNavBackendGpsV1&) override;
+    void visibility(const MockNavBackendVisibilityV1& event) override;
+    void screen(const MockNavBackendScreenV1& event) override;
+    void vehicle(const MockNavBackendVehicleV2& event) override;
+    void internationalization(const MockNavBackendInternationalizationV1& event) override;
+    void cluster_display(const MockNavBackendClusterDisplayV1& event) override;
+    void driver_distraction(const MockNavBackendDriverDistractionV1& event) override;
+    void set_outbound(const MockNavBackendServicesV2* services) override { outbound_ = services; }
     int pointer(const MockNavBackendPointerV2&) override;
     ReleaseResult release(ReleaseMode) override;
 
@@ -117,6 +129,24 @@ private:
     bool apply_drag(const ui::MapDrag& drag);
     void handle_map_tap(int x, int y);
     void handle_map_touch(const ui::MapTouch& touch);
+    // Platform inputs, raw (meanings not qualified): kept for the
+    // developer menu and traced when they change; nothing acts on them.
+    template <typename T> struct Raw { T value{}; bool has = false; };
+    Raw<MockNavBackendVisibilityV1> visibility_in_;
+    Raw<MockNavBackendScreenV1> screen_in_;
+    Raw<MockNavBackendVehicleV2> vehicle_in_;
+    Raw<MockNavBackendInternationalizationV1> language_in_;
+    Raw<MockNavBackendClusterDisplayV1> cluster_display_in_;
+    Raw<MockNavBackendDriverDistractionV1> distraction_in_;
+    // Instrument cluster: the guidance state in the recovered cluster
+    // fields, published on change (at most twice a second).
+    const MockNavBackendServicesV2* outbound_ = nullptr;
+    void publish_cluster();
+    ClusterPayload cluster_last_;
+    bool cluster_published_ = false;
+    std::uint32_t cluster_last_status_ = 0;
+    std::uint64_t cluster_publishes_ = 0;
+    std::chrono::steady_clock::time_point cluster_published_at_{};
     // Developer menu: rows refreshed twice a second while it is open,
     // toggles applied, the vector cache cleared a little each frame.
     void update_dev_menu();
@@ -807,6 +837,82 @@ std::string printf_string(const char* format, ...)
 }
 } // namespace
 
+void OsmAndEngine::visibility(const MockNavBackendVisibilityV1& event)
+{
+    visibility_in_ = {event, true};
+    trace_result("input=visibility", event.visibility, event.interactivity);
+}
+
+void OsmAndEngine::screen(const MockNavBackendScreenV1& event)
+{
+    screen_in_ = {event, true};
+    trace_result("input=screen_type", event.screen_type, event.animation);
+}
+
+void OsmAndEngine::vehicle(const MockNavBackendVehicleV2& event)
+{
+    const auto before = vehicle_in_;
+    vehicle_in_ = {event, true};
+    if (!before.has || before.value.day_night_status != event.day_night_status)
+        trace_result("input=day_night_status", event.day_night_status, event.valid_fields);
+    if (!before.has || before.value.day_night_setting != event.day_night_setting)
+        trace_result("input=day_night_setting", event.day_night_setting, event.valid_fields);
+}
+
+void OsmAndEngine::internationalization(const MockNavBackendInternationalizationV1& event)
+{
+    language_in_ = {event, true};
+    trace_result("input=language", event.language_raw, event.settings_present);
+}
+
+void OsmAndEngine::cluster_display(const MockNavBackendClusterDisplayV1& event)
+{
+    cluster_display_in_ = {event, true};
+    trace_result("input=cluster_display", event.enabled_raw, 0u);
+}
+
+void OsmAndEngine::driver_distraction(const MockNavBackendDriverDistractionV1& event)
+{
+    const bool changed = !distraction_in_.has ||
+        distraction_in_.value.distraction_status_raw != event.distraction_status_raw;
+    distraction_in_ = {event, true};
+    if (changed)
+        trace_result("input=driver_distraction", event.distraction_status_raw, 0u);
+}
+
+// Instrument cluster: published on change, at most twice a second
+// (payload rules in cluster_payload.cpp).
+void OsmAndEngine::publish_cluster()
+{
+    if (!outbound_ || !outbound_->publish_cluster)
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    if (cluster_published_ && now - cluster_published_at_ < std::chrono::milliseconds(500))
+        return;
+    ClusterInputs inputs;
+    inputs.screen = navigation_->screen();
+    inputs.calculating_route = navigation_->calculating_route();
+    inputs.guidance = navigation_->guidance();
+    const auto vehicle = motion_.predict(
+        std::chrono::duration<double>(now - clock_origin_).count());
+    inputs.heading_valid = vehicle.valid && vehicle.speed_mps > 1.0;
+    inputs.heading_degrees = vehicle.heading_degrees;
+    inputs.now = std::time(nullptr);
+    ClusterPayload payload = build_cluster_payload(inputs);
+    if (cluster_published_ && payload.same_as(cluster_last_))
+        return;
+    const uint32_t status =
+        outbound_->publish_cluster(outbound_->v1.runtime_context, &payload.cluster);
+    cluster_last_ = std::move(payload);
+    cluster_last_.bind();
+    cluster_published_ = true;
+    cluster_published_at_ = now;
+    ++cluster_publishes_;
+    if (status != cluster_last_status_ || cluster_publishes_ == 1)
+        trace_result("cluster=publish_status", status, cluster_last_.cluster.valid_attributes);
+    cluster_last_status_ = status;
+}
+
 void OsmAndEngine::update_dev_menu()
 {
     const bool clearing = step_cache_clear();
@@ -916,10 +1022,37 @@ void OsmAndEngine::update_dev_menu()
 #endif
     sections.push_back(std::move(map));
 
+    ui::DevSection platform{"CAR AND HMI (RAW)", {}};
+    const auto raw = [&](bool has, std::string text) { return has ? text : std::string("-"); };
+    const auto& v = vehicle_in_.value;
+    float displayed_speed = 0.0f;
+    static_assert(sizeof(displayed_speed) == sizeof(v.displayed_vehicle_speed_bits), "float bits");
+    std::memcpy(&displayed_speed, &v.displayed_vehicle_speed_bits, sizeof(displayed_speed));
+    platform.rows.push_back({"Day/night", raw(vehicle_in_.has, printf_string(
+        "status %u · setting %u · fields 0x%x", v.day_night_status, v.day_night_setting,
+        v.valid_fields))});
+    platform.rows.push_back({"Car speed", raw(vehicle_in_.has &&
+        (v.valid_fields & MOCK_NAV_BACKEND_VEHICLE_SPEED) != 0,
+        printf_string("%.1f (GPS %.1f km/h)", displayed_speed, vehicle.valid ? vehicle.speed_mps * 3.6 : 0.0))});
+    platform.rows.push_back({"Visibility", raw(visibility_in_.has, printf_string(
+        "%u · interactive %u · screen %u", visibility_in_.value.visibility,
+        visibility_in_.value.interactivity, screen_in_.value.screen_type))});
+    platform.rows.push_back({"Language", raw(language_in_.has, printf_string(
+        "%u · date %u · time %u", language_in_.value.language_raw,
+        language_in_.value.date_format_raw, language_in_.value.time_format_raw))});
+    platform.rows.push_back({"Distraction", raw(distraction_in_.has, printf_string(
+        "%u", distraction_in_.value.distraction_status_raw))});
+    platform.rows.push_back({"Cluster", outbound_ ? printf_string(
+        "%llu sent · status %u · display %s", static_cast<unsigned long long>(cluster_publishes_),
+        cluster_last_status_, cluster_display_in_.has
+            ? printf_string("%u", cluster_display_in_.value.enabled_raw).c_str() : "-")
+        : std::string("no outbound services")});
+    sections.push_back(std::move(platform));
+
     ui::DevSection build{"BUILD", {}};
     build.rows.push_back({"Backend", build_git()});
     build.rows.push_back({"Built", build_date()});
-    build.rows.push_back({"Interfaces", "query V1 · contacts"});
+    build.rows.push_back({"Interfaces", outbound_ ? "backend V5 · contacts" : "backend V2 · contacts"});
     sections.push_back(std::move(build));
 
     std::vector<ui::DevToggle> toggles;
@@ -1445,6 +1578,7 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
         }
     }
     advance_benchmark_autostart();
+    publish_cluster();
     update_dev_menu();
     // Recents change only on guidance start; save outside the hot path.
     if (recents_store_ &&

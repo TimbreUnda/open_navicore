@@ -25,6 +25,11 @@ struct Probe {
     Config config;
     MockNavBackendGpsV1 gps{};
     unsigned gps_events = 0;
+    const MockNavBackendServicesV2* outbound = nullptr;
+    unsigned outbound_calls = 0;
+    MockNavBackendVehicleV2 vehicle{};
+    unsigned vehicle_events = 0, visibility_events = 0, distraction_events = 0,
+             language_events = 0, cluster_display_events = 0;
 };
 std::shared_ptr<Probe> probe;
 std::vector<std::string> diagnostics;
@@ -60,6 +65,29 @@ public:
         return 0;
     }
     int pointer(const MockNavBackendPointerV2&) override { return 0; }
+    void visibility(const MockNavBackendVisibilityV1&) override { ++p_->visibility_events; }
+    void vehicle(const MockNavBackendVehicleV2& event) override
+    {
+        p_->vehicle = event;
+        ++p_->vehicle_events;
+    }
+    void internationalization(const MockNavBackendInternationalizationV1&) override
+    {
+        ++p_->language_events;
+    }
+    void cluster_display(const MockNavBackendClusterDisplayV1&) override
+    {
+        ++p_->cluster_display_events;
+    }
+    void driver_distraction(const MockNavBackendDriverDistractionV1&) override
+    {
+        ++p_->distraction_events;
+    }
+    void set_outbound(const MockNavBackendServicesV2* services) override
+    {
+        p_->outbound = services;
+        ++p_->outbound_calls;
+    }
     ReleaseResult release(ReleaseMode mode) override
     {
         ++p_->released;
@@ -352,11 +380,103 @@ extern "C" EGLContext eglGetCurrentContext(void)
     return reinterpret_cast<EGLContext>(current);
 }
 
+uint32_t publish_cluster(void*, const MockNavBackendClusterV1*) { return 0; }
+
+// Query V4 selects backend V5: started with the outbound services, and
+// the platform inputs recorded before attach are replayed after it.
+void backend_v5()
+{
+    probe = std::make_shared<Probe>();
+    current = 7;  // c_boundary ends with no current context
+    MockNavBackendPluginV4 plugin{};
+    assert(mock_nav_backend_query_v1(MOCK_NAV_PLUGIN_QUERY_ABI_V4, sizeof(plugin) - 1,
+                                     reinterpret_cast<MockNavBackendPluginV1*>(&plugin)) != 0);
+    assert(mock_nav_backend_query_v1(MOCK_NAV_PLUGIN_QUERY_ABI_V4, sizeof(plugin),
+                                     reinterpret_cast<MockNavBackendPluginV1*>(&plugin)) == 0);
+    const auto& v1 = plugin.v3.v2.v1;
+    static const uint8_t build_id[] = MOCK_NAV_PLUGIN_V4_EXPECTED_BUILD_ID_INITIALIZER;
+    assert(v1.query_abi_version == MOCK_NAV_PLUGIN_QUERY_ABI_V4);
+    assert(v1.struct_size == sizeof(plugin));
+    assert(v1.backend_abi_version == MOCK_NAV_BACKEND_ABI_V5);
+    assert(std::equal(std::begin(build_id), std::end(build_id), v1.build_id));
+    assert((v1.capabilities & ~uint32_t(MOCK_NAV_PLUGIN_OPTIONAL_CAPABILITIES)) ==
+           MOCK_NAV_PLUGIN_REQUIRED_CAPABILITIES);
+    assert(v1.capabilities & MOCK_NAV_PLUGIN_CAP_POINTER_CONTACTS);
+    assert(plugin.v3.v2.capabilities_v2 == MOCK_NAV_PLUGIN_V2_REQUIRED_CAPABILITIES);
+    assert(plugin.v3.capabilities_v3 == MOCK_NAV_PLUGIN_V3_REQUIRED_CAPABILITIES);
+    assert(plugin.capabilities_v4 == MOCK_NAV_PLUGIN_V4_REQUIRED_CAPABILITIES);
+    assert(plugin.backend_v5_size == sizeof(MockNavBackendV5));
+    assert(plugin.driver_distraction_v1_size == sizeof(MockNavBackendDriverDistractionV1));
+    const auto& backend = plugin.backend_v5;
+    const auto& api = backend.v4.v3.v2.v1;
+    assert(api.abi_version == MOCK_NAV_BACKEND_ABI_V5 && api.struct_size == sizeof(backend));
+    assert(backend.v4.v3.start_v2 && backend.v4.internationalization_changed &&
+           backend.v4.cluster_display_changed && backend.driver_distraction_changed &&
+           backend.v4.v3.v2.vehicle_changed);
+    void* context = api.backend_context;
+
+    unsigned requests = 0;
+    MockNavBackendServicesV2 services{};
+    services.v1 = {MOCK_NAV_BACKEND_ABI_V2, sizeof(services), &requests, request};
+    services.publish_cluster = publish_cluster;
+    MockNavBackendServicesV2 wrong = services;
+    wrong.v1.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    assert(backend.v4.v3.start_v2(context, &wrong) != 0);
+    assert(backend.v4.v3.start_v2(context, &services) == 0);
+
+    // Before attach: recorded (latest kept), not yet forwarded.
+    MockNavBackendVehicleV2 vehicle{};
+    vehicle.abi_version = MOCK_NAV_BACKEND_ABI_V2;
+    vehicle.struct_size = sizeof(vehicle);
+    vehicle.day_night_status = 1;
+    assert(backend.v4.v3.v2.vehicle_changed(context, &vehicle) == 0);
+    vehicle.day_night_status = 2;
+    assert(backend.v4.v3.v2.vehicle_changed(context, &vehicle) == 0);
+    MockNavBackendDriverDistractionV1 distraction{};
+    distraction.abi_version = MOCK_NAV_BACKEND_PAYLOAD_ABI_V1;
+    distraction.struct_size = sizeof(distraction);
+    assert(backend.driver_distraction_changed(context, &distraction) == 0);
+    distraction.struct_size = 8;
+    assert(backend.driver_distraction_changed(context, &distraction) != 0);
+    distraction.struct_size = sizeof(distraction);
+    assert(probe->vehicle_events == 0);
+
+    auto surface = target();
+    assert(api.surface_created(context, &surface) == 0);
+    assert(probe->outbound && probe->outbound->publish_cluster == publish_cluster);
+    assert(probe->vehicle_events == 1 && probe->vehicle.day_night_status == 2);
+    assert(probe->distraction_events == 1 && probe->visibility_events == 0);
+    // Attached: forwarded at once.
+    MockNavBackendInternationalizationV1 language{};
+    language.abi_version = MOCK_NAV_BACKEND_PAYLOAD_ABI_V1;
+    language.struct_size = sizeof(language);
+    assert(backend.v4.internationalization_changed(context, &language) == 0);
+    assert(probe->language_events == 1);
+    MockNavBackendVisibilityV1 visible{MOCK_NAV_BACKEND_ABI_V1, sizeof(visible), 0, 1, 1};
+    assert(api.visibility_changed(context, &visible) == 0);
+    assert(probe->visibility_events == 1);
+    api.surface_destroyed(context);
+    api.stop(context);
+
+    // A V1 start gives no outbound services and replays nothing old.
+    auto plain = services.v1;
+    plain.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    plain.struct_size = sizeof(plain);
+    assert(api.start(context, &plain) == 0);
+    probe = std::make_shared<Probe>();
+    assert(api.surface_created(context, &surface) == 0);
+    assert(probe->outbound_calls == 1 && probe->outbound == nullptr);
+    assert(probe->vehicle_events == 0 && probe->distraction_events == 0);
+    api.surface_destroyed(context);
+    api.stop(context);
+}
+
 int main()
 {
     lifecycle();
     failures();
     frames_and_contexts();
     c_boundary();
+    backend_v5();
     std::cout << "OsmAnd session and C boundary tests passed\n";
 }

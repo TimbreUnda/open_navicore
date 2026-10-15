@@ -73,9 +73,32 @@ void backend_surface_destroyed(void* context) noexcept
 template <typename T, uint32_t Version = MOCK_NAV_BACKEND_ABI_V1>
 int accept_event(void* context, const T* event) noexcept
 {
-    // GPS/camera, input, vehicle and audio remain intentionally unimplemented.
+    // GPS interval and audio state are not used by the navigation.
     return context && valid(event, Version) &&
            static_cast<Session*>(context)->accepts_events() ? 0 : -1;
+}
+
+// Platform inputs the session records and forwards to the engine.
+template <typename T, uint32_t Version = MOCK_NAV_BACKEND_ABI_V1>
+int forward_event(void* context, const T* event) noexcept
+{
+    if (!context || !valid(event, Version))
+        return -1;
+    return static_cast<Session*>(context)->input(*event);
+}
+
+// Backend V3+: started with the outbound services (V2 prefix size).
+int backend_start_v2(void* context, const MockNavBackendServicesV2* services) noexcept
+{
+    if (!context || !services || services->v1.abi_version != MOCK_NAV_BACKEND_ABI_V2 ||
+        services->v1.struct_size < sizeof(*services) || !services->v1.request_frame)
+        return -1;
+    try {
+        return static_cast<Session*>(context)->start_v2(*services, Config::from_environment());
+    } catch (...) {
+        trace("error=exception_start");
+        return -1;
+    }
 }
 
 // V2 payloads carry the touch contact (we declare the contacts capability);
@@ -151,28 +174,76 @@ void fill_v1_query(MockNavBackendPluginV1* output)
     output->backend.v1.stop = backend_stop;
     output->backend.v1.surface_created = backend_surface_created;
     output->backend.v1.surface_destroyed = backend_surface_destroyed;
-    output->backend.v1.visibility_changed =
-        accept_event<MockNavBackendVisibilityV1>;
-    output->backend.v1.screen_changed = accept_event<MockNavBackendScreenV1>;
+    output->backend.v1.visibility_changed = forward_event<MockNavBackendVisibilityV1>;
+    output->backend.v1.screen_changed = forward_event<MockNavBackendScreenV1>;
     output->backend.v1.gps_changed = backend_gps;
     output->backend.v1.pointer_changed = backend_pointer;
     output->backend.v1.render_frame = backend_render;
-    output->backend.vehicle_changed = accept_event<MockNavBackendVehicleV2, MOCK_NAV_BACKEND_ABI_V2>;
+    output->backend.vehicle_changed = forward_event<MockNavBackendVehicleV2, MOCK_NAV_BACKEND_ABI_V2>;
     output->backend.gps_interval_changed =
         accept_event<MockNavBackendGpsIntervalV2, MOCK_NAV_BACKEND_ABI_V2>;
     output->backend.audio_changed = accept_event<MockNavBackendAudioV2, MOCK_NAV_BACKEND_ABI_V2>;
 }
 
+// Query V4 selects backend V5: the V1 query is the prefix; the outbound
+// services, language, cluster display and driver distraction are added.
+void fill_v4_query(MockNavBackendPluginV4* output)
+{
+    static const uint8_t build_id[MOCK_NAV_PLUGIN_BUILD_ID_BYTES] =
+        MOCK_NAV_PLUGIN_V4_EXPECTED_BUILD_ID_INITIALIZER;
+    MockNavBackendPluginV1 legacy;
+    fill_v1_query(&legacy);
+    std::memset(output, 0, sizeof(*output));
+    MockNavBackendPluginV1& v1 = output->v3.v2.v1;
+    v1 = legacy;
+    v1.query_abi_version = MOCK_NAV_PLUGIN_QUERY_ABI_V4;
+    v1.struct_size = sizeof(*output);
+    v1.backend_abi_version = MOCK_NAV_BACKEND_ABI_V5;
+    std::memcpy(v1.build_id, build_id, sizeof(build_id));
+    MockNavBackendPluginV2& v2 = output->v3.v2;
+    v2.services_v2_size = sizeof(MockNavBackendServicesV2);
+    v2.cluster_v1_size = sizeof(MockNavBackendClusterV1);
+    v2.utf8_span_v1_size = sizeof(MockNavBackendUtf8SpanV1);
+    v2.audio_availability_v1_size = sizeof(MockNavBackendAudioAvailabilityV1);
+    v2.thread_status_v1_size = sizeof(MockNavBackendThreadStatusV1);
+    v2.backend_v3_size = sizeof(MockNavBackendV3);
+    v2.capabilities_v2 = MOCK_NAV_PLUGIN_V2_REQUIRED_CAPABILITIES;
+    MockNavBackendPluginV3& v3 = output->v3;
+    v3.internationalization_v1_size = sizeof(MockNavBackendInternationalizationV1);
+    v3.cluster_display_v1_size = sizeof(MockNavBackendClusterDisplayV1);
+    v3.backend_v4_size = sizeof(MockNavBackendV4);
+    v3.capabilities_v3 = MOCK_NAV_PLUGIN_V3_REQUIRED_CAPABILITIES;
+    output->driver_distraction_v1_size = sizeof(MockNavBackendDriverDistractionV1);
+    output->backend_v5_size = sizeof(MockNavBackendV5);
+    output->capabilities_v4 = MOCK_NAV_PLUGIN_V4_REQUIRED_CAPABILITIES;
+    MockNavBackendV5& backend = output->backend_v5;
+    backend.v4.v3.v2 = legacy.backend;
+    backend.v4.v3.v2.v1.abi_version = MOCK_NAV_BACKEND_ABI_V5;
+    backend.v4.v3.v2.v1.struct_size = sizeof(MockNavBackendV5);
+    backend.v4.v3.start_v2 = backend_start_v2;
+    backend.v4.internationalization_changed = forward_event<MockNavBackendInternationalizationV1>;
+    backend.v4.cluster_display_changed = forward_event<MockNavBackendClusterDisplayV1>;
+    backend.driver_distraction_changed = forward_event<MockNavBackendDriverDistractionV1>;
+}
+
 }  // namespace
 
+// The loader asks for query V4 first (backend V5), then older queries.
 extern "C" MOCK_NAV_PLUGIN_EXPORT int mock_nav_backend_query_v1(
     uint32_t requested_query_abi, uint32_t output_size,
     MockNavBackendPluginV1* output)
 {
-    if (requested_query_abi != MOCK_NAV_PLUGIN_QUERY_ABI_V1 ||
-        output_size != sizeof(*output) || output == nullptr)
+    if (output == nullptr)
         return -1;
     try {
+        if (requested_query_abi == MOCK_NAV_PLUGIN_QUERY_ABI_V4 &&
+            output_size == sizeof(MockNavBackendPluginV4)) {
+            fill_v4_query(reinterpret_cast<MockNavBackendPluginV4*>(output));
+            return 0;
+        }
+        if (requested_query_abi != MOCK_NAV_PLUGIN_QUERY_ABI_V1 ||
+            output_size != sizeof(*output))
+            return -1;
         fill_v1_query(output);
         return 0;
     } catch (...) {

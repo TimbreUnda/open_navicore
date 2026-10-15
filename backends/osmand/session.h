@@ -31,6 +31,16 @@ public:
     Session& operator=(const Session&) = delete;
 
     int start(const MockNavBackendServicesV1&, Config) noexcept;
+    // V3+: the same start with the outbound services kept for the engine.
+    int start_v2(const MockNavBackendServicesV2&, Config) noexcept;
+    // Platform inputs: the latest of each is kept and forwarded (replayed
+    // after attach).
+    int input(const MockNavBackendVisibilityV1&) noexcept;
+    int input(const MockNavBackendScreenV1&) noexcept;
+    int input(const MockNavBackendVehicleV2&) noexcept;
+    int input(const MockNavBackendInternationalizationV1&) noexcept;
+    int input(const MockNavBackendClusterDisplayV1&) noexcept;
+    int input(const MockNavBackendDriverDistractionV1&) noexcept;
     int attach(const MockNavBackendRenderTargetV1&) noexcept;
     FrameResult frame(const MockNavBackendRenderTargetV1&) noexcept;
     int gps(const MockNavBackendGpsV1&) noexcept;
@@ -59,6 +69,18 @@ private:
     bool first_presented_ = false;
     MockNavBackendGpsV1 gps_{};
     bool has_gps_ = false;
+    MockNavBackendServicesV2 services_v2_{};
+    bool has_services_v2_ = false;
+    template <typename T> struct Latest { T value{}; bool has = false; };
+    Latest<MockNavBackendVisibilityV1> visibility_;
+    Latest<MockNavBackendScreenV1> screen_;
+    Latest<MockNavBackendVehicleV2> vehicle_;
+    Latest<MockNavBackendInternationalizationV1> internationalization_;
+    Latest<MockNavBackendClusterDisplayV1> cluster_display_;
+    Latest<MockNavBackendDriverDistractionV1> driver_distraction_;
+    template <typename T>
+    int record(Latest<T>& latest, const T& event, void (Engine::*forward)(const T&)) noexcept;
+    void replay_inputs();
 };
 
 } // namespace navicore_osmand

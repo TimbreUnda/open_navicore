@@ -41,6 +41,76 @@ int Session::start(const MockNavBackendServicesV1& services, Config config) noex
     return 0;
 }
 
+int Session::start_v2(const MockNavBackendServicesV2& services, Config config) noexcept
+{
+    // The V1 prefix carries request_frame; the session keeps the V1 view.
+    MockNavBackendServicesV1 v1 = services.v1;
+    v1.abi_version = MOCK_NAV_BACKEND_ABI_V1;
+    v1.struct_size = sizeof(v1);
+    const int result = start(v1, std::move(config));
+    if (result == 0) {
+        services_v2_ = services;
+        has_services_v2_ = true;
+    }
+    return result;
+}
+
+template <typename T>
+int Session::record(Latest<T>& latest, const T& event,
+                    void (Engine::*forward)(const T&)) noexcept
+{
+    if (state_ != State::Started && state_ != State::Attached)
+        return -1;
+    latest.value = event;
+    latest.has = true;
+    if (state_ == State::Attached && engine_) {
+        try {
+            (engine_.get()->*forward)(event);
+        } catch (...) {
+            trace("error=exception_input");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int Session::input(const MockNavBackendVisibilityV1& event) noexcept
+{
+    return record(visibility_, event, &Engine::visibility);
+}
+int Session::input(const MockNavBackendScreenV1& event) noexcept
+{
+    return record(screen_, event, &Engine::screen);
+}
+int Session::input(const MockNavBackendVehicleV2& event) noexcept
+{
+    return record(vehicle_, event, &Engine::vehicle);
+}
+int Session::input(const MockNavBackendInternationalizationV1& event) noexcept
+{
+    return record(internationalization_, event, &Engine::internationalization);
+}
+int Session::input(const MockNavBackendClusterDisplayV1& event) noexcept
+{
+    return record(cluster_display_, event, &Engine::cluster_display);
+}
+int Session::input(const MockNavBackendDriverDistractionV1& event) noexcept
+{
+    return record(driver_distraction_, event, &Engine::driver_distraction);
+}
+
+// After attach: the outbound services and the latest of each input.
+void Session::replay_inputs()
+{
+    engine_->set_outbound(has_services_v2_ ? &services_v2_ : nullptr);
+    if (visibility_.has) engine_->visibility(visibility_.value);
+    if (screen_.has) engine_->screen(screen_.value);
+    if (vehicle_.has) engine_->vehicle(vehicle_.value);
+    if (internationalization_.has) engine_->internationalization(internationalization_.value);
+    if (cluster_display_.has) engine_->cluster_display(cluster_display_.value);
+    if (driver_distraction_.has) engine_->driver_distraction(driver_distraction_.value);
+}
+
 bool Session::accepts_events() const noexcept
 {
     return state_ == State::Started || state_ == State::Attached;
@@ -90,6 +160,7 @@ int Session::attach(const MockNavBackendRenderTargetV1& target) noexcept
             state_ = State::Attached;
             if (has_gps_ && engine_->gps(gps_) != 0)
                 trace("warning=initial_gps_rejected");
+            replay_inputs();
             trace("surface_created=kyiv");
             (void)wakeup_->request();
             return 0;
@@ -195,6 +266,14 @@ void Session::stop() noexcept
     services_ = {};
     gps_ = {};
     has_gps_ = false;
+    services_v2_ = {};
+    has_services_v2_ = false;
+    visibility_ = {};
+    screen_ = {};
+    vehicle_ = {};
+    internationalization_ = {};
+    cluster_display_ = {};
+    driver_distraction_ = {};
     if (state_ != State::Quarantined)
         state_ = State::Stopped;
 }

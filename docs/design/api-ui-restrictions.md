@@ -128,8 +128,13 @@ custom widgets or a second copy of the map.
 
 Several numeric values still lack qualified semantic enum mappings. Designs
 must not assign user-visible meanings to raw values until live evidence
-validates them. The current OsmAnd plugin advertises backend V2, so it cannot
-call the V3 cluster publishing service yet.
+validates them. The OsmAnd plugin is backend V5 (query V4) and publishes the
+fields with recovered meanings from guidance (`cluster_payload.cpp`): route
+guidance state, navigation status, destination and manoeuvre distances with
+units, ETA and remaining time, the turn countdown bar, compass, speed limit
+and current/next road. It publishes no maneuver symbol and no lanes (not in
+the semantic mask). What the dashboard shows is still to be checked on the
+bus and the cluster.
 
 ### Vehicle state, localization and distraction
 
@@ -139,11 +144,19 @@ call the V3 cluster publishing service yet.
   values intentionally have no asserted enum labels.
 - Driver-distraction input requires V5 and is likewise raw pending semantic
   qualification.
-- The current OsmAnd plugin is V2, so it receives none of the V4/V5 inputs.
+- The OsmAnd plugin (V5) receives all of them, plus visibility and screen
+  type. It records each, traces changes (`input=...`) and shows them in the
+  developer menu ("Car and HMI (raw)"), but acts on none: the stock provider
+  only stores and forwards these bytes (QR39.6 `libNaviCore.so`:
+  `SI_VehicleData` 8.4 at `0x263154` stores the day/night status at
+  `self+0x29`, 8.6 at `0x263050` the setting at `+0x28`; `0xff` reads as
+  unknown, then both go on to the engine), so their meaning comes from a live
+  capture, not from the provider.
 
-A responsive theme is possible once day/night values are qualified. Correct
-localization, cluster-display policy and distraction lockouts cannot be
-promised from the current V2 plugin.
+Once the values are qualified on the bench (day/night setting and lights,
+the navigation screen hidden and shown, moving vs parked, language), the map
+can follow the car's day/night, pause rendering while hidden, use the car's
+speed and apply distraction lockouts.
 
 ### Platform services not exposed
 
@@ -188,10 +201,10 @@ architecture and resource-budget decision.
 | Route search and guidance in our canvas | Implemented; live qualification in progress | Complete bench and driven/simulated-route qualification |
 | Stock UI starts or edits our route | Hard restriction | Recover and qualify destination/route request contracts |
 | Spoken maneuver prompts | Hard restriction | Qualify PCM/TTS, audio focus and ducking contracts |
-| Cluster maneuver fields | API available, plugin gap | Upgrade to V3+ and qualify enum semantics live |
+| Cluster maneuver fields | Published (V5): recovered fields only, no symbol/lanes | Verify on the bus and the cluster |
 | Arbitrary cluster graphics or map | Hard restriction | A different cluster graphics contract |
 | Automatic localization | API available, plugin gap | Upgrade to V4 and qualify raw locale mappings/fonts |
-| Driver-distraction lockouts | API available, plugin gap | Upgrade to V5 and qualify raw status semantics |
+| Driver-distraction lockouts | Received raw (V5), not acted on | Qualify the raw status live |
 | Online traffic | Outside current API | Platform network access, provider and data contract |
 | Modify top/bottom stock chrome | Hard restriction | A separately recovered HMI contract |
 | Background/minimized navigation behavior | Unverified | Define lifecycle policy and qualify it on the bench |
