@@ -90,6 +90,8 @@ struct VectorFrameTiming {
     std::uint32_t labels_us = 0;  // label placement and label GL
     std::uint32_t evict_us = 0;   // LRU eviction (glDeleteBuffers, builder.forget)
     std::uint32_t upload_max_us = 0;  // slowest single tile upload
+    std::uint32_t atlas_us = 0;       // label atlas glyph uploads (part of labels_us)
+    std::uint32_t label_buffers_us = 0;  // label vertex/index upload (part of labels_us)
 };
 
 class VectorMap {

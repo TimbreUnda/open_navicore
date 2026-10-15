@@ -1286,7 +1286,8 @@ public:
     std::size_t uploads() const { return uploads_; }
     // Uploads allowed this frame; the rest of the new labels wait, so a
     // burst of new tiles does not stall one frame.
-    void begin_frame(int upload_budget) { budget_ = upload_budget; }
+    void begin_frame(int upload_budget) { budget_ = upload_budget; upload_us_ = 0; }
+    std::uint32_t upload_us() const { return upload_us_; }
     // False when the atlas had to be cleared or this frame's uploads are
     // used up; the label waits a frame.
     bool slot(std::uint64_t key, const LabelImage& image, Slot& out)
@@ -1311,9 +1312,12 @@ public:
             ++resets_;
             return false;
         }
+        const auto started = Clock::now();
         glBindTexture(GL_TEXTURE_2D, texture_);
         glTexSubImage2D(GL_TEXTURE_2D, 0, x_ + 1, y_ + 1, image.width, image.height,
                         GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
+        upload_us_ += static_cast<std::uint32_t>(std::chrono::duration_cast<
+            std::chrono::microseconds>(Clock::now() - started).count());
         ++uploads_;
         const float k = 1.0f / kSize;
         out = {(x_ + 1) * k, (y_ + 1) * k, (x_ + 1 + image.width) * k,
@@ -1328,6 +1332,7 @@ private:
     GLuint texture_ = 0;
     int budget_ = 1 << 30;
     int x_ = 0, y_ = 0, row_ = 0;
+    std::uint32_t upload_us_ = 0;
     std::size_t resets_ = 0, uploads_ = 0;
     // Keyed by atlas key hash; a full atlas holds ~1-2k labels.
     LabelIdMap<Slot> slots_{2048};
@@ -1602,7 +1607,14 @@ struct VectorMap::Impl {
     GLint area_m = -1, line_m = -1, line_half_vp = -1, line_eps = -1, line_wscale = -1,
           line_casing = -1, label_tex = -1;
     LabelAtlas atlas;
-    GLuint label_vbo = 0, label_ibo = 0;
+    // Label buffers: a ring of three, filled with glBufferSubData into kept
+    // storage. Re-specifying one buffer every frame (glBufferData) makes the
+    // driver allocate, which waits on Screen; a slot is reused three frames
+    // later, when the GPU is done with it.
+    static constexpr int kLabelRing = 3;
+    GLuint label_vbo[kLabelRing] = {}, label_ibo[kLabelRing] = {};
+    std::size_t label_vbo_capacity[kLabelRing] = {}, label_ibo_capacity[kLabelRing] = {};
+    int label_slot = 0;
     PFNGLBINDVERTEXARRAYOESPROC bind_vao = nullptr;
     std::map<TileKey, GpuMesh> gpu;
     // Tile uploads on their own thread (shared context), when enabled.
@@ -1735,8 +1747,8 @@ bool VectorMap::init_gl()
     d.line_casing = glGetUniformLocation(d.line_prog, "u_casing");
     d.label_tex = glGetUniformLocation(d.label_prog, "u_tex");
     d.atlas.init();
-    glGenBuffers(1, &d.label_vbo);
-    glGenBuffers(1, &d.label_ibo);
+    glGenBuffers(d.kLabelRing, d.label_vbo);
+    glGenBuffers(d.kLabelRing, d.label_ibo);
     const char* extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
     if (extensions && std::strstr(extensions, "GL_OES_vertex_array_object"))
         d.bind_vao = reinterpret_cast<PFNGLBINDVERTEXARRAYOESPROC>(
@@ -1771,8 +1783,8 @@ void VectorMap::release_gl(bool context_lost)
                               &d.arrow_lines, &d.arrow_head})
             if (mesh->buffers[0])
                 glDeleteBuffers(4, mesh->buffers);
-        if (d.label_vbo) glDeleteBuffers(1, &d.label_vbo);
-        if (d.label_ibo) glDeleteBuffers(1, &d.label_ibo);
+        if (d.label_vbo[0]) glDeleteBuffers(d.kLabelRing, d.label_vbo);
+        if (d.label_ibo[0]) glDeleteBuffers(d.kLabelRing, d.label_ibo);
         if (d.area_prog) glDeleteProgram(d.area_prog);
         if (d.line_prog) glDeleteProgram(d.line_prog);
         if (d.label_prog) glDeleteProgram(d.label_prog);
@@ -1789,7 +1801,11 @@ void VectorMap::release_gl(bool context_lost)
         GpuMesh{};
     d.route_segment = d.arrow_index = static_cast<std::size_t>(-1);
     d.joint_x = d.joint_y = -1.0;
-    d.label_vbo = d.label_ibo = 0;
+    for (int i = 0; i < d.kLabelRing; ++i) {
+        d.label_vbo[i] = d.label_ibo[i] = 0;
+        d.label_vbo_capacity[i] = d.label_ibo_capacity[i] = 0;
+    }
+    d.label_slot = 0;
     d.area_prog = d.line_prog = d.label_prog = 0;
     d.gl_ready = false;
 }
@@ -2548,6 +2564,7 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
     place_labels(view, draw_list, zoom, dt, calls, fading);
     const double label_ms = ms_since(label_started);
     timing.labels_us = us_since(label_started);
+    timing.atlas_us = atlas.upload_us();
     phase = Clock::now();
     if (fading)
         wants_more = true;
@@ -2966,12 +2983,27 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, atlas.texture());
     glUniform1i(label_tex, 0);
-    glBindBuffer(GL_ARRAY_BUFFER, label_vbo);
-    glBufferData(GL_ARRAY_BUFFER, label_vertices.size() * sizeof(LabelVertex),
-                 label_vertices.data(), GL_STREAM_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, label_ibo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, label_indices.size() * 2, label_indices.data(),
-                 GL_STREAM_DRAW);
+    const auto gl_started = Clock::now();
+    label_slot = (label_slot + 1) % kLabelRing;
+    const std::size_t vbytes = label_vertices.size() * sizeof(LabelVertex);
+    const std::size_t ibytes = label_indices.size() * 2;
+    glBindBuffer(GL_ARRAY_BUFFER, label_vbo[label_slot]);
+    if (vbytes > label_vbo_capacity[label_slot]) {
+        label_vbo_capacity[label_slot] = std::max<std::size_t>(vbytes * 2, 16384);
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(label_vbo_capacity[label_slot]),
+                     nullptr, GL_DYNAMIC_DRAW);
+    }
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vbytes), label_vertices.data());
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, label_ibo[label_slot]);
+    if (ibytes > label_ibo_capacity[label_slot]) {
+        label_ibo_capacity[label_slot] = std::max<std::size_t>(ibytes * 2, 8192);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(label_ibo_capacity[label_slot]),
+                     nullptr, GL_DYNAMIC_DRAW);
+    }
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(ibytes),
+                    label_indices.data());
+    timing.label_buffers_us = static_cast<std::uint32_t>(std::chrono::duration_cast<
+        std::chrono::microseconds>(Clock::now() - gl_started).count());
     for (GLuint a = 0; a < 3; ++a)
         glEnableVertexAttribArray(a);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), nullptr);

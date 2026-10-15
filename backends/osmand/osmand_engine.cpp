@@ -213,6 +213,7 @@ private:
     std::vector<ui::UploadRect> upload_rects_;
     bool overlay_enabled_ = true;
     FrameMetrics frame_metrics_{false};
+    bool osmand_render_skip_ = false;
     // update_guidance() parts of the current frame (frame log only).
     std::uint32_t guidance_tracker_us_ = 0;
     std::uint32_t guidance_sync_us_ = 0;
@@ -315,6 +316,9 @@ bool OsmAndEngine::initialize(const Config& config,
             std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-2";
     }
     frame_metrics_ = FrameMetrics(config.performance_metrics);
+    osmand_render_skip_ = config.osmand_render_skip;
+    if (osmand_render_skip_)
+        trace("osmand_render=skip");
     if (config.performance_metrics)
         trace("performance_metrics=enabled");
     simulation_speed_metres_per_second_ =
@@ -1512,7 +1516,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     // The bool API collapses StageResult::Wait and ::Fail. Preserve the live
     // resource-wait behavior, but let Session report sustained lack of progress.
     stage_started = Clock::now();
-    const bool map_rendered = renderer_->renderFrame();
+    // Without the vector map OsmAnd's frame is the only one; with it the
+    // vector map clears and covers everything OsmAnd would draw.
+    const bool map_rendered =
+        (osmand_render_skip_ && vector_map_) || renderer_->renderFrame();
     measurement.map_render_us = elapsed_us(stage_started);
     if (!map_rendered)
         return finish({FrameOutcome::Pending, PendingStage::Render, true},
@@ -1531,6 +1538,8 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         measurement.vec_labels_us = vt.labels_us;
         measurement.vec_evict_us = vt.evict_us;
         measurement.vec_upload_max_us = vt.upload_max_us;
+        measurement.vec_atlas_us = vt.atlas_us;
+        measurement.vec_label_buffers_us = vt.label_buffers_us;
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
