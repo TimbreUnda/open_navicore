@@ -10,8 +10,10 @@
 #include <OsmAndCore/LatLon.h>
 #include <OsmAndCore/Logging.h>
 #include <OsmAndCore/ObfsCollection.h>
+#include <OsmAndCore/RoadLocator.h>
 #include <OsmAndCore/Search/AddressesByNameSearch.h>
 #include <OsmAndCore/Search/AmenitiesByNameSearch.h>
+#include <OsmAndCore/Search/ReverseGeocoder.h>
 #include <OsmAndCore/Utilities.h>
 
 // Core and core-legacy both ship a Logging.h with the same public names but
@@ -249,6 +251,26 @@ public:
         condition_.notify_one();
     }
 
+    void submit_address(std::uint64_t revision, ui::GeoPoint point)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) return;
+        if (active_) active_->cancel();
+        pending_ = Request::address(revision, point);
+        has_pending_ = true;
+        trace_result("worker=address_queued", revision, 1u);
+        condition_.notify_one();
+    }
+
+    bool take(AddressResult& output)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!has_address_result_) return false;
+        output = std::move(address_result_);
+        has_address_result_ = false;
+        return true;
+    }
+
     bool take(SearchResult& output)
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -285,7 +307,7 @@ public:
 
 private:
     struct Request {
-        enum class Kind { Search, Route } kind = Kind::Search;
+        enum class Kind { Search, Route, Address } kind = Kind::Search;
         std::uint64_t revision = 0;
         std::string query;
         ui::Destination destination;
@@ -310,7 +332,39 @@ private:
             request.origin = origin;
             return request;
         }
+        static Request address(std::uint64_t revision, ui::GeoPoint point)
+        {
+            Request request;
+            request.kind = Kind::Address;
+            request.revision = revision;
+            request.origin = point;
+            return request;
+        }
     };
+
+    // Nearest address of a point: "street, house number", or the street
+    // alone; empty when there is no road nearby.
+    std::string address(const Request& request)
+    {
+        if (!road_locator_)
+            road_locator_ = std::make_shared<OsmAnd::RoadLocator>(obfs_);
+        OsmAnd::ReverseGeocoder geocoder(obfs_, road_locator_);
+        OsmAnd::ReverseGeocoder::Criteria criteria;
+        criteria.latLon = OsmAnd::LatLon(request.origin.latitude, request.origin.longitude);
+        const auto entry = geocoder.performSearch(criteria);
+        if (!entry) return {};
+        const auto name = [](const OsmAnd::Address& address) {
+            std::string text = utf8(address.getName(QStringLiteral("uk"), false));
+            return text.empty() ? utf8(address.nativeName) : text;
+        };
+        std::string street = entry->street ? name(*entry->street) : utf8(entry->streetName);
+        if (street.empty()) return {};
+        if (entry->building) {
+            const std::string number = name(*entry->building);
+            if (!number.empty()) street += ", " + number;
+        }
+        return street;
+    }
 
     std::vector<ui::Destination> search(const Request& request,
                                         const std::shared_ptr<Cancellation>& cancel)
@@ -471,23 +525,27 @@ private:
                 cancel = active_;
             }
 
-            trace_result(request.kind == Request::Kind::Search
-                             ? "worker=search_begin" : "worker=route_begin",
+            using Kind = Request::Kind;
+            trace_result(request.kind == Kind::Search ? "worker=search_begin"
+                         : request.kind == Kind::Route ? "worker=route_begin"
+                                                       : "worker=address_begin",
                          request.revision,
-                         request.kind == Request::Kind::Search
-                             ? request.query.size() : 1u);
+                         request.kind == Kind::Search ? request.query.size() : 1u);
 
             std::vector<ui::Destination> destinations;
             std::vector<ui::RouteAlternative> routes;
+            std::string address_text;
             try {
-                if (request.kind == Request::Kind::Search)
+                if (request.kind == Kind::Search)
                     destinations = search(request, cancel);
-                else
+                else if (request.kind == Kind::Route)
                     routes = route(request, cancel);
+                else
+                    address_text = address(request);
             } catch (...) {
-                trace(request.kind == Request::Kind::Search
-                          ? "error=destination_search_exception"
-                          : "error=route_calculation_exception");
+                trace(request.kind == Kind::Search ? "error=destination_search_exception"
+                      : request.kind == Kind::Route ? "error=route_calculation_exception"
+                                                    : "error=address_exception");
                 // Publish an empty result so the UI leaves its busy state.
                 // A genuinely superseded request has already been cancelled
                 // by submit(), and remains excluded by the check below.
@@ -498,23 +556,27 @@ private:
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (stopping_) return;
                 if (active_ == cancel && !cancel->superseded()) {
-                    if (request.kind == Request::Kind::Search) {
+                    if (request.kind == Kind::Search) {
                         result_ = {request.revision, std::move(destinations)};
                         published_count = result_.destinations.size();
                         has_result_ = true;
-                    } else {
+                    } else if (request.kind == Kind::Route) {
                         route_result_ = {request.revision, std::move(routes)};
                         published_count = route_result_.routes.size();
                         has_route_result_ = true;
+                    } else {
+                        published_count = address_text.empty() ? 0u : 1u;
+                        address_result_ = {request.revision, std::move(address_text)};
+                        has_address_result_ = true;
                     }
                     published = true;
                 }
                 if (active_ == cancel) active_.reset();
             }
             if (published)
-                trace_result(request.kind == Request::Kind::Search
-                                 ? "worker=search_published"
-                                 : "worker=route_published",
+                trace_result(request.kind == Kind::Search ? "worker=search_published"
+                             : request.kind == Kind::Route ? "worker=route_published"
+                                                           : "worker=address_published",
                              request.revision,
                              published_count);
             if (published && wakeup_) (void)wakeup_->request();
@@ -532,10 +594,13 @@ private:
     Request pending_;
     SearchResult result_;
     RouteResult route_result_;
+    AddressResult address_result_;
+    std::shared_ptr<const OsmAnd::IRoadLocator> road_locator_;  // worker thread
     std::shared_ptr<Cancellation> active_;
     bool has_pending_ = false;
     bool has_result_ = false;
     bool has_route_result_ = false;
+    bool has_address_result_ = false;
     bool stopping_ = false;
     bool router_ready_ = false;
 };
@@ -569,6 +634,16 @@ bool NavigationWorker::take_route_result(RouteResult& output)
 }
 
 bool NavigationWorker::take_search_result(SearchResult& output)
+{
+    return impl_->take(output);
+}
+
+void NavigationWorker::submit_address(std::uint64_t revision, ui::GeoPoint point)
+{
+    impl_->submit_address(revision, point);
+}
+
+bool NavigationWorker::take_address_result(AddressResult& output)
 {
     return impl_->take(output);
 }

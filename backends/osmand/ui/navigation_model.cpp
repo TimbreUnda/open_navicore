@@ -192,26 +192,22 @@ bool NavigationModel::take_drag(MapDrag& out) noexcept
     return true;
 }
 
-void NavigationModel::push_map_tap(int x, int y) noexcept
+void NavigationModel::push_map_touch(MapGesture gesture, int x, int y) noexcept
 {
-    if (tap_count_ >= 4)
+    if (touch_count_ >= 4)
         return;
-    taps_[tap_count_][0] = x;
-    taps_[tap_count_][1] = y;
-    ++tap_count_;
+    touches_[touch_count_] = {gesture, x, y};
+    ++touch_count_;
 }
 
-bool NavigationModel::take_map_tap(int& x, int& y) noexcept
+bool NavigationModel::take_map_touch(MapTouch& out) noexcept
 {
-    if (tap_count_ == 0)
+    if (touch_count_ == 0)
         return false;
-    x = taps_[0][0];
-    y = taps_[0][1];
-    for (int i = 1; i < tap_count_; ++i) {
-        taps_[i - 1][0] = taps_[i][0];
-        taps_[i - 1][1] = taps_[i][1];
-    }
-    --tap_count_;
+    out = touches_[0];
+    for (int i = 1; i < touch_count_; ++i)
+        touches_[i - 1] = touches_[i];
+    --touch_count_;
     return true;
 }
 
@@ -352,6 +348,16 @@ bool NavigationModel::show_place_card(Destination place, std::string icon)
     place_ = std::move(place);
     place_icon_ = std::move(icon);
     has_place_ = true;
+    return true;
+}
+
+bool NavigationModel::set_place_subtitle(const std::string& id, std::string subtitle)
+{
+    if (!has_place_ || place_.id != id || place_.subtitle == subtitle)
+        return false;
+    place_.subtitle = std::move(subtitle);
+    if (has_destination_ && destination_.id == id)
+        destination_.subtitle = place_.subtitle;
     return true;
 }
 

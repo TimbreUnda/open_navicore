@@ -106,6 +106,14 @@ private:
     double drag_target_x_ = 0.0, drag_target_y_ = 0.0;
     bool apply_drag(const ui::MapDrag& drag);
     void handle_map_tap(int x, int y);
+    void handle_map_touch(const ui::MapTouch& touch);
+    void drop_pin(int x, int y);
+    void update_pin_marker();
+    bool unproject_lat_lon(int x, int y, OsmAnd::LatLon& out) const;
+    std::string with_distance(std::string text, const OsmAnd::LatLon& location) const;
+    std::string pin_id_;                  // the pin whose address is pending
+    std::uint64_t address_revision_ = 0;
+    ui::MapTouch map_touch_;
     std::chrono::steady_clock::time_point clock_origin_ =
         std::chrono::steady_clock::now();
     CameraController::Pose applied_pose_{};
@@ -607,9 +615,8 @@ bool OsmAndEngine::apply_camera()
     ui::MapDrag drag;
     if (navigation_->take_drag(drag))
         dragging = apply_drag(drag);
-    int tap_x = 0, tap_y = 0;
-    while (navigation_->take_map_tap(tap_x, tap_y))
-        handle_map_tap(tap_x, tap_y);
+    while (navigation_->take_map_touch(map_touch_))
+        handle_map_touch(map_touch_);
 
     const auto vehicle = motion_.predict(now_s);
     const auto pose = camera_.update(vehicle, dt);
@@ -657,8 +664,10 @@ bool OsmAndEngine::apply_camera()
     } else {
         view_->set_vehicle_marker(false, 0, 0, 0.0f);
     }
+    update_pin_marker();
 
     ui::MapViewState state;
+    state.heading_known = camera_.heading_known();
     state.following = pose.following || !vehicle.valid;
     state.heading_up =
         camera_.follow_mode() == CameraController::Mode::HeadingUp;
@@ -718,8 +727,55 @@ bool OsmAndEngine::apply_drag(const ui::MapDrag& drag)
     return drag.active;
 }
 
-// A tap on a POI of the vector map opens its place card (free drive);
-// Navigate there routes to it. A tap on bare map closes the card.
+bool OsmAndEngine::unproject_lat_lon(int x, int y, OsmAnd::LatLon& out) const
+{
+    OsmAnd::PointI64 location;
+    if (!renderer_->getLocationFromScreenPoint(OsmAnd::PointD(x, y), location))
+        return false;
+    out = OsmAnd::Utilities::convert31ToLatLon(OsmAnd::PointI(
+        static_cast<int32_t>(location.x), static_cast<int32_t>(location.y)));
+    return true;
+}
+
+// "Fuel · 0.4 km": appends the straight-line distance from the car when
+// the car's position is known.
+std::string OsmAndEngine::with_distance(std::string text, const OsmAnd::LatLon& location) const
+{
+    const auto vehicle = motion_.predict(
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - clock_origin_).count());
+    if (!vehicle.valid)
+        return text;
+    const double metres = OsmAnd::Utilities::distance(
+        OsmAnd::LatLon(vehicle.latitude, vehicle.longitude), location);
+    char distance[32] = {};
+    if (metres < 1000.0)
+        std::snprintf(distance, sizeof(distance), "%.0f m", std::round(metres / 10.0) * 10.0);
+    else
+        std::snprintf(distance, sizeof(distance), "%.1f km", metres / 1000.0);
+    return text.empty() ? std::string(distance) : text + " · " + distance;
+}
+
+void OsmAndEngine::handle_map_touch(const ui::MapTouch& touch)
+{
+    switch (touch.gesture) {
+    case ui::MapGesture::Tap: handle_map_tap(touch.x, touch.y); break;
+    case ui::MapGesture::DoubleTap: {
+        // Zoom in one step around the tapped point (following the car it
+        // zooms like the + button and keeps following).
+        OsmAnd::LatLon point;
+        if (navigation_->screen() != ui::Screen::Search &&
+            unproject_lat_lon(touch.x, touch.y, point)) {
+            camera_.zoom_at(1.0f, point.latitude, point.longitude);
+            trace("map_gesture=double_tap");
+        }
+        break;
+    }
+    case ui::MapGesture::LongPress: drop_pin(touch.x, touch.y); break;
+    }
+}
+
+// A tap on a POI or a place name of the vector map opens its place card
+// (free drive); Navigate there routes to it. A tap on bare map closes it.
 void OsmAndEngine::handle_map_tap(int x, int y)
 {
     if (!vector_map_ || navigation_->screen() != ui::Screen::FreeDrive)
@@ -732,14 +788,17 @@ void OsmAndEngine::handle_map_tap(int x, int y)
     }
     const auto location = OsmAnd::Utilities::convert31ToLatLon(OsmAnd::PointI(
         static_cast<int32_t>(pick.x31), static_cast<int32_t>(pick.y31)));
+    const bool is_place = pick.icon.empty() && !pick.place.empty();
     ui::Destination place;
-    place.id = "poi:" + std::to_string(static_cast<long long>(pick.x31)) + "," +
+    place.id = (is_place ? "place:" : "poi:") +
+               std::to_string(static_cast<long long>(pick.x31)) + "," +
                std::to_string(static_cast<long long>(pick.y31));
     place.title = pick.name;
-    // "amenity_fuel" -> "Fuel": the category after the key, readable.
-    std::string category = pick.icon;
+    // "amenity_fuel" -> "Fuel": the category after the key, readable; a
+    // place name shows its type ("city" -> "City").
+    std::string category = is_place ? pick.place : pick.icon;
     const auto underscore = category.find('_');
-    if (underscore != std::string::npos && underscore + 1 < category.size())
+    if (!is_place && underscore != std::string::npos && underscore + 1 < category.size())
         category = category.substr(underscore + 1);
     for (auto& c : category)
         if (c == '_')
@@ -748,24 +807,49 @@ void OsmAndEngine::handle_map_tap(int x, int y)
         category[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(category[0])));
     place.latitude = location.latitude;
     place.longitude = location.longitude;
-    // "Fuel · 0.4 km": straight-line distance from the car when known.
-    std::string subtitle = category;
-    const auto vehicle = motion_.predict(
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - clock_origin_).count());
-    if (vehicle.valid) {
-        const double metres = OsmAnd::Utilities::distance(
-            OsmAnd::LatLon(vehicle.latitude, vehicle.longitude), location);
-        char distance[32] = {};
-        if (metres < 1000.0)
-            std::snprintf(distance, sizeof(distance), "%.0f m", std::round(metres / 10.0) * 10.0);
-        else
-            std::snprintf(distance, sizeof(distance), "%.1f km", metres / 1000.0);
-        subtitle += subtitle.empty() ? distance : std::string(" · ") + distance;
-    }
-    place.subtitle = subtitle;
-    place.distance = std::string();
+    place.subtitle = with_distance(category, location);
     if (view_->show_place_card(std::move(place), pick.icon))
-        trace("map_tap=place_card");
+        trace(is_place ? "map_tap=place_name_card" : "map_tap=place_card");
+}
+
+// Long press on the map: a pin there with its card. The subtitle shows
+// the coordinates until the worker finds the nearest address.
+void OsmAndEngine::drop_pin(int x, int y)
+{
+    OsmAnd::LatLon location;
+    if (navigation_->screen() != ui::Screen::FreeDrive || !unproject_lat_lon(x, y, location))
+        return;
+    char coordinates[48] = {};
+    std::snprintf(coordinates, sizeof(coordinates), "%.5f, %.5f", location.latitude,
+                  location.longitude);
+    ui::Destination pin;
+    pin.id = std::string(ui::NavigationModel::pin_prefix) + coordinates;
+    pin.title = "Dropped pin";
+    pin.latitude = location.latitude;
+    pin.longitude = location.longitude;
+    pin.subtitle = with_distance(coordinates, location);
+    pin_id_ = pin.id;
+    if (!view_->show_place_card(std::move(pin), "pin"))
+        return;
+    trace("map_gesture=pin");
+    if (ensure_navigation_worker())
+        navigation_worker_->submit_address(++address_revision_,
+                                           {location.latitude, location.longitude});
+}
+
+// The pin follows the map while its card is open.
+void OsmAndEngine::update_pin_marker()
+{
+    const ui::Destination* place = navigation_->place_card();
+    if (!navigation_->place_card_is_pin() || !place) {
+        view_->set_pin_marker(false, 0, 0);
+        return;
+    }
+    OsmAnd::PointI screen;
+    const bool visible = renderer_->obtainScreenPointFromPosition(
+        OsmAnd::Utilities::convertLatLonTo31(OsmAnd::LatLon(place->latitude, place->longitude)),
+        screen, true);
+    view_->set_pin_marker(visible, screen.x, screen.y);
 }
 
 bool OsmAndEngine::ensure_navigation_worker()
@@ -815,6 +899,17 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
                      search_result.destinations.size());
         (void)view_->apply_search_results(search_result.revision,
                                           std::move(search_result.destinations));
+    }
+    NavigationWorker::AddressResult address_result;
+    if (navigation_worker_ && navigation_worker_->take_address_result(address_result) &&
+        address_result.revision == address_revision_) {
+        trace_result("engine=address_result", address_result.revision,
+                     address_result.address.size());
+        const ui::Destination* pin = navigation_->place_card();
+        if (!address_result.address.empty() && pin && pin->id == pin_id_)
+            (void)view_->set_place_subtitle(
+                pin_id_, with_distance(address_result.address,
+                                       OsmAnd::LatLon(pin->latitude, pin->longitude)));
     }
     NavigationWorker::RouteResult route_result;
     if (navigation_worker_ && navigation_worker_->take_route_result(route_result)) {
@@ -1003,6 +1098,7 @@ FrameResult OsmAndEngine::frame(const MockNavBackendRenderTargetV1& target)
     }
     return finish({FrameOutcome::Presented, PendingStage::None,
                    guidance_changed || camera_animating || vector_wants_frames ||
+                       (overlay_enabled_ && view_->wants_frames()) ||
                        !renderer_->isIdle() ||
                        (autostart_ != Autostart::Off &&
                         autostart_ != Autostart::Done)},

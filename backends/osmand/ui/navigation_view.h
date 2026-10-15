@@ -81,6 +81,16 @@ public:
     // Vehicle marker at a window position; rotation is clockwise degrees
     // relative to screen-up. Small changes are ignored to limit redraw.
     void set_vehicle_marker(bool visible, int x, int y, float rotation_degrees);
+    // Dropped-pin marker: (x, y) is the ground point (free drive only).
+    void set_pin_marker(bool visible, int x, int y);
+    // A map press may still become a long press: keep frames coming so it
+    // is noticed while the finger rests.
+    bool wants_frames() const noexcept
+    {
+        return map_drag_ && !map_dragging_ && !long_pressed_ && pointer_down_;
+    }
+    // A late subtitle (dropped pin address) for the card showing `id`.
+    bool set_place_subtitle(const std::string& id, std::string subtitle);
 
 private:
     struct PointerSample { int action; int32_t x; int32_t y; };
@@ -109,6 +119,8 @@ private:
     void layout_street_pill();
     int rail_width() const noexcept;
     void handle_map_gesture(const PointerSample& sample);
+    void check_long_press();
+    void build_pin_marker();
     void clear_object_references() noexcept;
     // Search: results grid or status message, and the query field text.
     void refresh_results();
@@ -186,6 +198,15 @@ private:
     float marker_rotation_ = 0.0f;
     bool map_drag_ = false;      // pressed on bare map
     bool map_dragging_ = false;  // moved past the slop: a drag, not a tap
+    bool long_pressed_ = false;  // this press became a long press
+    bool last_tap_valid_ = false;  // a tap that may start a double tap
+    uint32_t last_tap_tick_ = 0;
+    int32_t last_tap_x_ = 0;
+    int32_t last_tap_y_ = 0;
+    lv_obj_t* pin_marker_ = nullptr;
+    bool pin_visible_ = false;
+    int pin_x_ = 0;
+    int pin_y_ = 0;
     int32_t drag_last_x_ = 0;
     int32_t drag_last_y_ = 0;
     int32_t press_x_ = 0;

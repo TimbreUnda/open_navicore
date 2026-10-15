@@ -169,10 +169,11 @@ void test_car_controls()
         // Dragging bare map reports absolute positions from the press point,
         // in the same frame; dragging from a control does not.
         MapDrag drag;
-        int tap_x = 0, tap_y = 0;
+        MapTouch touch;
         // The tap on the hidden recenter button landed on bare map.
-        assert(model.take_map_tap(tap_x, tap_y) && tap_x == column_x);
-        assert(!model.take_map_tap(tap_x, tap_y));
+        assert(model.take_map_touch(touch) && touch.gesture == MapGesture::Tap &&
+               touch.x == column_x);
+        assert(!model.take_map_touch(touch));
         view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 600, 300);
         view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 640, 320);
         frame(view);
@@ -183,7 +184,7 @@ void test_car_controls()
         assert(model.take_drag(drag) && !drag.started && !drag.active);
         assert(drag.x == 650 && drag.y == 330);
         assert(!model.take_drag(drag));
-        assert(!model.take_map_tap(tap_x, tap_y));
+        assert(!model.take_map_touch(touch));
         // A small wobble is still a tap, not a drag.
         view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 600, 300);
         view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 604, 303);
@@ -191,15 +192,60 @@ void test_car_controls()
         view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 604, 303);
         settle(view, 2);
         assert(!model.take_drag(drag));
-        assert(model.take_map_tap(tap_x, tap_y) && tap_x == 600 && tap_y == 300);
-        assert(!model.take_map_tap(tap_x, tap_y));
+        assert(model.take_map_touch(touch) && touch.gesture == MapGesture::Tap &&
+               touch.x == 600 && touch.y == 300);
+        assert(!model.take_map_touch(touch));
         view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, column_x, button_y(0));
         view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, column_x - 60, 300);
         view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, column_x - 60, 300);
         settle(view, 4);
         assert(!model.take_drag(drag));
-        assert(!model.take_map_tap(tap_x, tap_y));
+        assert(!model.take_map_touch(touch));
         (void)commands(model);
+        settle(view, 30);  // past the double-tap window
+
+        // A second tap close by and soon is a double tap at the first tap;
+        // the first tap still acts at once.
+        tap(view, 600, 300);
+        tap(view, 610, 296);
+        assert(model.take_map_touch(touch) && touch.gesture == MapGesture::Tap);
+        assert(model.take_map_touch(touch) && touch.gesture == MapGesture::DoubleTap &&
+               touch.x == 600 && touch.y == 300);
+        assert(!model.take_map_touch(touch));
+        // A third tap starts over; one far away or late is just a tap.
+        tap(view, 600, 300);
+        tap(view, 700, 300);
+        settle(view, 30);
+        tap(view, 700, 300);
+        for (int i = 0; i < 3; ++i)
+            assert(model.take_map_touch(touch) && touch.gesture == MapGesture::Tap);
+        assert(!model.take_map_touch(touch));
+        settle(view, 30);
+
+        // Holding still for 600 ms is a long press, noticed while the
+        // finger rests (frames keep coming); no tap or drag follows.
+        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 620, 280);
+        frame(view);
+        assert(view.wants_frames());
+        settle(view, 30);  // 480 ms
+        assert(!model.take_map_touch(touch));
+        settle(view, 10);
+        assert(model.take_map_touch(touch) && touch.gesture == MapGesture::LongPress &&
+               touch.x == 620 && touch.y == 280);
+        assert(!view.wants_frames());
+        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 700, 300);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 700, 300);
+        settle(view, 2);
+        assert(!model.take_map_touch(touch) && !model.take_drag(drag));
+        // Moving past the slop first makes it a drag, never a long press.
+        view.pointer(MOCK_NAV_BACKEND_POINTER_PRESS, 620, 280);
+        view.pointer(MOCK_NAV_BACKEND_POINTER_MOVE, 660, 280);
+        settle(view, 45);
+        assert(!view.wants_frames());
+        view.pointer(MOCK_NAV_BACKEND_POINTER_RELEASE, 660, 280);
+        settle(view, 2);
+        assert(!model.take_map_touch(touch));
+        assert(model.take_drag(drag) && !drag.active);
 
         // The camera-driven marker draws inside the map area only.
         assert(!opaque_near(view, 680, 400));
@@ -335,6 +381,21 @@ void test_place_card_and_back()
     assert(!model.destination() && model.route_revision() > cancelled);
     assert(!view.apply_routes(cancelled, {route}));
     assert(model.screen() == Screen::FreeDrive);
+
+    // A dropped pin is a place card too: its address arrives later (for
+    // that pin only), and Navigate routes to it.
+    Destination pin{"pin:50.44000, 30.52000", "Dropped pin", "50.44000, 30.52000", "",
+                    50.44, 30.52};
+    assert(view.show_place_card(pin, "pin"));
+    assert(model.place_card_is_pin());
+    assert(!view.set_place_subtitle("pin:other", "вулиця Інша"));
+    assert(view.set_place_subtitle(pin.id, "вулиця Хрещатик, 22 · 0.4 km"));
+    assert(model.place_card()->subtitle == "вулиця Хрещатик, 22 · 0.4 km");
+    assert(view.select_place(*model.place_card()));
+    assert(model.destination() && model.destination()->id == pin.id);
+    assert(view.close_place_card() && !model.place_card_is_pin());
+    view.set_pin_marker(true, 600, 300);  // no card, no crash; hidden on rebuild
+    settle(view, 2);
 
     // From Search the old flow stays: preview Back returns to the results.
     view.open_search();

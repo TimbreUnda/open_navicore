@@ -115,12 +115,15 @@ struct MapViewState {
     bool heading_up = true;
     bool tilted = false;
     bool night = false;
+    // A heading is known, so heading-up can turn the map; until then the
+    // heading-up button is shown dimmed (the map stays as it is).
+    bool heading_known = true;
 
     bool operator==(const MapViewState& other) const noexcept
     {
         return following == other.following &&
                heading_up == other.heading_up && tilted == other.tilted &&
-               night == other.night;
+               night == other.night && heading_known == other.heading_known;
     }
     bool operator!=(const MapViewState& other) const noexcept
     {
@@ -135,6 +138,14 @@ struct MapDrag {
     bool active = false;   // finger still down
     bool started = false;  // first report of this drag
     int start_x = 0, start_y = 0;
+    int x = 0, y = 0;
+};
+
+// Bare-map touches the engine acts on (taps pick POIs and places, a double
+// tap zooms in there, a long press drops a pin).
+enum class MapGesture { Tap, DoubleTap, LongPress };
+struct MapTouch {
+    MapGesture gesture = MapGesture::Tap;
     int x = 0, y = 0;
 };
 
@@ -182,9 +193,9 @@ public:
     // True when the drag changed since the last call; `started` is reported
     // once per drag.
     bool take_drag(MapDrag& out) noexcept;
-    // Taps on bare map (bounded; oldest kept).
-    void push_map_tap(int x, int y) noexcept;
-    bool take_map_tap(int& x, int& y) noexcept;
+    // Touches on bare map (bounded; oldest kept).
+    void push_map_touch(MapGesture gesture, int x, int y) noexcept;
+    bool take_map_touch(MapTouch& out) noexcept;
     const MapViewState& map_view() const noexcept { return map_view_; }
     bool set_map_view(const MapViewState& state) noexcept;
 
@@ -229,6 +240,14 @@ public:
     const std::string& place_card_icon() const noexcept { return place_icon_; }
     bool show_place_card(Destination place, std::string icon);
     bool close_place_card() noexcept;
+    // A late subtitle (a dropped pin's address) for the card showing `id`.
+    bool set_place_subtitle(const std::string& id, std::string subtitle);
+    // Dropped pins: their card's place id starts with this.
+    static constexpr const char* pin_prefix = "pin:";
+    bool place_card_is_pin() const noexcept
+    {
+        return has_place_ && place_.id.rfind(pin_prefix, 0) == 0;
+    }
 
 private:
     void remember_recent(const Destination& destination);
@@ -250,8 +269,8 @@ private:
     int pan_dy_ = 0;
     MapDrag drag_;
     bool drag_pending_ = false;
-    int taps_[4][2] = {};
-    int tap_count_ = 0;
+    MapTouch touches_[4];
+    int touch_count_ = 0;
     MapViewState map_view_;
     bool moving_ = false;
     std::vector<Destination> recents_;

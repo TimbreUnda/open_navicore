@@ -458,6 +458,7 @@ void NavigationView::build_free_drive()
     using namespace design;
     const int top = content_top(height_);
     build_vehicle_marker();  // below the cards
+    build_pin_marker();
 
     lv_obj_t* search = box(screen_, margin, top + margin, column, tile, surface, 8, true);
     card_shadow(search);
@@ -594,6 +595,10 @@ void NavigationView::apply_map_view()
     // Shows the current mode: an arrow for heading-up, N for north-up.
     set_hidden(control_heading_, !view.heading_up);
     set_hidden(control_north_, view.heading_up);
+    // Heading-up with no heading yet (no movement seen): dimmed.
+    if (control_heading_)
+        lv_obj_set_style_image_recolor(
+            control_heading_, lv_color_hex(view.heading_known ? accent : design::text3), 0);
     set_label_text(control_tilt_, view.tilted ? "3D" : "2D");
     // The button offers the other palette: a sun on the night map.
     if (control_night_)
@@ -612,6 +617,54 @@ void NavigationView::build_vehicle_marker()
     lv_obj_set_clickable(marker, false);
     lv_obj_set_hidden(marker, true);
     vehicle_marker_ = marker;
+}
+
+// Dropped pin (long press): an accent badge standing on a small dot at the
+// ground point. 40 x 54 px; the dot centre is 5 px above the bottom.
+void NavigationView::build_pin_marker()
+{
+    using namespace design;
+    pin_visible_ = false;
+    lv_obj_t* pin = box(screen_, 0, 0, 40, 54, base, 0);
+    lv_obj_set_style_bg_opa(pin, LV_OPA_TRANSP, 0);
+    lv_obj_t* dot = box(pin, 15, 44, 10, 10, accent, 5);
+    ring(dot, 2, white);
+    lv_obj_t* badge = box(pin, 0, 0, 40, 40, accent, 20);
+    ring(badge, 3, white);
+    shadow(badge, 3, 10, 0.45f);
+    icon(badge, &nav_icon_badge_place_26, white, 7, 7);
+    lv_obj_set_hidden(pin, true);
+    pin_marker_ = pin;
+}
+
+void NavigationView::set_pin_marker(bool visible, int x, int y)
+{
+    if (!pin_marker_)
+        return;
+    visible = visible && x >= -40 && x < static_cast<int>(width_) + 40 &&
+              y >= 0 && y < static_cast<int>(height_) + 54;
+    if (!visible) {
+        if (pin_visible_)
+            set_hidden(pin_marker_, true);
+        pin_visible_ = false;
+        return;
+    }
+    if (pin_visible_ && x == pin_x_ && y == pin_y_)
+        return;
+    lv_obj_set_pos(pin_marker_, x - 20, y - 49);
+    set_hidden(pin_marker_, false);
+    pin_visible_ = true;
+    pin_x_ = x;
+    pin_y_ = y;
+}
+
+bool NavigationView::set_place_subtitle(const std::string& id, std::string subtitle)
+{
+    if (!model_.set_place_subtitle(id, std::move(subtitle)))
+        return false;
+    if (built_screen_ == Screen::FreeDrive)
+        rebuild();
+    return true;
 }
 
 void NavigationView::set_vehicle_marker(bool visible, int x, int y,
@@ -1470,7 +1523,11 @@ void NavigationView::clear_object_references() noexcept
     control_night_ = nullptr;
     vehicle_marker_ = nullptr;
     marker_visible_ = false;
+    pin_marker_ = nullptr;
+    pin_visible_ = false;
     map_drag_ = false;
+    long_pressed_ = false;
+    last_tap_valid_ = false;
 }
 
 void NavigationView::pointer(int action, int32_t x, int32_t y)
@@ -1504,6 +1561,7 @@ void NavigationView::process_input(uint32_t elapsed_ms)
     do {
         lv_indev_read(indev_);
     } while (!pointer_queue_.empty() && ++reads < 64);
+    check_long_press();
 }
 
 bool NavigationView::render(uint32_t elapsed_ms)
@@ -1678,21 +1736,32 @@ void NavigationView::pointer_cb(lv_indev_t* indev, lv_indev_data_t* data)
 }
 
 // Bare-map gestures: a press that moves past the slop is a drag (absolute
-// positions to the model); a short press that stays inside it is a tap.
+// positions to the model); a short press that stays inside it is a tap, and
+// a second tap close to the first soon after is a double tap (the first tap
+// still acts at once, so cards do not wait or flicker). A press held inside
+// the slop for long_press_ms is a long press (check_long_press); the drag
+// and the tap of that press are then dropped.
 void NavigationView::handle_map_gesture(const PointerSample& sample)
 {
     constexpr int32_t slop_px = 10;
     constexpr uint32_t tap_ms = 500;
+    constexpr uint32_t double_tap_ms = 350;  // first release to second release
+    constexpr int32_t double_tap_px = 30;
     if (sample.action == MOCK_NAV_BACKEND_POINTER_PRESS) {
         map_drag_ = false;
         map_dragging_ = false;
+        long_pressed_ = false;
         if (built_screen_ == Screen::Search || !screen_)
             return;
         lv_point_t point{sample.x, sample.y};
         lv_obj_t* hit = lv_indev_search_obj(screen_, &point);
         // Only presses on bare map (the transparent screen or the
-        // non-clickable vehicle marker) pan the map.
-        if (hit == screen_ || hit == nullptr || hit == vehicle_marker_) {
+        // non-clickable vehicle and pin markers) pan the map.
+        bool on_pin = false;
+        for (lv_obj_t* object = hit; object && pin_marker_ && !on_pin;
+             object = lv_obj_get_parent(object))
+            on_pin = object == pin_marker_;
+        if (hit == screen_ || hit == nullptr || hit == vehicle_marker_ || on_pin) {
             map_drag_ = true;
             press_x_ = drag_last_x_ = sample.x;
             press_y_ = drag_last_y_ = sample.y;
@@ -1702,6 +1771,14 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
     }
     if (!map_drag_)
         return;
+    if (long_pressed_) {
+        if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
+            map_drag_ = false;
+            long_pressed_ = false;
+            last_tap_valid_ = false;
+        }
+        return;
+    }
     drag_last_x_ = sample.x;
     drag_last_y_ = sample.y;
     if (!map_dragging_) {
@@ -1714,13 +1791,39 @@ void NavigationView::handle_map_gesture(const PointerSample& sample)
         model_.move_drag(sample.x, sample.y);
     }
     if (sample.action == MOCK_NAV_BACKEND_POINTER_RELEASE) {
-        if (map_dragging_)
+        if (map_dragging_) {
             model_.end_drag();
-        else if (lv_tick_elaps(press_tick_) <= tap_ms)
-            model_.push_map_tap(press_x_, press_y_);
+            last_tap_valid_ = false;
+        } else if (lv_tick_elaps(press_tick_) <= tap_ms) {
+            const bool second = last_tap_valid_ &&
+                lv_tick_elaps(last_tap_tick_) <= double_tap_ms &&
+                std::abs(press_x_ - last_tap_x_) <= double_tap_px &&
+                std::abs(press_y_ - last_tap_y_) <= double_tap_px;
+            if (second) {
+                model_.push_map_touch(MapGesture::DoubleTap, last_tap_x_, last_tap_y_);
+                last_tap_valid_ = false;
+            } else {
+                model_.push_map_touch(MapGesture::Tap, press_x_, press_y_);
+                last_tap_valid_ = true;
+                last_tap_tick_ = lv_tick_get();
+                last_tap_x_ = press_x_;
+                last_tap_y_ = press_y_;
+            }
+        }
         map_drag_ = false;
         map_dragging_ = false;
     }
+}
+
+void NavigationView::check_long_press()
+{
+    constexpr uint32_t long_press_ms = 600;
+    if (!map_drag_ || map_dragging_ || long_pressed_ || !pointer_down_ ||
+        lv_tick_elaps(press_tick_) < long_press_ms)
+        return;
+    long_pressed_ = true;
+    last_tap_valid_ = false;
+    model_.push_map_touch(MapGesture::LongPress, press_x_, press_y_);
 }
 
 void NavigationView::map_command_cb(lv_event_t* event)

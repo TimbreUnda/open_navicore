@@ -238,6 +238,48 @@ int main()
         assert(near(pose.azimuth_degrees, 120.0, 0.1));
     }
     {
+        // Double tap: zoom in around the tapped ground point. Free camera:
+        // the point keeps its screen position through the whole transition.
+        auto camera = controller();
+        CameraController::Vehicle none;
+        camera.begin_free(50.45, 30.52);
+        auto pose = camera.update(none, 0.016);
+        const float z0 = pose.zoom;
+        const double at_lat = 50.46, at_lon = 30.50;
+        camera.zoom_at(1.0f, at_lat, at_lon);
+        bool checked_middle = false;
+        for (int i = 0; i < 60; ++i) {
+            pose = camera.update(none, 0.016);
+            const double scale = std::pow(2.0, static_cast<double>(z0 - pose.zoom));
+            assert(near(pose.latitude, at_lat + (50.45 - at_lat) * scale, 1e-9));
+            assert(near(pose.longitude, at_lon + (30.52 - at_lon) * scale, 1e-9));
+            checked_middle = checked_middle || (pose.zoom > z0 + 0.3f && pose.zoom < z0 + 0.7f);
+        }
+        assert(checked_middle && near(pose.zoom, z0 + 1.0f, 1e-4));
+        assert(near(pose.latitude, (at_lat + 50.45) / 2.0, 1e-9));
+        // A drag afterwards is not pulled back to the anchor.
+        camera.set_free_location(50.40, 30.40);
+        pose = camera.update(none, 0.016);
+        assert(near(pose.latitude, 50.40, 1e-9));
+
+        // Following a vehicle it zooms like the + button and keeps following.
+        auto following = controller();
+        (void)following.update(vehicle(0.0, 0.0), 0.016);
+        following.zoom_at(1.0f, 50.46, 30.50);
+        for (int i = 0; i < 60; ++i)
+            pose = following.update(vehicle(0.0, 0.0), 0.016);
+        assert(pose.following && near(pose.latitude, 50.45, 1e-9));
+        assert(near(pose.zoom, settings.follow_base_zoom + 1.0f, 1e-4));
+        assert(following.user_zoom_offset() == 1.0f);
+
+        // No vehicle in a follow mode: the view becomes free, and zooms there.
+        auto bench = controller();
+        (void)bench.update(none, 0.016);
+        assert(!bench.heading_known());
+        bench.zoom_at(1.0f, 50.0, 30.0);
+        assert(bench.mode() == CameraController::Mode::Free);
+    }
+    {
         // 1 Hz fixes heading east at ~20 m/s: heading/speed are derived and
         // the position is extrapolated between fixes, not stepped.
         MotionEstimator motion;

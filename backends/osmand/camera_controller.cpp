@@ -96,15 +96,40 @@ void CameraController::toggle_orientation() noexcept
             ? 0.0f : static_cast<float>(last_heading_);
 }
 
+void CameraController::zoom_at(float steps, double latitude, double longitude) noexcept
+{
+    if (following_vehicle_ && (mode_ == Mode::HeadingUp || mode_ == Mode::NorthUp)) {
+        zoom_by(steps);
+        return;
+    }
+    idle_seconds_ = 0.0;
+    if (mode_ != Mode::Free) {
+        // Overview, or a follow mode without a vehicle: it shows the free
+        // centre already; keep the view and its rotation.
+        free_azimuth_ = azimuth_;
+        free_tilted_ = last_elevation_ < 90.0f;
+        mode_ = Mode::Free;
+    }
+    anchored_ = true;
+    anchor_latitude_ = latitude;
+    anchor_longitude_ = longitude;
+    anchor_centre_latitude_ = free_latitude_;
+    anchor_centre_longitude_ = free_longitude_;
+    anchor_zoom_ = zoom_;
+    free_zoom_ = std::clamp(zoom_ + steps, settings_.min_zoom, settings_.max_zoom);
+}
+
 void CameraController::recenter() noexcept
 {
     mode_ = follow_mode_;
     idle_seconds_ = 0.0;
+    anchored_ = false;
 }
 
 void CameraController::begin_free(double latitude, double longitude) noexcept
 {
     idle_seconds_ = 0.0;
+    anchored_ = false;
     if (mode_ != Mode::Free) {
         free_zoom_ = zoom_;
         free_azimuth_ = azimuth_;
@@ -118,6 +143,7 @@ void CameraController::begin_free(double latitude, double longitude) noexcept
 void CameraController::set_free_location(double latitude, double longitude) noexcept
 {
     idle_seconds_ = 0.0;
+    anchored_ = false;
     free_latitude_ = latitude;
     free_longitude_ = longitude;
 }
@@ -127,6 +153,7 @@ void CameraController::pan(int dx, int dy) noexcept
     idle_seconds_ = 0.0;
     if (dx == 0 && dy == 0)
         return;
+    anchored_ = false;
     if (mode_ != Mode::Free) {
         free_tilted_ = false;
         free_azimuth_ = azimuth_;
@@ -154,6 +181,7 @@ void CameraController::overview(double min_latitude, double min_longitude,
     if (max_latitude < min_latitude || max_longitude < min_longitude)
         return;
     idle_seconds_ = 0.0;
+    anchored_ = false;
     free_latitude_ = (min_latitude + max_latitude) * 0.5;
     free_longitude_ = (min_longitude + max_longitude) * 0.5;
     const double cos_latitude =
@@ -251,6 +279,16 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
                            azimuth_alpha));
     }
     last_target_zoom_ = target_zoom;
+    if (anchored_ && mode_ == Mode::Free) {
+        // Scaling about the anchor keeps it on the same screen point.
+        const double scale = std::pow(2.0, static_cast<double>(anchor_zoom_ - zoom_));
+        free_latitude_ = anchor_latitude_ +
+                         (anchor_centre_latitude_ - anchor_latitude_) * scale;
+        free_longitude_ = anchor_longitude_ +
+                          (anchor_centre_longitude_ - anchor_longitude_) * scale;
+        if (!transition_)
+            anchored_ = false;
+    }
 
     const int centre_x = viewport_.left + viewport_.width / 2;
     const int centre_y = viewport_.top + viewport_.height / 2;

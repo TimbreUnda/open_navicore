@@ -1509,10 +1509,13 @@ struct VectorMap::Impl {
     std::vector<std::uint16_t> label_indices;
     // POIs placed in the last frame, for pick_poi(). Reused every frame;
     // the label records stay valid until the next draw() takes new tiles.
+    // Place names (city, town...) are recorded too: label is null, place set.
     struct PlacedPoi {
         const PoiLabel* label;
         const TileKey* key;
         float x, y, half;  // icon centre and half size, pixels
+        const PlaceLabel* place = nullptr;
+        float half_width = 0.0f, half_height = 0.0f;  // place name box
     };
     std::vector<PlacedPoi> placed_pois;
 
@@ -2689,6 +2692,8 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
                 continue;
             accepted.push_back(box);
             emit_label(place.key, place.key, *place.image, box, to_world(*c.key, place.pos), at);
+            placed_pois.push_back({nullptr, c.key, at.x, at.y, 0.0f, &place, box.half_width,
+                                   box.half_height});
             ++places;
         }
     }
@@ -2753,22 +2758,33 @@ bool VectorMap::pick_poi(float x, float y, float radius, PoiPick& out) const
     const auto& d = *impl_;
     const Impl::PlacedPoi* best = nullptr;
     float best_distance = 0.0f;
-    for (const auto& placed : d.placed_pois) {
-        const float distance = std::hypot(placed.x - x, placed.y - y);
-        if (distance > placed.half + radius)
-            continue;
-        if (!best || distance < best_distance) {
-            best = &placed;
-            best_distance = distance;
+    // POI icons first; a place name only when no POI is under the finger.
+    for (const bool places : {false, true}) {
+        for (const auto& placed : d.placed_pois) {
+            if ((placed.place != nullptr) != places)
+                continue;
+            const float distance = std::hypot(placed.x - x, placed.y - y);
+            const bool hit = places
+                ? std::fabs(placed.x - x) <= placed.half_width + radius / 2.0f &&
+                      std::fabs(placed.y - y) <= placed.half_height + radius / 2.0f
+                : distance <= placed.half + radius;
+            if (hit && (!best || distance < best_distance)) {
+                best = &placed;
+                best_distance = distance;
+            }
         }
+        if (best)
+            break;
     }
     if (!best)
         return false;
     const Placement pl = tile_placement(*best->key);
-    out.name = best->label->name;
-    out.icon = best->label->icon;
-    out.x31 = pl.ox + best->label->pos[0] * pl.k;
-    out.y31 = pl.oy + best->label->pos[1] * pl.k;
+    const Point& pos = best->place ? best->place->pos : best->label->pos;
+    out.name = best->place ? best->place->name : best->label->name;
+    out.icon = best->place ? std::string() : best->label->icon;
+    out.place = best->place ? best->place->place : std::string();
+    out.x31 = pl.ox + pos[0] * pl.k;
+    out.y31 = pl.oy + pos[1] * pl.k;
     out.screen_x = best->x;
     out.screen_y = best->y;
     return true;

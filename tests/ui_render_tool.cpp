@@ -259,6 +259,21 @@ int main(int argc, char** argv)
         settle(view);
         ok = write(view, out + (failed ? "/place_failed.argb" : "/place_calculating.argb")) && ok;
     }
+    {
+        // Dropped pin (long press) with its address; heading-up dimmed
+        // (no heading known yet).
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        MapViewState state;
+        state.heading_known = false;
+        (void)model.set_map_view(state);
+        settle(view);
+        (void)view.show_place_card({"pin:50.44000, 30.52000", "Dropped pin",
+                                    "вулиця Хрещатик, 22 · 0.4 km", "", 50.44, 30.52}, "pin");
+        view.set_pin_marker(true, 640, 300);
+        settle(view);
+        ok = write(view, out + "/pin.argb") && ok;
+    }
     std::puts(ok ? "ui-render-tool: ok" : "ui-render-tool: write failed");
     return ok ? 0 : 1;
 }

@@ -95,6 +95,11 @@ public:
     Mode mode() const noexcept { return mode_; }
     Mode follow_mode() const noexcept { return follow_mode_; }
     bool zoom_transition() const noexcept { return transition_; }
+    bool heading_known() const noexcept { return has_heading_; }
+    // Zooms by `steps` keeping the ground point (latitude, longitude) where
+    // it is on screen (double tap). While following a vehicle it zooms like
+    // the buttons and keeps following.
+    void zoom_at(float steps, double latitude, double longitude) noexcept;
     float user_zoom_offset() const noexcept { return user_zoom_offset_; }
 
     // Advances smoothing by `dt_seconds` and returns the pose to apply.
@@ -126,6 +131,12 @@ private:
     bool transition_ = false;
     float transition_from_ = 16.0f;
     double transition_t_ = 0.0;
+    // zoom_at(): the free centre scales towards this ground point as the
+    // zoom moves away from anchor_zoom_, so the point stays put.
+    bool anchored_ = false;
+    double anchor_latitude_ = 0.0, anchor_longitude_ = 0.0;
+    double anchor_centre_latitude_ = 0.0, anchor_centre_longitude_ = 0.0;
+    float anchor_zoom_ = 16.0f;
     int last_anchor_x_ = 0;
     int last_anchor_y_ = 0;
     float last_elevation_ = 90.0f;
