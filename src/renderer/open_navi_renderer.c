@@ -916,7 +916,8 @@ static void *renderer_thread(void *unused)
     while (status == 0) {
         int drain_result;
         int take_result;
-        drain_result = drain_platform_pointer();
+        drain_result = open_navi_renderer_platform_input_pending()
+                           ? drain_platform_pointer() : 0;
         if (drain_result < 0) {
             status = -1;
             break;
