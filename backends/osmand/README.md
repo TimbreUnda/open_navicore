@@ -185,6 +185,9 @@ legacy transport source; it does not broaden the patch's file or hunk scope.
 [`qnx-hh-alternatives.patch`](../../patches/osmand-core/qnx-hh-alternatives.patch)
 (apply the same way, after the first) fixes HH alternative routes in
 core-legacy, which otherwise never found any (see the patch header).
+[`qnx-routing-decoded-cache.patch`](../../patches/osmand-core/qnx-routing-decoded-cache.patch)
+keeps decoded route data between tile unloads and requests (about a third
+faster routing).
 
 Routing uses the map's highway-hierarchy (HH) sections when it has them,
 with A* as the fallback: a 15 km Kyiv route took 36 s with A* in the

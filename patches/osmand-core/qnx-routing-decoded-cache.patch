@@ -1,0 +1,112 @@
+Decoded route data cache in core-legacy's RoutingContext.
+
+unloadAllData() runs before every HH detailed segment and every start/end
+search (it resets the search state, which lives in the RouteSegment
+wrappers of loaded tiles) and threw away the decoded RouteDataObjects too, so
+the same OBF blocks were decoded again: about 1,100 times for one 15 km
+route, and again for every request. Decoding is CPU, not I/O (the same
+times with the map in RAM). A process-wide cache keyed by (routing index,
+block) now keeps the decoded objects (48 MB cap, cleared when full); each
+load still runs acceptLine() and the exclusions and builds fresh
+RouteSegments. Not used with conditional tags, direction points or
+geocoding contexts, which change the objects.
+
+Bench (route_bench, hh + 2 alternatives, identical results): 15 km
+5.2 s -> 4.0 s first request, 3.4 s repeated; 25 km 7.3 -> 5.5 / 4.8 s.
+
+Apply from the OsmAnd source-aggregate root after qnx-legacy-routing.patch.
+
+--- a/core-legacy/native/src/routingContext.h
++++ b/core-legacy/native/src/routingContext.h
+@@ -2,6 +2,7 @@
+ #define _OSMAND_ROUTING_CONTEXT_H
+ #include <algorithm>
+ #include <ctime>
++#include <mutex>
+ 
+ #include "CommonCollections.h"
+ #include "binaryRead.h"
+@@ -20,6 +21,48 @@
+ 
+ enum class RouteCalculationMode { BASE, NORMAL, COMPLEX };
+ 
++// Decoded route data per OBF block, shared by every routing context of the
++// process. unloadAllData() (called before each HH detailed segment and each
++// start/end search) used to throw the decoded roads away and decode the same
++// blocks again; only the RouteSegment wrappers, which carry the search
++// state, need to be rebuilt. Objects are kept as decoded, before acceptLine()
++// and exclusions, which still run on every load. Not used when conditional
++// tags or direction points modify the objects.
++struct DecodedRouteDataCache {
++	typedef std::pair<const void*, int64_t> Key;
++	struct KeyHash {
++		size_t operator()(const Key& k) const {
++			return std::hash<const void*>()(k.first) ^ (std::hash<int64_t>()(k.second) * 31);
++		}
++	};
++	std::mutex mutex;
++	UNORDERED(map)<Key, std::vector<SHARED_PTR<RouteDataObject>>, KeyHash> blocks;
++	size_t bytes = 0;
++	static const size_t LIMIT = 48u << 20;
++
++	static DecodedRouteDataCache& instance() {
++		static DecodedRouteDataCache cache;
++		return cache;
++	}
++	bool get(const Key& key, std::vector<SHARED_PTR<RouteDataObject>>& out) {
++		std::lock_guard<std::mutex> lock(mutex);
++		auto it = blocks.find(key);
++		if (it == blocks.end()) return false;
++		out = it->second;
++		return true;
++	}
++	void put(const Key& key, const std::vector<SHARED_PTR<RouteDataObject>>& objects) {
++		size_t size = 0;
++		for (auto& o : objects) size += o->getSize();
++		std::lock_guard<std::mutex> lock(mutex);
++		if (bytes + size > LIMIT) {
++			blocks.clear();
++			bytes = 0;
++		}
++		if (blocks.emplace(key, objects).second) bytes += size;
++	}
++};
++
+ struct RoutingSubregionTile {
+ 	RouteSubregion subregion;
+ 	// make it without get/set for fast access
+@@ -342,14 +385,26 @@
+ 						progress->loadedTiles++;
+ 					}
+ 					subregions[j]->setLoaded();
+-					SearchQuery q;
+-					vector<RouteDataObject*> res;
+-					searchRouteDataForSubRegion(&q, res, &subregions[j]->subregion, geocoding);
+-					vector<RouteDataObject*>::iterator i = res.begin();
+-					for (; i != res.end(); i++) {
+-						if (*i != NULL) {
+-							SHARED_PTR<RouteDataObject> o;
+-							o.reset(*i);
++					std::vector<SHARED_PTR<RouteDataObject>> decoded;
++					const bool cacheable = conditionalTime == 0 && points.empty() && !geocoding;
++					const DecodedRouteDataCache::Key cacheKey(subregions[j]->subregion.routingIndex.get(),
++						((int64_t)subregions[j]->subregion.left << 31) + subregions[j]->subregion.filePointer);
++					if (!cacheable || !DecodedRouteDataCache::instance().get(cacheKey, decoded)) {
++						SearchQuery q;
++						vector<RouteDataObject*> res;
++						searchRouteDataForSubRegion(&q, res, &subregions[j]->subregion, geocoding);
++						for (RouteDataObject* r : res) {
++							if (r != NULL) {
++								decoded.push_back(SHARED_PTR<RouteDataObject>(r));
++							}
++						}
++						if (cacheable) {
++							DecodedRouteDataCache::instance().put(cacheKey, decoded);
++						}
++					}
++					for (auto i = decoded.begin(); i != decoded.end(); i++) {
++						if (*i) {
++							SHARED_PTR<RouteDataObject> o = *i;
+ 							if (conditionalTime != 0) {
+ 								o->processConditionalTags(conditionalTimeStr);
+ 							}
