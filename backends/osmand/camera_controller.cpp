@@ -108,6 +108,7 @@ void CameraController::zoom_at(float steps, double latitude, double longitude) n
         // centre already; keep the view and its rotation.
         free_azimuth_ = azimuth_;
         free_tilted_ = last_elevation_ < 90.0f;
+        free_elevation_ = free_tilted_ ? last_elevation_ : settings_.tilted_elevation;
         mode_ = Mode::Free;
     }
     anchored_ = true;
@@ -134,6 +135,7 @@ void CameraController::begin_free(double latitude, double longitude) noexcept
         free_zoom_ = zoom_;
         free_azimuth_ = azimuth_;
         free_tilted_ = last_elevation_ < 90.0f;
+        free_elevation_ = free_tilted_ ? last_elevation_ : settings_.tilted_elevation;
         mode_ = Mode::Free;
     }
     free_latitude_ = latitude;
@@ -201,6 +203,26 @@ void CameraController::overview(double min_latitude, double min_longitude,
     mode_ = Mode::Overview;
 }
 
+void CameraController::set_maneuver(bool active, double distance_metres, bool tight) noexcept
+{
+    maneuver_active_ = active;
+    maneuver_distance_m_ = std::max(0.0, distance_metres);
+    maneuver_tight_ = tight;
+}
+
+float CameraController::dynamic_elevation(double speed_mps) const noexcept
+{
+    const double range = settings_.fast_speed_mps - settings_.slow_speed_mps;
+    const float fast = range > 0.0
+        ? static_cast<float>(std::clamp((speed_mps - settings_.slow_speed_mps) / range, 0.0, 1.0))
+        : 0.0f;
+    float elevation = settings_.tilted_elevation +
+                      (settings_.tilted_elevation_fast - settings_.tilted_elevation) * fast;
+    elevation += (maneuver_tight_ ? settings_.tight_elevation : settings_.maneuver_elevation) *
+                 maneuver_factor_;
+    return std::min(elevation, settings_.max_tilted_elevation);
+}
+
 CameraController::Pose CameraController::update(const Vehicle& vehicle,
                                                 double dt_seconds) noexcept
 {
@@ -221,11 +243,21 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
         has_heading_ = true;
     }
 
+    // 0 far from the next turn, 1 at it; eased, so passing the turn (the
+    // distance jumps to the next one) relaxes smoothly.
+    const double maneuver_target = maneuver_active_ && settings_.maneuver_distance_m > 0.0f
+        ? 1.0 - std::clamp(maneuver_distance_m_ / settings_.maneuver_distance_m, 0.0, 1.0)
+        : 0.0;
+    maneuver_factor_ += static_cast<float>(
+        (maneuver_target - maneuver_factor_) *
+        smoothing(dt_seconds, settings_.maneuver_time_constant_s));
+
     float target_zoom;
     float target_azimuth;
     if (follow) {
         target_zoom = std::clamp(
-            speed_zoom(settings_, vehicle.speed_mps) + user_zoom_offset_,
+            speed_zoom(settings_, vehicle.speed_mps) + user_zoom_offset_ +
+                settings_.maneuver_zoom * maneuver_factor_,
             settings_.min_zoom, settings_.max_zoom);
         target_azimuth = mode_ == Mode::HeadingUp
             ? static_cast<float>(last_heading_) : 0.0f;
@@ -290,16 +322,39 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
             anchored_ = false;
     }
 
+    // 3D: heading-up following tilts by speed and towards a coming turn;
+    // a free camera keeps the tilt it was dragged at; everything else is
+    // flat. The angle eases like zoom and azimuth (also for 2D <-> 3D).
+    const bool dynamic_tilt = tilted_ && follow && mode_ == Mode::HeadingUp;
+    float target_elevation = 90.0f;
+    if (dynamic_tilt)
+        target_elevation = dynamic_elevation(vehicle.speed_mps);
+    else if (tilted_ && mode_ == Mode::Free && free_tilted_)
+        target_elevation = free_elevation_;
+    if (!elevation_initialised_) {
+        elevation_ = target_elevation;
+        elevation_initialised_ = true;
+    } else {
+        elevation_ += static_cast<float>((target_elevation - elevation_) *
+            smoothing(dt_seconds, settings_.elevation_time_constant_s));
+        if (std::fabs(target_elevation - elevation_) < 0.05f)
+            elevation_ = target_elevation;
+    }
+
     const int centre_x = viewport_.left + viewport_.width / 2;
     const int centre_y = viewport_.top + viewport_.height / 2;
     if (follow) {
         pose.latitude = vehicle.latitude;
         pose.longitude = vehicle.longitude;
+        // The flatter the view, the lower the car, so the road ahead gets
+        // the space: the 2D anchor down to 60 degrees, then lower to 40.
+        const float flat = std::clamp((60.0f - elevation_) / 20.0f, 0.0f, 1.0f);
+        const float anchor = settings_.heading_up_anchor +
+            (settings_.heading_up_anchor_flat - settings_.heading_up_anchor) * flat;
         pose.anchor_x = mode_ == Mode::HeadingUp
             ? centre_x + settings_.heading_up_anchor_dx : centre_x;
         pose.anchor_y = mode_ == Mode::HeadingUp
-            ? viewport_.top + static_cast<int>(viewport_.height *
-                                               settings_.heading_up_anchor)
+            ? viewport_.top + static_cast<int>(viewport_.height * anchor)
             : centre_y;
         free_latitude_ = vehicle.latitude;
         free_longitude_ = vehicle.longitude;
@@ -312,9 +367,7 @@ CameraController::Pose CameraController::update(const Vehicle& vehicle,
     pose.zoom = zoom_;
     pose.tile_zoom = transition_ ? std::min(transition_from_, target_zoom) : -1.0f;
     pose.azimuth_degrees = azimuth_;
-    pose.elevation_degrees =
-        tilted_ && ((follow && mode_ == Mode::HeadingUp) || (mode_ == Mode::Free && free_tilted_))
-        ? settings_.tilted_elevation : 90.0f;
+    pose.elevation_degrees = elevation_;
     last_elevation_ = pose.elevation_degrees;
     pose.following = follow;
     last_anchor_x_ = pose.anchor_x;

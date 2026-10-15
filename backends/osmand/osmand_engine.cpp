@@ -618,6 +618,19 @@ bool OsmAndEngine::apply_camera()
     while (navigation_->take_map_touch(map_touch_))
         handle_map_touch(map_touch_);
 
+    {
+        // The coming turn shapes the 3D camera (steeper, a little closer).
+        const auto& guidance = navigation_->guidance();
+        const auto kind = guidance.maneuver.kind;
+        const bool turn = screen == ui::Screen::Guidance && guidance.position_available &&
+                          !guidance.arrived && kind != ui::ManeuverKind::Straight &&
+                          kind != ui::ManeuverKind::Arrive;
+        const bool tight = kind == ui::ManeuverKind::Roundabout ||
+                           kind == ui::ManeuverKind::SharpLeft ||
+                           kind == ui::ManeuverKind::SharpRight ||
+                           kind == ui::ManeuverKind::UTurn;
+        camera_.set_maneuver(turn, guidance.distance_to_maneuver_metres, tight);
+    }
     const auto vehicle = motion_.predict(now_s);
     const auto pose = camera_.update(vehicle, dt);
     vector_view_.tile_zoom_limit = pose.tile_zoom;

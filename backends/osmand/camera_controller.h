@@ -56,7 +56,21 @@ public:
         float slow_speed_mps = 8.0f;     // ~30 km/h
         float zoom_per_doubling = 0.75f; // zoom out per doubling of speed
         float min_speed_zoom = 14.5f;
-        float tilted_elevation = 60.0f;
+        // 3D (heading-up following): the angle from the ground plane
+        // (90 = top-down) at or below slow_speed_mps, flatter up to
+        // fast_speed_mps; steeper approaching a turn (by up to
+        // maneuver_elevation, tight_elevation for roundabouts and sharp
+        // turns, within maneuver_distance_m), with a little zoom in.
+        float tilted_elevation = 50.0f;
+        float tilted_elevation_fast = 40.0f;
+        float fast_speed_mps = 25.0f;       // ~90 km/h
+        float max_tilted_elevation = 75.0f;
+        float maneuver_distance_m = 400.0f; // the turn countdown
+        float maneuver_elevation = 12.0f;
+        float tight_elevation = 20.0f;
+        float maneuver_zoom = 0.5f;
+        float maneuver_time_constant_s = 1.0f;
+        float elevation_time_constant_s = 0.8f;
         float zoom_time_constant_s = 1.2f;
         float zoom_transition_s = 0.6f;  // eased zoom jumps
         float zoom_jump = 0.25f;         // target change that starts one
@@ -65,6 +79,7 @@ public:
         float recenter_after_s = 10.0f;
         // Heading-up car position (design: 24 px left of centre, y 400/574).
         float heading_up_anchor = 0.697f;   // fraction of map height from top
+        float heading_up_anchor_flat = 0.78f;  // at 40 degrees and flatter
         int heading_up_anchor_dx = -24;     // px from the map-area centre
     };
 
@@ -80,6 +95,9 @@ public:
     // without a vehicle: north-up to 0, heading-up to the last known heading.
     void toggle_orientation() noexcept;
     void set_tilt(bool tilted) noexcept { tilted_ = tilted; }
+    // The next turn during guidance: its distance, and whether it is tight
+    // (roundabout, sharp turn, U-turn). active=false outside guidance.
+    void set_maneuver(bool active, double distance_metres, bool tight) noexcept;
     bool tilted() const noexcept { return tilted_; }
     void recenter() noexcept;
     // Pans the free camera by a screen delta in pixels.
@@ -126,6 +144,14 @@ private:
     double last_heading_ = 0.0;
     bool has_heading_ = false;
     bool following_vehicle_ = false;  // the last update followed a vehicle
+    float dynamic_elevation(double speed_mps) const noexcept;
+    bool maneuver_active_ = false;
+    bool maneuver_tight_ = false;
+    double maneuver_distance_m_ = 0.0;
+    float maneuver_factor_ = 0.0f;   // eased 0..1 closeness to the turn
+    bool elevation_initialised_ = false;
+    float elevation_ = 90.0f;
+    float free_elevation_ = 50.0f;   // tilt a dragged 3D view keeps
     float free_azimuth_ = 0.0f;   // target azimuth of the free camera
     float last_target_zoom_ = 16.0f;
     bool transition_ = false;

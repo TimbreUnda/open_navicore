@@ -83,16 +83,26 @@ int main()
         assert(near(pose.azimuth_degrees, 0.0, 1e-3));
         assert(pose.elevation_degrees == 90.0f);
         camera.toggle_orientation();
-        const auto tilted = camera.update(vehicle(120.0, 10.0), 0.016);
-        assert(tilted.elevation_degrees == settings.tilted_elevation);
+        // The tilt eases in (no jump), to the angle for 10 m/s.
+        const auto easing = camera.update(vehicle(120.0, 10.0), 0.016);
+        assert(easing.elevation_degrees < 90.0f && easing.elevation_degrees > 85.0f);
+        CameraController::Pose tilted;
+        for (int i = 0; i < 400; ++i)
+            tilted = camera.update(vehicle(120.0, 10.0), 0.016);
+        const float at_10 = settings.tilted_elevation +
+            (settings.tilted_elevation_fast - settings.tilted_elevation) *
+                (10.0f - settings.slow_speed_mps) / (settings.fast_speed_mps - settings.slow_speed_mps);
+        assert(near(tilted.elevation_degrees, at_10, 0.01));
+        // Flatter view, lower car.
+        assert(tilted.anchor_y > easing.anchor_y);
 
         // A finger drag from the tilted view stays tilted at the same zoom
-        // and centres where the engine puts it.
+        // and angle and centres where the engine puts it.
         camera.begin_free(50.45, 30.52);
         const auto dragged = camera.update(vehicle(120.0, 10.0), 0.016);
         assert(camera.mode() == CameraController::Mode::Free);
         assert(!dragged.following);
-        assert(dragged.elevation_degrees == settings.tilted_elevation);
+        assert(near(dragged.elevation_degrees, tilted.elevation_degrees, 0.01));
         assert(near(dragged.zoom, tilted.zoom, 1e-3));
         camera.set_free_location(50.46, 30.53);
         const auto moved = camera.update(vehicle(120.0, 10.0), 0.016);
@@ -278,6 +288,50 @@ int main()
         assert(!bench.heading_known());
         bench.zoom_at(1.0f, 50.0, 30.0);
         assert(bench.mode() == CameraController::Mode::Free);
+    }
+    {
+        // 3D angle: flatter (lower elevation) with speed, steeper and a
+        // little closer approaching a turn, more for a tight one, and
+        // easing back after it.
+        const auto settle = [](CameraController& camera, double speed) {
+            CameraController::Pose pose;
+            for (int i = 0; i < 600; ++i)
+                pose = camera.update(vehicle(0.0, speed), 0.016);
+            return pose;
+        };
+        auto camera = controller();
+        camera.set_tilt(true);
+        const auto slow = settle(camera, 5.0);
+        assert(near(slow.elevation_degrees, settings.tilted_elevation, 0.01));
+        const auto fast = settle(camera, 30.0);
+        assert(near(fast.elevation_degrees, settings.tilted_elevation_fast, 0.01));
+        assert(fast.anchor_y > slow.anchor_y);  // flatter: car lower
+
+        camera.set_maneuver(true, 400.0, false);  // at the countdown start
+        const auto far = settle(camera, 5.0);
+        assert(near(far.elevation_degrees, settings.tilted_elevation, 0.05));
+        camera.set_maneuver(true, 100.0, false);
+        const auto near_turn = settle(camera, 5.0);
+        assert(near(near_turn.elevation_degrees,
+                    settings.tilted_elevation + settings.maneuver_elevation * 0.75f, 0.05));
+        assert(near(near_turn.zoom,
+                    settings.follow_base_zoom + settings.maneuver_zoom * 0.75f, 0.01));
+        camera.set_maneuver(true, 100.0, true);    // roundabout
+        const auto tight = settle(camera, 5.0);
+        assert(tight.elevation_degrees > near_turn.elevation_degrees);
+        // Past the turn the next one is far: eases back, no jump.
+        camera.set_maneuver(true, 2000.0, false);
+        const auto after = camera.update(vehicle(0.0, 5.0), 0.016);
+        assert(std::fabs(after.elevation_degrees - tight.elevation_degrees) < 1.0f);
+        const auto relaxed = settle(camera, 5.0);
+        assert(near(relaxed.elevation_degrees, settings.tilted_elevation, 0.05));
+
+        // 2D ignores the angle logic; the turn zoom still applies.
+        camera.set_tilt(false);
+        camera.set_maneuver(true, 0.0, false);
+        const auto flat = settle(camera, 5.0);
+        assert(flat.elevation_degrees == 90.0f);
+        assert(near(flat.zoom, settings.follow_base_zoom + settings.maneuver_zoom, 0.01));
     }
     {
         // 1 Hz fixes heading east at ~20 m/s: heading/speed are derived and
