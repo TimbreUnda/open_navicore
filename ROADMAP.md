@@ -4,9 +4,20 @@ This document tracks demonstrated project readiness, not intent. A checked box
 means that the listed acceptance evidence exists. It does not imply that a
 larger milestone containing it is complete.
 
-## Current state (2026-10-13)
+## Current state (2026-10-16)
 
-- Branch: `feat/production-offline`.
+- Maps: the map path is a directory; every `*.obf` in it is loaded
+  (`/navi_map/osm`: 26 Ukraine regional files and the OsmAnd world basemap).
+  Tiles are built from z4 to z13 (the basemap up to z10, the regional files
+  from z11); sea, roads, borders and places are drawn at low zoom.
+- Language: the UI strings follow the radio language (en, uk, fr-CA, es-MX);
+  map labels and search results follow it too (checked live in Ukrainian; the
+  other languages are host-tested only).
+- Crimea is drawn as part of Ukraine (no country border around it, the Russian
+  "Республика Крым" entity is not drawn).
+- Routing: highway-hierarchy results with straight filler legs are rejected and
+  routed again with A*; alternatives are off (fastest route only).
+- Branch history before: `feat/production-offline`.
 - Renderer: the GPU vector map is the only map renderer. OsmAnd provides the
   camera, routing and search; the OsmAnd raster path, its experiments and the
   vector/raster crash guards were removed (see `backends/osmand/README.md`).
@@ -131,8 +142,12 @@ larger milestone containing it is complete.
 - [ ] Favorites, recent destinations, home/work, categories, and POI details.
   (Recent destinations persist and route in one tap.)
 - [ ] Route alternatives, avoidances, waypoint editing, and trip overview.
+  (Alternatives are implemented but off: they cost routing time. One switch,
+  `kAlternativeRoutes` in `navigation_worker.cpp`, brings them back.)
 - [ ] Traffic ingestion and presentation where a lawful data source is available.
 - [ ] Localization, units, accessibility, and driver-distraction behavior.
+  (UI strings en/uk/fr-CA/es-MX with the Ukrainian screens checked on the
+  radio; units are metric only; the fr-CA/es-MX wording is unreviewed.)
 - [ ] Offline map/package lifecycle and safe updates.
 
 ## Release gate

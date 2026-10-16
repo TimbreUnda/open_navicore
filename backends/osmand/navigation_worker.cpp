@@ -59,6 +59,9 @@ namespace {
 constexpr std::size_t kMaxAddressResults = 8;
 constexpr std::size_t kMaxAmenityResults = 4;
 constexpr std::size_t kMaxRoutes = 3;  // the fastest and up to two alternatives
+// Alternatives are off: finding them costs routing time, and the route preview
+// then offers only the fastest route. Set to true to bring them back.
+constexpr bool kAlternativeRoutes = false;
 const OsmAnd::LatLon kDemoOrigin(50.4501, 30.5234);
 
 std::string utf8(const QString& value)
@@ -86,11 +89,21 @@ std::string address_kind(OsmAnd::AddressType type)
     return ui::loc::tr(ui::loc::Str::AddressBuilding);
 }
 
+// The object's name in the radio's languages, else its own name.
+template <typename Object>
+std::string localized_name(const Object& object)
+{
+    for (const std::string& language : ui::loc::name_languages(ui::loc::language())) {
+        std::string name = utf8(object.getName(QString::fromStdString(language), false));
+        if (!name.empty()) return name;
+    }
+    return utf8(object.nativeName);
+}
+
 ui::Destination destination(const OsmAnd::Address& address)
 {
     const auto coordinates = OsmAnd::Utilities::convert31ToLatLon(address.position31);
-    std::string title = utf8(address.getName(QStringLiteral("uk"), false));
-    if (title.empty()) title = utf8(address.nativeName);
+    std::string title = localized_name(address);
     return {"address:" + std::to_string(address.position31.x) + ":" +
                 std::to_string(address.position31.y),
             std::move(title), address_kind(address.addressType),
@@ -101,8 +114,7 @@ ui::Destination destination(const OsmAnd::Address& address)
 ui::Destination destination(const OsmAnd::Amenity& amenity)
 {
     const auto coordinates = OsmAnd::Utilities::convert31ToLatLon(amenity.position31);
-    std::string title = utf8(amenity.getName(QStringLiteral("uk"), false));
-    if (title.empty()) title = utf8(amenity.nativeName);
+    std::string title = localized_name(amenity);
     std::string subtitle = utf8(amenity.subType);
     if (subtitle.empty()) subtitle = utf8(amenity.type);
     if (!subtitle.empty()) subtitle = ui::loc::poi_category(subtitle);
@@ -408,10 +420,7 @@ private:
         criteria.latLon = OsmAnd::LatLon(request.origin.latitude, request.origin.longitude);
         const auto entry = geocoder.performSearch(criteria);
         if (!entry) return {};
-        const auto name = [](const OsmAnd::Address& address) {
-            std::string text = utf8(address.getName(QStringLiteral("uk"), false));
-            return text.empty() ? utf8(address.nativeName) : text;
-        };
+        const auto name = [](const OsmAnd::Address& address) { return localized_name(address); };
         std::string street = entry->street ? name(*entry->street) : utf8(entry->streetName);
         if (street.empty()) return {};
         if (entry->building) {
@@ -588,7 +597,8 @@ private:
         if (has_hh_) {
             auto context = front_end.buildRoutingContext(routing_config_);
             context->progress = std::make_shared<RouteProgress>(cancel);
-            found = route_hh(front_end, context, sx, sy, ex, ey, request.alternatives);
+            found = route_hh(front_end, context, sx, sy, ex, ey,
+                             request.alternatives && kAlternativeRoutes);
         }
         if (found.empty() && !cancel->isAborted()) {
             // A* (no HH data, or HH found nothing usable).

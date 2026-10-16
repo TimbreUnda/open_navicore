@@ -12,6 +12,7 @@
 #include "navigation_model.h"
 
 #include <string>
+#include <vector>
 
 namespace navicore_osmand::ui::loc {
 
@@ -24,6 +25,9 @@ void set_language(Language language) noexcept;
 bool parse_language(const std::string& text, Language& out);
 // Short code for traces: "en", "uk", "fr-CA", "es-MX".
 const char* language_code(Language language) noexcept;
+// OSM name languages to try for map labels and search results, best first
+// ("uk"; "fr", "en"; ...). The caller falls back to the object's own name.
+std::vector<std::string> name_languages(Language language);
 
 struct Detected {
     Language language = Language::English;

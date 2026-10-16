@@ -139,7 +139,7 @@ bool boundary_style(const std::string& admin_level, int zoom, bool night, LineSt
     if (admin_level == "2" && zoom <= 12)
         out = road(LineLayer::Boundary, o.border_country, kNone,
                    screen_width(zoom >= 7 ? 1.6f : 1.3f, zoom), 0.0f);
-    else if ((admin_level == "3" || admin_level == "4") && zoom <= kOverviewMaxZoom)
+    else if ((admin_level == "3" || admin_level == "4") && zoom >= 5 && zoom <= kOverviewMaxZoom)
         out = road(LineLayer::Boundary, o.border_region, kNone, screen_width(1.1f, zoom), 0.0f);
     else
         return false;
@@ -399,6 +399,11 @@ int oneway_direction(const Tags& tags)
     if (any_of(oneway, {"-1", "reverse"}))
         return -1;
     return 0;
+}
+
+bool is_country_border(const Tags& tags)
+{
+    return is(find(tags, "admin_level"), "2");
 }
 
 bool marked_crossing(const Tags& tags)
