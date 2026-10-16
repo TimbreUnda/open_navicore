@@ -1,7 +1,11 @@
 #include "config.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstdio>
+
+#include <dirent.h>
+#include <sys/stat.h>
 
 namespace navicore_osmand {
 namespace {
@@ -24,11 +28,38 @@ bool marker_or_environment(const char* variable, const char* marker_path)
 }
 }
 
+std::vector<std::string> obf_files(const std::string& map)
+{
+    std::vector<std::string> files;
+    struct stat info {};
+    if (map.empty() || ::stat(map.c_str(), &info) != 0)
+        return files;
+    if (!S_ISDIR(info.st_mode)) {
+        files.push_back(map);
+        return files;
+    }
+    DIR* dir = ::opendir(map.c_str());
+    if (!dir)
+        return files;
+    while (const dirent* entry = ::readdir(dir)) {
+        const std::string name = entry->d_name;
+        if (name.size() > 4 && name[0] != '.' &&
+            name.compare(name.size() - 4, 4, ".obf") == 0)
+            files.push_back(map + "/" + name);
+    }
+    ::closedir(dir);
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
 Config Config::from_environment()
 {
     Config config;
     config.resources = path("OPEN_NAVICORE_OSMAND_RESOURCES", config.resources);
+    const bool map_overridden = std::getenv("OPEN_NAVICORE_OSMAND_MAP") != nullptr;
     config.map = path("OPEN_NAVICORE_OSMAND_MAP", config.map);
+    if (!map_overridden && obf_files(config.map).empty())
+        config.map = "/datastore/navicore-backend/maps/kyiv.obf";
     config.fonts = path("OPEN_NAVICORE_OSMAND_FONTS", config.fonts);
     config.recents = path("OPEN_NAVICORE_OSMAND_RECENTS", config.recents);
     config.vector_cache = path("OPEN_NAVICORE_OSMAND_VECTOR_CACHE", config.vector_cache);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace navicore_osmand {
 
@@ -9,7 +10,10 @@ namespace navicore_osmand {
 // and design UI are always on. Only the paths and bench tools below remain.
 struct Config {
     std::string resources = "/open-navicore/libOsmAndCore_ResourcesBundle_shared.so";
-    std::string map = "/datastore/navicore-backend/maps/kyiv.obf";
+    // A map file, or a directory whose *.obf files are all loaded. The
+    // default directory is on the read-only-by-default map partition; when
+    // it holds no .obf the single legacy file is used instead.
+    std::string map = "/navi_map/osm";
     std::string fonts = "/datastore/navicore-backend/fonts";
     std::string recents = "/datastore/navicore-backend/recents.tsv";
     // Built vector tiles, per map file; empty disables the disk cache.
@@ -25,5 +29,9 @@ struct Config {
 
     static Config from_environment();
 };
+
+// The .obf files named by a Config::map value, sorted by name: the file
+// itself, or the *.obf entries of a directory. Empty when there are none.
+std::vector<std::string> obf_files(const std::string& map);
 
 } // namespace navicore_osmand

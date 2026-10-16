@@ -10,6 +10,10 @@
 #include <string>
 #include <vector>
 
+#include <cstdio>
+#include <fstream>
+#include <unistd.h>
+
 using namespace navicore_osmand;
 
 namespace {
@@ -471,8 +475,28 @@ void backend_v5()
     api.stop(context);
 }
 
+void obf_directory()
+{
+    using navicore_osmand::obf_files;
+    char tmpl[] = "/tmp/obf-dir-XXXXXX";
+    assert(::mkdtemp(tmpl));
+    const std::string dir = tmpl;
+    for (const char* name : {"b.obf", "a.obf", "notes.txt", ".hidden.obf", "c.obf.md5"})
+        std::ofstream(dir + "/" + name) << "x";
+    const auto files = obf_files(dir);
+    assert(files.size() == 2);
+    assert(files[0] == dir + "/a.obf" && files[1] == dir + "/b.obf");
+    assert(obf_files(dir + "/a.obf") == std::vector<std::string>{dir + "/a.obf"});
+    assert(obf_files(dir + "/missing").empty());
+    assert(obf_files("").empty());
+    for (const char* name : {"b.obf", "a.obf", "notes.txt", ".hidden.obf", "c.obf.md5"})
+        std::remove((dir + "/" + name).c_str());
+    ::rmdir(dir.c_str());
+}
+
 int main()
 {
+    obf_directory();
     lifecycle();
     failures();
     frames_and_contexts();

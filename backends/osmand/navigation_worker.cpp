@@ -260,10 +260,10 @@ class NavigationWorker::Impl {
 public:
     Impl(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
          std::shared_ptr<Wakeup> wakeup,
-         std::string map_path,
+         std::vector<std::string> map_paths,
          std::string routing_xml)
         : obfs_(std::move(obfs)), wakeup_(std::move(wakeup)),
-          map_path_(std::move(map_path)), routing_xml_(std::move(routing_xml))
+          map_paths_(std::move(map_paths)), routing_xml_(std::move(routing_xml))
     {
         // Start only after every request/result flag below has completed
         // construction. Starting in the member initializer races run()
@@ -347,7 +347,8 @@ public:
         }
         if (thread_.joinable()) thread_.join();
         if (router_ready_) {
-            (void)closeBinaryMapFile(map_path_);
+            for (const std::string& path : map_paths_)
+                (void)closeBinaryMapFile(path);
             router_ready_ = false;
         }
     }
@@ -454,7 +455,7 @@ private:
     bool prepare_router()
     {
         if (router_ready_) return true;
-        if (routing_xml_.empty() || map_path_.empty()) return false;
+        if (routing_xml_.empty() || map_paths_.empty()) return false;
         const std::string path = write_routing_xml(routing_xml_);
         // fileName namespaces imported configurations.  A non-empty value
         // would rename "car" and make build("car") return an empty router.
@@ -471,13 +472,24 @@ private:
         MAP_STR_STR parameters;
         routing_config_ = builder->build("car", 64, parameters);
         if (!routing_config_ || !routing_config_->router) return false;
-        const auto map = initBinaryMapFile(map_path_, false, true);
-        if (!map || map->routingIndexes.empty()) {
-            (void)closeBinaryMapFile(map_path_);
+        // Every region is opened: the router searches all open map files, so
+        // a route may cross regions. Files without a routing index are closed.
+        std::size_t routable = 0;
+        bool any_hh = false;
+        for (const std::string& path : map_paths_) {
+            const auto map = initBinaryMapFile(path, false, true);
+            if (map && !map->routingIndexes.empty()) {
+                ++routable;
+                any_hh = any_hh || !map->hhIndexes.empty();
+            } else {
+                (void)closeBinaryMapFile(path);
+            }
+        }
+        if (routable == 0) {
             trace("error=map_has_no_routing_index");
             return false;
         }
-        has_hh_ = !map->hhIndexes.empty();
+        has_hh_ = any_hh;
         trace(has_hh_ ? "worker=router hh=1" : "worker=router hh=0");
         router_ready_ = true;
         return true;
@@ -721,7 +733,7 @@ private:
 
     std::shared_ptr<OsmAnd::ObfsCollection> obfs_;
     std::shared_ptr<Wakeup> wakeup_;
-    std::string map_path_;
+    std::vector<std::string> map_paths_;
     std::string routing_xml_;
     SHARED_PTR<RoutingConfiguration> routing_config_;
     std::mutex mutex_;
@@ -744,9 +756,9 @@ private:
 
 NavigationWorker::NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
                                    std::shared_ptr<Wakeup> wakeup,
-                                   std::string map_path,
+                                   std::vector<std::string> map_paths,
                                    std::string routing_xml)
-    : impl_(new Impl(std::move(obfs), std::move(wakeup), std::move(map_path),
+    : impl_(new Impl(std::move(obfs), std::move(wakeup), std::move(map_paths),
                      std::move(routing_xml)))
 {
 }
