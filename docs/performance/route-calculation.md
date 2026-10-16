@@ -56,7 +56,11 @@ In the app the autostart route (Lavra) logged
 `worker=route_calculated method=hh routes=3 ms=5140` (cold caches), with
 rendering at 30 fps throughout.
 
-## Decoded route data cache
+## Decoded route data cache (reverted)
+
+> Reverted 2026-10-16: the route was drawn through buildings with the cache
+> in place. The patch file is gone; the numbers below are kept for reference
+> only. Rebuild the OsmAnd core without it before re-testing.
 
 HH unloads every routing tile before each detailed network segment and each
 start/end search (the search state lives in the tiles' `RouteSegment`
