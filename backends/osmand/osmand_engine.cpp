@@ -106,7 +106,7 @@ private:
     std::unique_ptr<ui::RecentsStore> recents_store_;
     std::uint64_t saved_recents_revision_ = 0;
     std::shared_ptr<Wakeup> navigation_wakeup_;
-    std::string navigation_map_;
+    std::vector<std::string> navigation_maps_;
     std::string navigation_routing_xml_;
     bool worker_creation_failed_ = false;
     std::uint64_t submitted_search_revision_ = 0;
@@ -307,13 +307,17 @@ bool OsmAndEngine::initialize(const Config& config,
     if (autostart_ != Autostart::Off)
         trace("benchmark_autostart=enabled");
     if (!config.vector_cache.empty()) {
-        struct stat map_info {};
-        const bool map_known = ::stat(config.map.c_str(), &map_info) == 0;
         // Anything that changes built geometry or labels must change this.
         vector_cache_dir_ = config.vector_cache;
-        vector_cache_identity_ = config.map + "|" +
-            std::to_string(map_known ? map_info.st_size : 0) + "|" +
-            std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-3";
+        vector_cache_identity_.clear();
+        for (const std::string& file : obf_files(config.map)) {
+            struct stat map_info {};
+            const bool map_known = ::stat(file.c_str(), &map_info) == 0;
+            vector_cache_identity_ += file + "|" +
+                std::to_string(map_known ? map_info.st_size : 0) + "|" +
+                std::to_string(map_known ? map_info.st_mtime : 0) + ";";
+        }
+        vector_cache_identity_ += "|vector-style-3";
     }
     frame_metrics_ = FrameMetrics(config.performance_metrics);
 
@@ -359,7 +363,8 @@ bool OsmAndEngine::initialize(const Config& config,
 
     bool resource_ok = false;
     obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
-    obfs_->addFile(QString::fromLocal8Bit(config.map.c_str()));
+    for (const std::string& file : obf_files(config.map))
+        obfs_->addFile(QString::fromLocal8Bit(file.c_str()));
     if (obfs_->getObfFiles().isEmpty())
         return failure("error=map");
     trace("init=map");
@@ -432,7 +437,7 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=routing_xml");
     trace("init=routing_resource");
     navigation_wakeup_ = std::move(wakeup);
-    navigation_map_ = config.map;
+    navigation_maps_ = obf_files(config.map);
     navigation_routing_xml_.assign(
         routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
     trace("init=worker_deferred");
@@ -1359,7 +1364,7 @@ bool OsmAndEngine::ensure_navigation_worker()
     try {
         trace("worker=create");
         navigation_worker_ = std::unique_ptr<NavigationWorker>(
-            new NavigationWorker(obfs_, navigation_wakeup_, navigation_map_,
+            new NavigationWorker(obfs_, navigation_wakeup_, navigation_maps_,
                                  navigation_routing_xml_));
         trace("worker=ready");
         return true;
@@ -1867,7 +1872,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
             vector_map_.reset();
         }
         navigation_wakeup_.reset();
-        navigation_map_.clear();
+        navigation_maps_.clear();
         navigation_routing_xml_.clear();
         worker_creation_failed_ = false;
         latest_gps_ = {};
