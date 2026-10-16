@@ -2,6 +2,7 @@
 
 #include "vector_map.h"
 
+#include "coastline.h"
 #include "vector_style.h"
 #include "vector_tessellator.h"
 #include "backends/osmand/label_geometry.h"
@@ -800,12 +801,14 @@ private:
     struct Block {
         bool loading = true;
         bool ok = false;
+        // OBF ocean flags of the tile (basemap): all water, all land, mixed.
+        OsmAnd::MapSurfaceType surface = OsmAnd::MapSurfaceType::Undefined;
         QList<std::shared_ptr<const OsmAnd::BinaryMapObject>> objects;
         std::uint64_t used = 0;
     };
     struct BlockId {
         TileKey block;
-        int detail;
+        int detail;  // OBF level; kBasemapBit set for the world basemap
         bool operator<(const BlockId& o) const
         {
             return detail != o.detail ? detail < o.detail : block < o.block;
@@ -820,10 +823,15 @@ private:
 
     // Loads (or waits for another worker loading) the block holding `key`.
     // Null when cancelled (aborted=true) or when there is no data.
-    std::shared_ptr<Block> obtain_block(const TileKey& key, int detail, std::uint64_t generation,
-                                        double& fetch_ms, bool& aborted)
+    static constexpr int kBasemapBit = 0x100;
+
+    // `basemap`: read the world basemap (at OBF level `detail`) rather than
+    // the regional files.
+    std::shared_ptr<Block> obtain_block(const TileKey& key, int detail, bool basemap,
+                                        std::uint64_t generation, double& fetch_ms,
+                                        bool& aborted)
     {
-        const BlockId id{block_of(key), detail};
+        const BlockId id{block_of(key), detail | (basemap ? kBasemapBit : 0)};
         std::shared_ptr<Block> block;
         for (;;) {
             std::unique_lock<std::mutex> lock(mutex_);
@@ -872,11 +880,12 @@ private:
         bool loaded = false;
         QList<std::shared_ptr<const OsmAnd::BinaryMapObject>> objects;
         const auto level = static_cast<OsmAnd::ZoomLevel>(detail);
-        const auto& source = use_basemap(key) ? basemap_ : obfs_;
+        const auto& source = basemap ? basemap_ : obfs_;
+        OsmAnd::MapSurfaceType surface = OsmAnd::MapSurfaceType::Undefined;
         if (const auto data = source->obtainDataInterface(
                 &bbox31, level, level,
                 OsmAnd::ObfDataTypesMask().set(OsmAnd::ObfDataType::Map)))
-            loaded = data->loadBinaryMapObjects(&objects, nullptr, nullptr, level, &bbox31,
+            loaded = data->loadBinaryMapObjects(&objects, &surface, nullptr, level, &bbox31,
                                                 nullptr, nullptr, nullptr, controller);
         aborted = controller->isAborted();
         fetch_ms = ms_since(started);
@@ -890,7 +899,11 @@ private:
             block->loading = false;
             // Zero objects is what a read returns before OsmAnd has opened
             // the map: no data, retried, never kept.
-            block->ok = loaded && !aborted && !objects.isEmpty();
+            // A basemap tile in open sea has no objects but a surface type.
+            block->ok = loaded && !aborted &&
+                        (!objects.isEmpty() ||
+                         (basemap && surface != OsmAnd::MapSurfaceType::Undefined));
+            block->surface = surface;
             block->objects = std::move(objects);
             block->used = ++block_clock_;
             const auto it = blocks_.find(id);
@@ -1044,9 +1057,14 @@ private:
         // Style zoom (detail) follows the tile; the OBF level cannot go below
         // the files' coarsest map level.
         const int detail = detail_zoom(key, overzoom);
-        const int data_level = use_basemap(key) ? detail : std::max(detail, kMinDataLevel);
+        const bool basemap_tile = use_basemap(key);
+        const int data_level = basemap_tile ? detail : std::max(detail, kMinDataLevel);
         bool aborted = false;
-        const auto block = obtain_block(key, data_level, generation, out.fetch_ms, aborted);
+        auto block = obtain_block(key, data_level, basemap_tile, generation, out.fetch_ms, aborted);
+        // Outside the regional files (once they have had time to open) the
+        // basemap's finest level stands in, as OsmAnd itself does.
+        if (!block && !aborted && basemap_ && !basemap_tile && regional_data_missing(key))
+            block = obtain_block(key, kMinDataLevel, true, generation, out.fetch_ms, aborted);
         if (aborted) {
             out.aborted = true;
             return out;
@@ -1083,6 +1101,7 @@ private:
         };
         std::vector<RoadRef> roads;
         std::vector<OsmAnd::PointI> crossings;
+        std::vector<std::vector<std::pair<std::int32_t, std::int32_t>>> coastlines;
         for (const auto& object : block->objects) {
             if (!object || object->isCoastline || object->points31.isEmpty())
                 continue;
@@ -1097,13 +1116,22 @@ private:
                 tags.push_back(tag(cache, *object, static_cast<std::uint32_t>(i), false));
             for (int i = 0; i < object->additionalAttributeIds.size(); ++i)
                 tags.push_back(tag(cache, *object, static_cast<std::uint32_t>(i), true));
+            if (is_coastline(tags)) {
+                // Sea and islands are built from these below.
+                auto& line = coastlines.emplace_back();
+                line.reserve(static_cast<std::size_t>(object->points31.size()));
+                for (const auto& p : object->points31)
+                    line.emplace_back(p.x, p.y);
+                continue;
+            }
             const bool area = treat_as_area(
                 tags, object->isArea,
                 object->points31.size() > 3 &&
                     object->points31.first() == object->points31.last());
             {
                 const auto label_started = Clock::now();
-                collect_labels(*object, tags, area, origin_x, origin_y, to_local, out.labels);
+                collect_labels(*object, tags, area, detail, origin_x, origin_y, to_local,
+                               out.labels);
                 labels_ms += ms_since(label_started);
             }
             if (markings && object->points31.size() == 1 && marked_crossing(tags))
@@ -1134,6 +1162,8 @@ private:
                 }
             }
         }
+        add_sea(coastlines, block->surface, key.z, origin_x, origin_y, size31, to_local, night,
+                tessellator);
         add_zebras(crossings, roads, origin_x, origin_y, tile_x1, tile_y1, to_local, night,
                    tessellator);
         out.mesh = tessellator.finish();
@@ -1150,6 +1180,50 @@ private:
         attach_images(out.labels, night);
         out.labels_ms = labels_ms + ms_since(images_started);
         return out;
+    }
+
+    // True once the regional files should have answered for this tile: a
+    // read that found nothing is retried while the map may still be opening.
+    bool regional_data_missing(const TileKey& key)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = failures_.find(key);
+        const int failures = it == failures_.end() ? 0 : it->second;
+        return failures >= (Clock::now() - started_ > std::chrono::seconds(20) ? 1 : 3);
+    }
+
+    // Sea and islands of a tile: polygons from its coastline polylines closed
+    // along the tile border, else (no coastline crossing the tile) the whole
+    // tile as sea when the OBF flags it all water.
+    static void add_sea(const std::vector<std::vector<std::pair<std::int32_t, std::int32_t>>>& coast,
+                        OsmAnd::MapSurfaceType surface, int zoom, double origin_x,
+                        double origin_y, double size31, double to_local, bool night,
+                        TileTessellator& tessellator)
+    {
+        const auto at31 = [](double v) {
+            return static_cast<std::int32_t>(std::min(v, 2147483647.0));
+        };
+        std::vector<CoastlineRing> rings;
+        if (!coast.empty() &&
+            polygonize_coastlines(coast, at31(origin_x), at31(origin_x + size31 - 1.0),
+                                  at31(origin_y + size31 - 1.0), at31(origin_y),
+                                  std::min(zoom, 22), rings)) {
+            Ring ring;
+            for (const auto& source : rings) {
+                ring.clear();
+                ring.reserve(source.points.size());
+                for (const auto& p : source.points)
+                    ring.push_back({static_cast<float>((p.first - origin_x) * to_local),
+                                    static_cast<float>((p.second - origin_y) * to_local)});
+                tessellator.add_area(ring, {},
+                                     source.water ? AreaStyle{AreaLayer::Sea, sea_colour(night)}
+                                                  : AreaStyle{AreaLayer::Land, island_colour(night)});
+            }
+        } else if (surface == OsmAnd::MapSurfaceType::FullWater) {
+            tessellator.add_area({{0.0f, 0.0f}, {kTileExtent, 0.0f}, {kTileExtent, kTileExtent},
+                                  {0.0f, kTileExtent}},
+                                 {}, {AreaLayer::Sea, sea_colour(night)});
+        }
     }
 
     // Zebras: each marked crossing node in the tile, on the nearest drawn
@@ -1210,7 +1284,7 @@ private:
 
     // Street names (with the road's whole path), POIs and place names.
     // Point-like labels are kept only by the tile that contains them.
-    void collect_labels(const OsmAnd::MapObject& object, const Tags& tags, bool area,
+    void collect_labels(const OsmAnd::MapObject& object, const Tags& tags, bool area, int detail,
                         double origin_x, double origin_y, double to_local,
                         TileLabels& out)
     {
@@ -1283,7 +1357,7 @@ private:
         }
         if (const auto* place = tag_value(tags, "place")) {
             bool shown = false;
-            for (int z = 10; z <= 18 && !shown; ++z)
+            for (int z = 0; z <= 18 && !shown; ++z)
                 shown = place_label_rank(*place, z) >= 0;
             const Point pos = anchor();
             if (!shown || !inside(pos))
@@ -1296,7 +1370,8 @@ private:
             return;
         }
         const auto* highway = tag_value(tags, "highway");
-        if (!highway || area || object.points31.size() < 2)
+        // Overview maps carry no street names.
+        if (!highway || area || object.points31.size() < 2 || detail <= kBasemapMaxZoom)
             return;
         const int rank = street_label_rank(*highway);
         if (rank < 0)
@@ -1372,15 +1447,16 @@ private:
                                          }),
                           labels.pois.end());
         for (auto& label : labels.places) {
-            const std::uint32_t argb = night ? 0xFF9AA3AEu : 0xFF70757Au;
-            const std::string key = mode + "c|" + label.name;
+            const PlaceFont font = place_font(label.place, night);
+            const std::string key = mode + "c|" + std::to_string(static_cast<int>(font.size)) +
+                                    "|" + std::to_string(font.argb) + "|" + label.name;
             label.key = fnv1a(key);
             for (int z = 0; z < kPlaceZooms; ++z)
                 label.rank_at[static_cast<std::size_t>(z)] =
                     static_cast<std::int8_t>(place_label_rank(label.place, z));
             label.image = images_.get(key, [&] {
-                return rasterize_text(QString::fromStdString(label.name), 20.0f, true, argb,
-                                      night);
+                return rasterize_text(QString::fromStdString(label.name), font.size, true,
+                                      font.argb, night);
             });
         }
         labels.places.erase(std::remove_if(labels.places.begin(), labels.places.end(),
@@ -3316,7 +3392,7 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
                        at);
             ++controls;
         } else {
-            if (places >= 6) continue;
+            if (places >= (view_zoom <= kBasemapMaxZoom ? 14u : 6u)) continue;
             const auto& place = *static_cast<const PlaceLabel*>(c.label);
             bool ok = false;
             const ScreenPoint at = to_screen(*c.key, place.pos, ok);

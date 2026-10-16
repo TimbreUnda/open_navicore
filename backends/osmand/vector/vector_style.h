@@ -14,31 +14,34 @@ struct Rgba {
 // Draw order inside a tile: lower first. Areas and lines have separate
 // orders because all areas are drawn before any line.
 enum class AreaLayer : std::uint8_t {
-    Landuse = 0,  // hospital/school grounds, residential tint
-    Sand = 1,
-    Forest = 2,
-    Park = 3,
-    Water = 4,
-    Plaza = 5,
-    Building = 6,
-    BridgeDeck = 7,  // man_made=bridge outlines, above water
+    Sea = 0,      // sea built from coastlines (below everything)
+    Land = 1,     // islands inside that sea
+    Landuse = 2,  // hospital/school grounds, residential tint
+    Sand = 3,
+    Forest = 4,
+    Park = 5,
+    Water = 6,
+    Plaza = 7,
+    Building = 8,
+    BridgeDeck = 9,  // man_made=bridge outlines, above water
 };
 
 enum class LineLayer : std::uint8_t {
     BuildingOutline = 0,
     Waterway = 1,
-    Path = 2,
-    Rail = 3,
-    Service = 4,
-    Minor = 5,
-    Tertiary = 6,
-    Secondary = 7,
-    Primary = 8,
-    Trunk = 9,
-    Motorway = 10,
+    Boundary = 2,  // country and region borders
+    Path = 3,
+    Rail = 4,
+    Service = 5,
+    Minor = 6,
+    Tertiary = 7,
+    Secondary = 8,
+    Primary = 9,
+    Trunk = 10,
+    Motorway = 11,
 };
-constexpr int kAreaLayers = 8;
-constexpr int kLineLayers = 11;
+constexpr int kAreaLayers = 10;
+constexpr int kLineLayers = 12;
 
 // Vertical levels from bridge/tunnel/layer tags. Each level is drawn whole
 // (casings, fills, then its arrows and markings) before the next, so a
@@ -119,9 +122,26 @@ Rgba zebra_colour(bool night);
 // roads whose names are not shown (paths, service roads).
 int street_label_rank(const std::string& highway);
 
-// Place names (suburb, neighbourhood, ...): rank and minimum zoom; rank -1
-// when not shown.
+// Place names (country, state, city, town, suburb, ...): rank (lower = more
+// important) at a zoom; rank -1 when not shown.
 int place_label_rank(const std::string& place, int zoom);
+
+// Fill of the sea and of islands cut out of it (sea built from coastlines
+// or from an all-water basemap tile).
+Rgba sea_colour(bool night = false);
+Rgba island_colour(bool night = false);
+
+// Text size (px) and ARGB colour of a place name by class (country, state,
+// city, town, ...).
+struct PlaceFont {
+    float size;
+    std::uint32_t argb;
+};
+PlaceFont place_font(const std::string& place, bool night);
+
+// True for natural=coastline (sea/land outlines the tile build turns into
+// polygons; nothing is drawn from the line itself).
+bool is_coastline(const Tags& tags);
 
 // Background (land) colour.
 Rgba land_colour(bool night = false);
