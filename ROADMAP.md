@@ -11,7 +11,10 @@ larger milestone containing it is complete.
   Tiles are built from z4 to z13 (the basemap up to z10, the regional files
   from z11); sea, roads, borders and places are drawn at low zoom.
 - Language: the UI strings follow the radio language (en, uk, fr-CA, es-MX);
-  map labels and search results follow it too (built, not yet live-verified).
+  map labels and search results follow it too (checked live in Ukrainian; the
+  other languages are host-tested only).
+- Crimea is drawn as part of Ukraine (no country border around it, the Russian
+  "Республика Крым" entity is not drawn).
 - Routing: highway-hierarchy results with straight filler legs are rejected and
   routed again with A*; alternatives are off (fastest route only).
 - Branch history before: `feat/production-offline`.
