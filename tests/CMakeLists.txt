@@ -80,6 +80,7 @@ onc_test(osmand_session_test SOURCES ${ONC_ROOT}/backends/osmand/config.cpp
          ${ONC_ROOT}/backends/osmand/session.cpp ${ONC_ROOT}/backends/osmand/osmand_backend.cpp
          osmand_session_test.cpp INCLUDES ${ONC_ROOT}/backends/osmand fixtures/fake_egl)
 onc_test(navigation_ui_test SOURCES navigation_ui_test.cpp LIBS navigation_ui m)
+onc_test(localization_test SOURCES localization_test.cpp LIBS navigation_ui m)
 onc_test(camera_controller_test SOURCES camera_controller_test.cpp LIBS navigation_ui)
 onc_test(labels_test SOURCES labels_test.cpp LIBS navigation_ui)
 # The vector style/tessellator test needs earcut.hpp from the OsmAnd tree.

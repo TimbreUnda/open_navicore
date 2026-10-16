@@ -3,6 +3,7 @@
 #include "../diagnostics.h"
 #include "assets/nav_fonts.h"
 #include "assets/nav_icons.h"
+#include "localization.h"
 
 #include <lvgl.h>
 #include <open_navicore/backend.h>
@@ -69,49 +70,18 @@ int content_height(uint32_t height)
 
 std::string distance_text(double metres)
 {
-    char text[32] = {};
-    metres = std::max(0.0, metres);
-    if (metres < 100.0) {
-        const double rounded = std::round(metres / 5.0) * 5.0;
-        std::snprintf(text, sizeof(text), "%.0f m", rounded);
-    } else if (metres < 1000.0) {
-        const double rounded = std::round(metres / 10.0) * 10.0;
-        std::snprintf(text, sizeof(text), "%.0f m", rounded);
-    } else {
-        std::snprintf(text, sizeof(text), "%.1f km", metres / 1000.0);
-    }
-    return text;
+    return loc::format_distance(metres, loc::Rounding::Coarse);
 }
 
 std::string duration_text(double seconds)
 {
-    const int minutes = std::max(0, static_cast<int>(std::ceil(seconds / 60.0)));
-    char text[32] = {};
-    if (minutes < 60)
-        std::snprintf(text, sizeof(text), "%d min", minutes);
-    else
-        std::snprintf(text, sizeof(text), "%d h %02d min", minutes / 60,
-                      minutes % 60);
-    return text;
+    return loc::format_duration_minutes(
+        std::max(0, static_cast<int>(std::ceil(seconds / 60.0))));
 }
 
 const char* maneuver_action(ManeuverKind kind)
 {
-    switch (kind) {
-    case ManeuverKind::Left: return "Turn left";
-    case ManeuverKind::SlightLeft: return "Slight left";
-    case ManeuverKind::SharpLeft: return "Sharp left";
-    case ManeuverKind::Right: return "Turn right";
-    case ManeuverKind::SlightRight: return "Slight right";
-    case ManeuverKind::SharpRight: return "Sharp right";
-    case ManeuverKind::KeepLeft: return "Keep left";
-    case ManeuverKind::KeepRight: return "Keep right";
-    case ManeuverKind::UTurn: return "Make a U-turn";
-    case ManeuverKind::Roundabout: return "Enter roundabout";
-    case ManeuverKind::Arrive: return "Arriving at";
-    case ManeuverKind::Straight: return "Continue";
-    }
-    return "Continue";
+    return loc::maneuver_action(kind);
 }
 
 void set_label_text(lv_obj_t* label, const char* text)
@@ -305,8 +275,11 @@ int status_card(lv_obj_t* parent, int x, int y, uint32_t background, uint32_t co
     ring(card, 2, colour);
     lv_obj_t* badge = box(card, (column - 64) / 2, 18, 64, 64, colour, 32);
     icon(badge, image, image_colour, 13, 13);
-    text(card, title, &nav_font_24_800, colour,
-         (column - text_width(title, &nav_font_24_800)) / 2, 92);
+    // A long title (other languages) steps down a size to stay inside the card.
+    const lv_font_t* title_font = text_width(title, &nav_font_24_800) > column - 16
+        ? &nav_font_20_700 : &nav_font_24_800;
+    text(card, title, title_font, colour, (column - text_width(title, title_font)) / 2,
+         92 + (lv_font_get_line_height(&nav_font_24_800) - lv_font_get_line_height(title_font)) / 2);
     lv_obj_t* label = text(card, body, &nav_font_20_400, text1, 16, 128);
     lv_obj_set_width(label, column - 32);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
@@ -321,17 +294,8 @@ int status_card(lv_obj_t* parent, int x, int y, uint32_t background, uint32_t co
 
 std::string maneuver_text(const Maneuver& maneuver)
 {
-    if (maneuver.kind == ManeuverKind::Roundabout && maneuver.roundabout_exit > 0) {
-        static const char* const ordinals[] = {"1st", "2nd", "3rd"};
-        char text[64] = {};
-        if (maneuver.roundabout_exit <= 3)
-            std::snprintf(text, sizeof(text), "At the roundabout, take the %s exit",
-                          ordinals[maneuver.roundabout_exit - 1]);
-        else
-            std::snprintf(text, sizeof(text), "At the roundabout, take the %dth exit",
-                          maneuver.roundabout_exit);
-        return text;
-    }
+    if (maneuver.kind == ManeuverKind::Roundabout && maneuver.roundabout_exit > 0)
+        return loc::roundabout_exit_text(maneuver.roundabout_exit);
     return maneuver_action(maneuver.kind);
 }
 
@@ -341,6 +305,7 @@ NavigationView::NavigationView(NavigationModel& model, uint32_t width,
                                uint32_t height)
     : model_(model), width_(width), height_(height)
 {
+    keyboard_ukrainian_ = loc::language() == loc::Language::Ukrainian;
     if (width == 0 || height == 0)
         throw std::invalid_argument("LVGL display dimensions must be nonzero");
     if (!lv_is_initialized())
@@ -469,7 +434,7 @@ void NavigationView::build_free_drive()
     lv_obj_t* search = box(screen_, margin, top + margin, column, tile, surface, 8, true);
     card_shadow(search);
     icon(search, &nav_icon_search_26, accent, 18, 19);
-    design::text(search, "Where to?", &nav_font_20_600, text1, 56, 20);
+    design::text(search, loc::tr(loc::Str::WhereTo), &nav_font_20_600, text1, 56, 20);
     lv_obj_add_event_cb(search, open_search_cb, LV_EVENT_CLICKED, this);
 
     build_recent_card(top + margin + tile + 8);
@@ -488,15 +453,15 @@ void NavigationView::build_recent_card(int y)
     const int height = rows ? 12 + 22 + static_cast<int>(rows) * 64 + 12 : 192;
     lv_obj_t* card = box(screen_, margin, y, column, height, surface, 8, true);
     card_shadow(card);
-    lv_obj_t* heading = design::text(card, "RECENT", &nav_font_14_700, text3, 16, 12);
+    lv_obj_t* heading = design::text(card, loc::tr(loc::Str::Recent), &nav_font_14_700, text3, 16, 12);
     lv_obj_set_style_text_letter_space(heading, 1, 0);
 
     if (!rows) {
         icon(card, &nav_icon_clock_40, text3, (column - 40) / 2, 58);
-        const char* title = "No recent destinations";
+        const char* title = loc::tr(loc::Str::NoRecent);
         design::text(card, title, &nav_font_20_600, text2,
                      (column - text_width(title, &nav_font_20_600)) / 2, 106);
-        const char* hint = "Places you navigate to appear here.";
+        const char* hint = loc::tr(loc::Str::NoRecentHint);
         design::text(card, hint, &nav_font_14_400, text3,
                      (column - text_width(hint, &nav_font_14_400)) / 2, 138);
         return;
@@ -892,7 +857,7 @@ void NavigationView::build_search()
     query_label_ = design::text(field, "", &nav_font_24_600,
                                 text1, 54, 18);
     lv_label_set_long_mode(query_label_, LV_LABEL_LONG_MODE_CLIP);
-    query_placeholder_ = design::text(field, "Street, house or place", &nav_font_24_400, text3,
+    query_placeholder_ = design::text(field, loc::tr(loc::Str::SearchPlaceholder), &nav_font_24_400, text3,
                                       60, 18);
     query_cursor_ = box(field, 54, 17, 2, 30, accent, 0);
     set_hidden(query_cursor_, locked);
@@ -912,9 +877,9 @@ void NavigationView::build_search()
         lv_obj_t* panel_lock = box(screen_, margin, top + 268, static_cast<int>(width_) - 2 * margin,
                                    290, surface, 8, true);
         icon(panel_lock, &nav_icon_lock_30, warning, 16, 21);
-        const char* title = "Typing is paused while driving";
+        const char* title = loc::tr(loc::Str::TypingPaused);
         design::text(panel_lock, title, &nav_font_20_700, text1, 60, 24);
-        design::text(panel_lock, "Pick a recent destination, or stop to type.", &nav_font_14_400,
+        design::text(panel_lock, loc::tr(loc::Str::TypingPausedHint), &nav_font_14_400,
                      text2, 60 + text_width(title, &nav_font_20_700) + 14, 27);
         const auto& recents = model_.recents();
         const int column_width = (static_cast<int>(width_) - 2 * margin - 32 - 16) / 2;
@@ -936,7 +901,7 @@ void NavigationView::build_search()
             lv_obj_set_user_data(row, reinterpret_cast<void*>(index + 1));
         }
         if (recents.empty())
-            design::text(panel_lock, "No recent destinations", &nav_font_20_600, text2, 16, 88);
+            design::text(panel_lock, loc::tr(loc::Str::NoRecent), &nav_font_20_600, text2, 16, 88);
     }
     refresh_query();
     refresh_results();
@@ -1012,7 +977,8 @@ void NavigationView::build_keyboard()
             } else {
                 const bool small = std::strlen(key.label) > 2;
                 const lv_font_t* font = small ? &nav_font_14_600 : &nav_font_24_600;
-                const char* shown = std::strcmp(key.label, "space") == 0 ? "space" : key.label;
+                const char* shown = std::strcmp(key.label, "space") == 0 ? loc::tr(loc::Str::KeySpace)
+                                                                      : key.label;
                 design::text(object, shown, font, ok ? white : text1,
                              static_cast<int>(std::lround(centre - text_width(shown, font) / 2.0f)),
                              small ? 23 : 18);
@@ -1093,7 +1059,7 @@ void NavigationView::refresh_results()
         return;
     lv_obj_clean(results_panel_);
     const auto& results = model_.results();
-    const std::string& message = model_.message();
+    const std::string& message = model_.message();  // English; shown localized
     const int width = static_cast<int>(width_) - 2 * margin;  // before any layout pass
     if (message.empty() && !results.empty()) {
         // Best four results, two per row; the first is the OK target.
@@ -1108,8 +1074,9 @@ void NavigationView::refresh_results()
                 ring(card, 2, accent);
             std::string lower = item.subtitle;
             for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            icon(card, lower.find("fuel") != std::string::npos ? &nav_icon_fuel_24 : &nav_icon_pin_24,
-                 text2, 16, 29);
+            const bool fuel = lower.find("fuel") != std::string::npos ||
+                item.subtitle.find(loc::poi_category("fuel")) != std::string::npos;
+            icon(card, fuel ? &nav_icon_fuel_24 : &nav_icon_pin_24, text2, 16, 29);
             int right = card_width - 16;
             if (!item.distance.empty()) {
                 const int text = text_width(item.distance.c_str(), &nav_font_14_400);
@@ -1127,10 +1094,11 @@ void NavigationView::refresh_results()
         return;
     }
     // Status: icon and text centred in a 172 px panel.
-    const char* text = message.c_str();
+    const std::string localized = loc::model_message(message);
+    const char* text = localized.c_str();
     const lv_image_dsc_t* image = &nav_icon_message_search_32;
     if (model_.query().empty() && message.empty())
-        text = "Type to search installed maps";
+        text = loc::tr(loc::Str::TypeToSearch);
     else if (message.rfind("Searching", 0) == 0)
         image = &nav_icon_message_spin_32;
     else if (message.rfind("No offline", 0) == 0)
@@ -1189,22 +1157,24 @@ void NavigationView::build_place_card()
     const bool routing = model_.direct_routing() && !model_.message().empty();
     const bool calculating = routing && model_.calculating_route();
     if (routing)
-        clipped_text(card, model_.message().c_str(), &nav_font_14_400,
+        clipped_text(card, loc::model_message(model_.message()).c_str(), &nav_font_14_400,
                      calculating ? text2 : danger, 78, 46, 275);
     else if (!place->subtitle.empty())
         clipped_text(card, place->subtitle.c_str(), &nav_font_14_400, text2, 78, 46, 275);
     // Buttons share 348 px as 1fr : 1.4fr with an 8 px gap.
     lv_obj_t* close = box(card, 16, 80, 142, tile, control, 8, true);
-    const int close_width = text_width("Close", &nav_font_20_600);
-    design::text(close, "Close", &nav_font_20_600, text1, (142 - close_width) / 2, 20);
+    const char* close_text = loc::tr(loc::Str::Close);
+    const int close_width = text_width(close_text, &nav_font_20_600);
+    design::text(close, close_text, &nav_font_20_600, text1, (142 - close_width) / 2, 20);
     lv_obj_add_event_cb(close, place_close_cb, LV_EVENT_CLICKED, this);
     lv_obj_t* go = box(card, 166, 80, 198, tile, calculating ? control : maneuver, 8,
                        !calculating);
-    const int go_width = 24 + 8 + text_width("Navigate", &nav_font_20_700);
+    const char* navigate_text = loc::tr(loc::Str::Navigate);
+    const int go_width = 24 + 8 + text_width(navigate_text, &nav_font_20_700);
     const int go_x = (198 - go_width) / 2;
     const uint32_t go_colour = calculating ? text3 : white;
     icon(go, &nav_icon_route_24, go_colour, go_x, 20);
-    design::text(go, "Navigate", &nav_font_20_700, go_colour, go_x + 32, 20);
+    design::text(go, navigate_text, &nav_font_20_700, go_colour, go_x + 32, 20);
     if (!calculating)
         lv_obj_add_event_cb(go, place_navigate_cb, LV_EVENT_CLICKED, this);
 }
@@ -1218,7 +1188,8 @@ void NavigationView::build_arrival_card()
     constexpr uint32_t ok_bg = 0x12291f;
     const int top = content_top(height_);
     const Destination* destination = model_.destination();
-    std::string where = destination ? destination->title : std::string("Destination");
+    std::string where = destination ? destination->title
+                                    : std::string(loc::tr(loc::Str::DestinationFallback));
     if (destination && !destination->subtitle.empty())
         where += " · " + destination->subtitle;
     const int lines = std::min(2, wrapped_lines(where.c_str(), &nav_font_20_400, 272));
@@ -1228,7 +1199,7 @@ void NavigationView::build_arrival_card()
     ring(card, 2, ok);
     lv_obj_t* badge = box(card, (column - 64) / 2, 22, 64, 64, ok, 32);
     icon(badge, &nav_icon_flag_38, base, 13, 13);
-    const char* title = "You have arrived";
+    const char* title = loc::tr(loc::Str::Arrived);
     design::text(card, title, &nav_font_24_800, ok,
                  (column - text_width(title, &nav_font_24_800)) / 2, 96);
     lv_obj_t* body = clipped_text(card, where.c_str(), &nav_font_20_400, text1, 16, 132, 272,
@@ -1238,8 +1209,8 @@ void NavigationView::build_arrival_card()
     lv_obj_set_width(arrival_countdown_, 272);
     lv_obj_set_style_text_align(arrival_countdown_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_t* done = box(card, 16, done_y, 272, tile, accent, 8, true);
-    design::text(done, "Done", &nav_font_20_700, white,
-                 (272 - text_width("Done", &nav_font_20_700)) / 2, 20);
+    design::text(done, loc::tr(loc::Str::Done), &nav_font_20_700, white,
+                 (272 - text_width(loc::tr(loc::Str::Done), &nav_font_20_700)) / 2, 20);
     lv_obj_add_event_cb(done, end_cb, LV_EVENT_CLICKED, this);
     arrival_started_ = lv_tick_get();
     arrival_seconds_shown_ = -1;
@@ -1261,9 +1232,7 @@ void NavigationView::update_arrival()
     if (left == arrival_seconds_shown_)
         return;
     arrival_seconds_shown_ = left;
-    char text[48] = {};
-    std::snprintf(text, sizeof(text), "Returning to free drive in %d s", left);
-    set_label_text(arrival_countdown_, text);
+    set_label_text(arrival_countdown_, loc::arrival_countdown_text(left).c_str());
 }
 
 bool NavigationView::show_place_card(Destination place, std::string icon)
@@ -1316,14 +1285,14 @@ void NavigationView::build_route_preview()
     box(screen_, rail, top, 1, height, line, 0);  // box-shadow 1px 0 0 line
 
     // Back (design G3) returns to the search results.
-    const int back_width = 12 + 26 + 6 + text_width("Back", &nav_font_20_600) + 18;
+    const int back_width = 12 + 26 + 6 + text_width(loc::tr(loc::Str::Back), &nav_font_20_600) + 18;
     lv_obj_t* back = box(panel_rail, margin, margin, back_width, tile, control, 8, true);
     icon(back, &nav_icon_back_26, text1, 12, 19);
-    design::text(back, "Back", &nav_font_20_600, text1, 44, 20);
+    design::text(back, loc::tr(loc::Str::Back), &nav_font_20_600, text1, 44, 20);
     lv_obj_add_event_cb(back, preview_back_cb, LV_EVENT_CLICKED, this);
 
     const Destination* destination = model_.destination();
-    const char* title = destination ? destination->title.c_str() : "Destination";
+    const char* title = destination ? destination->title.c_str() : loc::tr(loc::Str::DestinationFallback);
     const int title_y = 24 + tile + 8;
     const int title_lines = std::min(2, wrapped_lines(title, &nav_font_24_700, 296));
     lv_obj_t* title_label = clipped_text(panel_rail, title, &nav_font_24_700, text1,
@@ -1345,10 +1314,11 @@ void NavigationView::build_route_preview()
         ring(card, selected ? 2 : 1, selected ? accent : line);
         design::text(card, route.duration.c_str(), &nav_font_28_700, text1, 16, 14);
         design::text(card, route.distance.c_str(), &nav_font_20_400, text2, 16, 48);
-        if (!route.reason.empty()) {
-            const int width = text_width(route.reason.c_str(), &nav_font_14_600) + 20;
+        const std::string reason = loc::route_reason(route.reason);
+        if (!reason.empty()) {
+            const int width = text_width(reason.c_str(), &nav_font_14_600) + 20;
             lv_obj_t* tag = box(card, column - 16 - width, 29, width, 28, base, 6);
-            design::text(tag, route.reason.c_str(), &nav_font_14_600, text2, 10, 5);
+            design::text(tag, reason.c_str(), &nav_font_14_600, text2, 10, 5);
         }
         lv_obj_add_event_cb(card, route_cb, LV_EVENT_CLICKED, this);
         lv_obj_set_user_data(card, reinterpret_cast<void*>(index + 1));
@@ -1356,10 +1326,10 @@ void NavigationView::build_route_preview()
 
     lv_obj_t* start = box(panel_rail, margin, height - margin - tile, column, tile,
                           maneuver, 8, true);
-    const int label_width = text_width("Start", &nav_font_20_700);
+    const int label_width = text_width(loc::tr(loc::Str::Start), &nav_font_20_700);
     const int x = (column - (24 + 10 + label_width)) / 2;
     icon(start, &nav_icon_route_24, white, x, 20);
-    design::text(start, "Start", &nav_font_20_700, white, x + 34, 20);
+    design::text(start, loc::tr(loc::Str::Start), &nav_font_20_700, white, x + 34, 20);
     lv_obj_add_event_cb(start, start_cb, LV_EVENT_CLICKED, this);
     build_map_controls(false);
 }
@@ -1398,8 +1368,8 @@ void NavigationView::build_guidance()
     if (guidance.position_available && guidance.recalculating) {
         // Off route (design G8): a new route from here is on its way.
         (void)status_card(screen_, margin, top + margin, 0x141d33, accent,
-                          &nav_icon_recalc_38, white, "Recalculating…",
-                          "Off route · new route in a moment");
+                          &nav_icon_recalc_38, white, loc::tr(loc::Str::Recalculating),
+                          loc::tr(loc::Str::OffRoute));
     } else if (guidance.position_available) {
         guidance_card_ = box(screen_, margin, top + margin, column, 112, maneuver, 8, true);
         card_shadow(guidance_card_);
@@ -1410,11 +1380,11 @@ void NavigationView::build_guidance()
         lv_obj_set_width(guidance_exit_, 18);
         lv_obj_set_style_text_align(guidance_exit_, LV_TEXT_ALIGN_CENTER, 0);
         guidance_simulation_ = box(guidance_card_, 102, 14, 0, 22, warning, 4);
-        lv_obj_t* tag = design::text(guidance_simulation_, "ROUTE SIMULATION",
+        lv_obj_t* tag = design::text(guidance_simulation_, loc::tr(loc::Str::SimulationTag),
                                      &nav_font_14_800, base, 8, 2);
         lv_obj_set_style_text_letter_space(tag, 1, 0);
         lv_obj_set_width(guidance_simulation_,
-                         text_width("ROUTE SIMULATION", &nav_font_14_800, 1) + 16);
+                         text_width(loc::tr(loc::Str::SimulationTag), &nav_font_14_800, 1) + 16);
         guidance_distance_ = design::text(guidance_card_, "", &nav_font_28_800, white, 102, 0);
         guidance_action_ = clipped_text(guidance_card_, "", &nav_font_20_600, white,
                                         102, 0, 186, 2);
@@ -1427,15 +1397,15 @@ void NavigationView::build_guidance()
         // No GPS fix: warning card, then the next instruction.
         const int card_height = status_card(
             screen_, margin, top + margin, warning_bg, warning, &nav_icon_no_gps_38, base,
-            "No GPS fix", "Guidance is paused until a position is available.");
+            loc::tr(loc::Str::NoGps), loc::tr(loc::Str::NoGpsBody));
         const int next_y = top + margin + card_height + 16;
-        lv_obj_t* next = design::text(screen_, "NEXT ON ROUTE", &nav_font_14_700, text3,
+        lv_obj_t* next = design::text(screen_, loc::tr(loc::Str::NextOnRoute), &nav_font_14_700, text3,
                                       margin, next_y);
         lv_obj_set_style_text_letter_space(next, 1, 0);
         guidance_next_glyph_ = icon(screen_, design::glyph(guidance.maneuver.kind, false),
                                     text2, margin, next_y + 26 + 12);
         guidance_instruction_ = clipped_text(screen_, "", &nav_font_20_400, text2,
-                                             margin + 44, next_y + 26 + 16, column - 44);
+                                             margin + 44, next_y + 26 + 16, column - 44, 2, 26);
     }
 
     // Trip card: remaining time over distance, Overview and End.
@@ -1443,10 +1413,18 @@ void NavigationView::build_guidance()
     card_shadow(trip);
     guidance_time_ = design::text(trip, "", &nav_font_28_800, text1, 16, 15);
     guidance_remaining_ = design::text(trip, "", &nav_font_20_400, text2, 16, 48);
-    const int end_width = text_width("End", &nav_font_20_700) + 44;
+    // A longer label than the design's "End" gives up some padding.
+    const int end_text = text_width(loc::tr(loc::Str::End), &nav_font_20_700);
+    const int end_pad = end_text > 56 ? 32 : 44;
+    const int end_width = end_text + end_pad;
     lv_obj_t* end = box(trip, column - 12 - end_width, 12, end_width, tile, danger_bg, 8, true);
-    design::text(end, "End", &nav_font_20_700, danger, 22, 20);
+    design::text(end, loc::tr(loc::Str::End), &nav_font_20_700, danger, end_pad / 2, 20);
     lv_obj_add_event_cb(end, end_cb, LV_EVENT_CLICKED, this);
+    trip_text_limit_ = column - 12 - end_width - 8 - tile - 12 - 16;
+    // Never runs under the buttons, whatever the language.
+    lv_label_set_long_mode(guidance_remaining_, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_size(guidance_remaining_, trip_text_limit_,
+                    lv_font_get_line_height(&nav_font_20_400));
     lv_obj_t* overview = box(trip, column - 12 - end_width - 8 - tile, 12, tile, tile,
                              control, 8, true);
     icon(overview, &nav_icon_overview_26, text1, 19, 19);
@@ -1464,7 +1442,7 @@ void NavigationView::layout_guidance_card()
         return;
     const auto& guidance = model_.guidance();
     const bool simulated = guidance.simulated;
-    const int lines = std::min(2, design::wrapped_lines(lv_label_get_text(guidance_action_),
+    const int lines = std::min(3, design::wrapped_lines(lv_label_get_text(guidance_action_),
                                                 &nav_font_20_600, 186));
     // Column: [tag 22 + 2], distance line 32, 2, action 24/line, 2, road 24.
     const int column_top = 14 + (simulated ? 24 : 0);
@@ -1511,7 +1489,7 @@ void NavigationView::refresh_guidance()
         if (guidance_next_glyph_)
             lv_image_set_src(guidance_next_glyph_, design::glyph(guidance.maneuver.kind, false));
         set_label_text(guidance_time_, "--:--");
-        set_label_text(guidance_remaining_, "ETA paused");
+        set_label_text(guidance_remaining_, loc::tr(loc::Str::EtaPaused));
         refresh_road_widgets();
         return;
     }
@@ -1525,18 +1503,30 @@ void NavigationView::refresh_guidance()
         const std::string number = exit > 0 ? std::to_string(exit) : std::string();
         set_label_text(guidance_exit_, number.c_str());
     }
-    const std::string next_distance = guidance.arrived ? "0 m" :
-        distance_text(guidance.distance_to_maneuver_metres);
+    const std::string next_distance = guidance.arrived ? distance_text(0.0) :
+        loc::format_in_distance(guidance.distance_to_maneuver_metres);
     set_label_text(guidance_distance_, next_distance.c_str());
     set_label_text(guidance_action_, maneuver_text(guidance.maneuver).c_str());
     if (guidance_road_) {
         const char* road = !guidance.maneuver.road.empty()
             ? guidance.maneuver.road.c_str()
-            : (destination ? destination->title.c_str() : "Route");
+            : (destination ? destination->title.c_str() : loc::tr(loc::Str::RouteFallback));
         set_label_text(guidance_road_, road);
     }
     const std::string time = duration_text(guidance.remaining_seconds);
     set_label_text(guidance_time_, time.c_str());
+    if (guidance_time_) {
+        // Long durations ("1 h 15 min", "1 год 15 хв") step down a font size
+        // instead of running under the buttons.
+        const lv_font_t* font = &nav_font_28_800;
+        if (design::text_width(time.c_str(), font) > trip_text_limit_)
+            font = &nav_font_24_700;
+        if (design::text_width(time.c_str(), font) > trip_text_limit_)
+            font = &nav_font_20_700;
+        lv_obj_set_style_text_font(guidance_time_, font, 0);
+        lv_obj_set_y(guidance_time_, 15 + (lv_font_get_line_height(&nav_font_28_800) -
+                                           lv_font_get_line_height(font)) / 2);
+    }
     set_label_text(guidance_remaining_, distance_text(guidance.remaining_metres).c_str());
     layout_guidance_card();
     refresh_road_widgets();
