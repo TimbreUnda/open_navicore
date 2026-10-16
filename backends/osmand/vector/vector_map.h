@@ -93,6 +93,10 @@ struct VectorFrameTiming {
     std::uint32_t upload_max_us = 0;  // slowest single tile upload
     std::uint32_t atlas_us = 0;       // label atlas glyph uploads (part of labels_us)
     std::uint32_t label_buffers_us = 0;  // label vertex/index upload (part of labels_us)
+    std::uint32_t label_collect_us = 0;  // candidate collection + sort (part of labels_us)
+    std::uint32_t label_candidates = 0;  // candidates sorted this frame
+    std::uint32_t label_tests = 0;       // exact box overlap tests (after the bounds filter)
+    std::uint32_t label_reused = 0;      // 1: the previous placement was drawn again
 };
 
 class VectorMap {
