@@ -2,7 +2,9 @@
 
 
 #include "diagnostics.h"
+#include "route_check.h"
 #include "session.h"
+#include "ui/localization.h"
 
 #include <OsmAndCore/Data/Address.h>
 #include <OsmAndCore/Data/Amenity.h>
@@ -69,23 +71,19 @@ std::string distance_text(const OsmAnd::PointI& point)
 {
     const auto destination = OsmAnd::Utilities::convert31ToLatLon(point);
     const double metres = OsmAnd::Utilities::distance(kDemoOrigin, destination);
-    char text[32] = {};
-    if (metres < 1000.0)
-        std::snprintf(text, sizeof(text), "%.0f m", metres);
-    else
-        std::snprintf(text, sizeof(text), "%.1f km", metres / 1000.0);
-    return text;
+    return ui::loc::format_distance(metres);
 }
 
 std::string address_kind(OsmAnd::AddressType type)
 {
     switch (type) {
-    case OsmAnd::AddressType::StreetGroup: return "Place";
-    case OsmAnd::AddressType::Street: return "Street";
-    case OsmAnd::AddressType::Building: return "Address";
-    case OsmAnd::AddressType::StreetIntersection: return "Intersection";
+    case OsmAnd::AddressType::StreetGroup: return ui::loc::tr(ui::loc::Str::AddressPlace);
+    case OsmAnd::AddressType::Street: return ui::loc::tr(ui::loc::Str::AddressStreet);
+    case OsmAnd::AddressType::Building: return ui::loc::tr(ui::loc::Str::AddressBuilding);
+    case OsmAnd::AddressType::StreetIntersection:
+        return ui::loc::tr(ui::loc::Str::AddressIntersection);
     }
-    return "Address";
+    return ui::loc::tr(ui::loc::Str::AddressBuilding);
 }
 
 ui::Destination destination(const OsmAnd::Address& address)
@@ -107,6 +105,7 @@ ui::Destination destination(const OsmAnd::Amenity& amenity)
     if (title.empty()) title = utf8(amenity.nativeName);
     std::string subtitle = utf8(amenity.subType);
     if (subtitle.empty()) subtitle = utf8(amenity.type);
+    if (!subtitle.empty()) subtitle = ui::loc::poi_category(subtitle);
     return {"amenity:" + std::to_string(amenity.position31.x) + ":" +
                 std::to_string(amenity.position31.y),
             std::move(title), std::move(subtitle),
@@ -163,19 +162,12 @@ std::string write_routing_xml(const std::string& xml)
 
 std::string distance_label(double metres)
 {
-    char text[32] = {};
-    if (metres < 1000.0) std::snprintf(text, sizeof(text), "%.0f m", metres);
-    else std::snprintf(text, sizeof(text), "%.1f km", metres / 1000.0);
-    return text;
+    return ui::loc::format_distance(metres);
 }
 
 std::string duration_label(double seconds)
 {
-    const int minutes = static_cast<int>(std::lround(seconds / 60.0));
-    char text[32] = {};
-    if (minutes < 60) std::snprintf(text, sizeof(text), "%d min", minutes);
-    else std::snprintf(text, sizeof(text), "%d h %02d min", minutes / 60, minutes % 60);
-    return text;
+    return ui::loc::format_duration_minutes(static_cast<int>(std::lround(seconds / 60.0)));
 }
 
 ui::ManeuverKind maneuver_kind(int value)
@@ -245,6 +237,20 @@ void place_worker_thread()
 }
 
 using Segments = std::vector<SHARED_PTR<RouteSegmentResult>>;
+
+// What the router returned, as plain legs for the geometry check.
+RouteCheck check_segments(const Segments& segments)
+{
+    std::vector<RouteLeg> legs;
+    legs.reserve(segments.size());
+    for (const auto& segment : segments) {
+        if (!segment || !segment->object) continue;
+        const ::LatLon start = segment->getStartPoint();
+        const ::LatLon end = segment->getEndPoint();
+        legs.push_back({segment->object->getId(), start.lat, start.lon, end.lat, end.lon});
+    }
+    return check_route_legs(legs);
+}
 
 double duration_of(const Segments& segments)
 {
@@ -475,12 +481,14 @@ private:
         // Every region is opened: the router searches all open map files, so
         // a route may cross regions. Files without a routing index are closed.
         std::size_t routable = 0;
-        bool any_hh = false;
+        std::size_t with_hh = 0;
         for (const std::string& path : map_paths_) {
             const auto map = initBinaryMapFile(path, false, true);
             if (map && !map->routingIndexes.empty()) {
                 ++routable;
-                any_hh = any_hh || !map->hhIndexes.empty();
+                const bool car_hh = std::any_of(map->hhIndexes.begin(), map->hhIndexes.end(),
+                    [](const SHARED_PTR<HHRouteIndex>& index) { return index->profile == "car"; });
+                if (car_hh) ++with_hh;
             } else {
                 (void)closeBinaryMapFile(path);
             }
@@ -489,10 +497,30 @@ private:
             trace("error=map_has_no_routing_index");
             return false;
         }
-        has_hh_ = any_hh;
-        trace(has_hh_ ? "worker=router hh=1" : "worker=router hh=0");
+        // HH only when every routable file carries car HH data: a route that
+        // crosses into a file without it would have no network there.
+        has_hh_ = with_hh == routable;
+        {
+            char line[96];
+            std::snprintf(line, sizeof(line), "worker=router hh=%d routable=%zu hh_car=%zu",
+                          has_hh_ ? 1 : 0, routable, with_hh);
+            trace(line);
+        }
         router_ready_ = true;
         return true;
+    }
+
+    bool accept_hh_route(const Segments& segments, const char* which)
+    {
+        const RouteCheck check = check_segments(segments);
+        if (check.ok()) return true;
+        char line[160];
+        std::snprintf(line, sizeof(line),
+                      "worker=hh_rejected route=%s why=straight_legs legs=%zu filler=%zu gaps=%zu "
+                      "max_gap_m=%.0f",
+                      which, check.legs, check.filler_legs, check.gaps, check.max_gap_metres);
+        trace(line);
+        return false;
     }
 
     // Highway-hierarchy routing over the map's precomputed HH sections, with
@@ -519,15 +547,27 @@ private:
         std::vector<std::unique_ptr<HHNetworkRouteRes>> others;
         for (auto* alt : main->altRoutes) others.emplace_back(alt);
         main->altRoutes.clear();
-        if (!main->error.empty() || main->detailed.empty()) return routes;
+        if (!main->error.empty() || main->detailed.empty()) {
+            char line[160];
+            std::snprintf(line, sizeof(line), "worker=hh_rejected why=%s",
+                          main->error.empty() ? "no_route" : main->error.c_str());
+            trace(line);
+            return routes;
+        }
         // What RoutePlannerFrontEnd does with an HH result.
         prepareResult(context.get(), main->detailed);
         front_end.makeStartEndPointsPrecise(context.get(), main->detailed, sx, sy, ex, ey);
+        // Where a leg's road geometry could not be loaded the core joins the
+        // network nodes with a straight line; such a route crosses water and
+        // forest. A bad main route fails HH (the caller runs A*); a bad
+        // alternative is dropped.
+        if (!accept_hh_route(main->detailed, "main")) return routes;
         routes.push_back(std::move(main->detailed));
         for (auto& alt : others) {
             if (alt->detailed.empty()) continue;
             prepareResult(context.get(), alt->detailed);
             front_end.makeStartEndPointsPrecise(context.get(), alt->detailed, sx, sy, ex, ey);
+            if (!accept_hh_route(alt->detailed, "alternative")) continue;
             routes.push_back(std::move(alt->detailed));
         }
         return routes;
@@ -551,8 +591,10 @@ private:
             found = route_hh(front_end, context, sx, sy, ex, ey, request.alternatives);
         }
         if (found.empty() && !cancel->isAborted()) {
-            // A* (no HH data, or HH found nothing).
+            // A* (no HH data, or HH found nothing usable).
             method = "astar";
+            trace(has_hh_ ? "worker=route_fallback why=hh_unusable"
+                          : "worker=route_fallback why=no_hh_data");
             auto context = front_end.buildRoutingContext(routing_config_);
             context->progress = std::make_shared<RouteProgress>(cancel);
             std::vector<int> intermediates_x;

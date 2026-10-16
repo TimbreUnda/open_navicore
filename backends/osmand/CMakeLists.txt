@@ -16,7 +16,7 @@ endif()
 # Navigation UI and guidance logic without OsmAnd (host-testable).
 add_library(navigation_ui STATIC
   diagnostics.cpp guidance_tracker.cpp cluster_payload.cpp camera_controller.cpp
-  label_geometry.cpp ui/compact_text.cpp ui/navigation_model.cpp
+  route_check.cpp label_geometry.cpp ui/compact_text.cpp ui/localization.cpp ui/navigation_model.cpp
   ui/navigation_view.cpp ui/overlay_occupancy.cpp ui/recents_store.cpp)
 target_include_directories(navigation_ui PUBLIC ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(navigation_ui PUBLIC lvgl)
@@ -72,7 +72,8 @@ add_library(osmand_backend SHARED
   thread_priority.cpp crash_reporter.cpp frame_metrics.cpp build_info.cpp
   gpu_upload_context.cpp
   ui/gl_overlay_compositor.cpp
-  vector/vector_map.cpp vector/vector_style.cpp vector/vector_tessellator.cpp)
+  vector/vector_map.cpp vector/vector_style.cpp vector/vector_tessellator.cpp
+  vector/coastline.cpp)
 add_dependencies(osmand_backend build_info_git)
 target_include_directories(osmand_backend PRIVATE ${ONC_OSMAND_INCLUDES}
                            ${CMAKE_CURRENT_BINARY_DIR})

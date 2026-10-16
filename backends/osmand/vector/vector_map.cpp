@@ -2,6 +2,7 @@
 
 #include "vector_map.h"
 
+#include "coastline.h"
 #include "vector_style.h"
 #include "vector_tessellator.h"
 #include "backends/osmand/label_geometry.h"
@@ -256,6 +257,7 @@ struct StreetLabel {
     std::uint64_t name_hash = 0;  // hash of name: fade state, repeat spacing
     std::uint64_t key = 0;        // atlas key (text + style)
     LabelImagePtr image;
+    mutable std::vector<float> cumulative;  // path length up to each point; filled on first placement
 };
 struct PoiLabel {
     std::string name, id;
@@ -800,12 +802,14 @@ private:
     struct Block {
         bool loading = true;
         bool ok = false;
+        // OBF ocean flags of the tile (basemap): all water, all land, mixed.
+        OsmAnd::MapSurfaceType surface = OsmAnd::MapSurfaceType::Undefined;
         QList<std::shared_ptr<const OsmAnd::BinaryMapObject>> objects;
         std::uint64_t used = 0;
     };
     struct BlockId {
         TileKey block;
-        int detail;
+        int detail;  // OBF level; kBasemapBit set for the world basemap
         bool operator<(const BlockId& o) const
         {
             return detail != o.detail ? detail < o.detail : block < o.block;
@@ -820,10 +824,15 @@ private:
 
     // Loads (or waits for another worker loading) the block holding `key`.
     // Null when cancelled (aborted=true) or when there is no data.
-    std::shared_ptr<Block> obtain_block(const TileKey& key, int detail, std::uint64_t generation,
-                                        double& fetch_ms, bool& aborted)
+    static constexpr int kBasemapBit = 0x100;
+
+    // `basemap`: read the world basemap (at OBF level `detail`) rather than
+    // the regional files.
+    std::shared_ptr<Block> obtain_block(const TileKey& key, int detail, bool basemap,
+                                        std::uint64_t generation, double& fetch_ms,
+                                        bool& aborted)
     {
-        const BlockId id{block_of(key), detail};
+        const BlockId id{block_of(key), detail | (basemap ? kBasemapBit : 0)};
         std::shared_ptr<Block> block;
         for (;;) {
             std::unique_lock<std::mutex> lock(mutex_);
@@ -872,11 +881,12 @@ private:
         bool loaded = false;
         QList<std::shared_ptr<const OsmAnd::BinaryMapObject>> objects;
         const auto level = static_cast<OsmAnd::ZoomLevel>(detail);
-        const auto& source = use_basemap(key) ? basemap_ : obfs_;
+        const auto& source = basemap ? basemap_ : obfs_;
+        OsmAnd::MapSurfaceType surface = OsmAnd::MapSurfaceType::Undefined;
         if (const auto data = source->obtainDataInterface(
                 &bbox31, level, level,
                 OsmAnd::ObfDataTypesMask().set(OsmAnd::ObfDataType::Map)))
-            loaded = data->loadBinaryMapObjects(&objects, nullptr, nullptr, level, &bbox31,
+            loaded = data->loadBinaryMapObjects(&objects, &surface, nullptr, level, &bbox31,
                                                 nullptr, nullptr, nullptr, controller);
         aborted = controller->isAborted();
         fetch_ms = ms_since(started);
@@ -890,7 +900,11 @@ private:
             block->loading = false;
             // Zero objects is what a read returns before OsmAnd has opened
             // the map: no data, retried, never kept.
-            block->ok = loaded && !aborted && !objects.isEmpty();
+            // A basemap tile in open sea has no objects but a surface type.
+            block->ok = loaded && !aborted &&
+                        (!objects.isEmpty() ||
+                         (basemap && surface != OsmAnd::MapSurfaceType::Undefined));
+            block->surface = surface;
             block->objects = std::move(objects);
             block->used = ++block_clock_;
             const auto it = blocks_.find(id);
@@ -1044,9 +1058,14 @@ private:
         // Style zoom (detail) follows the tile; the OBF level cannot go below
         // the files' coarsest map level.
         const int detail = detail_zoom(key, overzoom);
-        const int data_level = use_basemap(key) ? detail : std::max(detail, kMinDataLevel);
+        const bool basemap_tile = use_basemap(key);
+        const int data_level = basemap_tile ? detail : std::max(detail, kMinDataLevel);
         bool aborted = false;
-        const auto block = obtain_block(key, data_level, generation, out.fetch_ms, aborted);
+        auto block = obtain_block(key, data_level, basemap_tile, generation, out.fetch_ms, aborted);
+        // Outside the regional files (once they have had time to open) the
+        // basemap's finest level stands in, as OsmAnd itself does.
+        if (!block && !aborted && basemap_ && !basemap_tile && regional_data_missing(key))
+            block = obtain_block(key, kMinDataLevel, true, generation, out.fetch_ms, aborted);
         if (aborted) {
             out.aborted = true;
             return out;
@@ -1083,6 +1102,7 @@ private:
         };
         std::vector<RoadRef> roads;
         std::vector<OsmAnd::PointI> crossings;
+        std::vector<std::vector<std::pair<std::int32_t, std::int32_t>>> coastlines;
         for (const auto& object : block->objects) {
             if (!object || object->isCoastline || object->points31.isEmpty())
                 continue;
@@ -1097,13 +1117,22 @@ private:
                 tags.push_back(tag(cache, *object, static_cast<std::uint32_t>(i), false));
             for (int i = 0; i < object->additionalAttributeIds.size(); ++i)
                 tags.push_back(tag(cache, *object, static_cast<std::uint32_t>(i), true));
+            if (is_coastline(tags)) {
+                // Sea and islands are built from these below.
+                auto& line = coastlines.emplace_back();
+                line.reserve(static_cast<std::size_t>(object->points31.size()));
+                for (const auto& p : object->points31)
+                    line.emplace_back(p.x, p.y);
+                continue;
+            }
             const bool area = treat_as_area(
                 tags, object->isArea,
                 object->points31.size() > 3 &&
                     object->points31.first() == object->points31.last());
             {
                 const auto label_started = Clock::now();
-                collect_labels(*object, tags, area, origin_x, origin_y, to_local, out.labels);
+                collect_labels(*object, tags, area, detail, origin_x, origin_y, to_local,
+                               out.labels);
                 labels_ms += ms_since(label_started);
             }
             if (markings && object->points31.size() == 1 && marked_crossing(tags))
@@ -1134,6 +1163,8 @@ private:
                 }
             }
         }
+        add_sea(coastlines, block->surface, key.z, origin_x, origin_y, size31, to_local, night,
+                tessellator);
         add_zebras(crossings, roads, origin_x, origin_y, tile_x1, tile_y1, to_local, night,
                    tessellator);
         out.mesh = tessellator.finish();
@@ -1150,6 +1181,50 @@ private:
         attach_images(out.labels, night);
         out.labels_ms = labels_ms + ms_since(images_started);
         return out;
+    }
+
+    // True once the regional files should have answered for this tile: a
+    // read that found nothing is retried while the map may still be opening.
+    bool regional_data_missing(const TileKey& key)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = failures_.find(key);
+        const int failures = it == failures_.end() ? 0 : it->second;
+        return failures >= (Clock::now() - started_ > std::chrono::seconds(20) ? 1 : 3);
+    }
+
+    // Sea and islands of a tile: polygons from its coastline polylines closed
+    // along the tile border, else (no coastline crossing the tile) the whole
+    // tile as sea when the OBF flags it all water.
+    static void add_sea(const std::vector<std::vector<std::pair<std::int32_t, std::int32_t>>>& coast,
+                        OsmAnd::MapSurfaceType surface, int zoom, double origin_x,
+                        double origin_y, double size31, double to_local, bool night,
+                        TileTessellator& tessellator)
+    {
+        const auto at31 = [](double v) {
+            return static_cast<std::int32_t>(std::min(v, 2147483647.0));
+        };
+        std::vector<CoastlineRing> rings;
+        if (!coast.empty() &&
+            polygonize_coastlines(coast, at31(origin_x), at31(origin_x + size31 - 1.0),
+                                  at31(origin_y + size31 - 1.0), at31(origin_y),
+                                  std::min(zoom, 22), rings)) {
+            Ring ring;
+            for (const auto& source : rings) {
+                ring.clear();
+                ring.reserve(source.points.size());
+                for (const auto& p : source.points)
+                    ring.push_back({static_cast<float>((p.first - origin_x) * to_local),
+                                    static_cast<float>((p.second - origin_y) * to_local)});
+                tessellator.add_area(ring, {},
+                                     source.water ? AreaStyle{AreaLayer::Sea, sea_colour(night)}
+                                                  : AreaStyle{AreaLayer::Land, island_colour(night)});
+            }
+        } else if (surface == OsmAnd::MapSurfaceType::FullWater) {
+            tessellator.add_area({{0.0f, 0.0f}, {kTileExtent, 0.0f}, {kTileExtent, kTileExtent},
+                                  {0.0f, kTileExtent}},
+                                 {}, {AreaLayer::Sea, sea_colour(night)});
+        }
     }
 
     // Zebras: each marked crossing node in the tile, on the nearest drawn
@@ -1210,7 +1285,7 @@ private:
 
     // Street names (with the road's whole path), POIs and place names.
     // Point-like labels are kept only by the tile that contains them.
-    void collect_labels(const OsmAnd::MapObject& object, const Tags& tags, bool area,
+    void collect_labels(const OsmAnd::MapObject& object, const Tags& tags, bool area, int detail,
                         double origin_x, double origin_y, double to_local,
                         TileLabels& out)
     {
@@ -1283,7 +1358,7 @@ private:
         }
         if (const auto* place = tag_value(tags, "place")) {
             bool shown = false;
-            for (int z = 10; z <= 18 && !shown; ++z)
+            for (int z = 0; z <= 18 && !shown; ++z)
                 shown = place_label_rank(*place, z) >= 0;
             const Point pos = anchor();
             if (!shown || !inside(pos))
@@ -1296,7 +1371,8 @@ private:
             return;
         }
         const auto* highway = tag_value(tags, "highway");
-        if (!highway || area || object.points31.size() < 2)
+        // Overview maps carry no street names.
+        if (!highway || area || object.points31.size() < 2 || detail <= kBasemapMaxZoom)
             return;
         const int rank = street_label_rank(*highway);
         if (rank < 0)
@@ -1372,15 +1448,16 @@ private:
                                          }),
                           labels.pois.end());
         for (auto& label : labels.places) {
-            const std::uint32_t argb = night ? 0xFF9AA3AEu : 0xFF70757Au;
-            const std::string key = mode + "c|" + label.name;
+            const PlaceFont font = place_font(label.place, night);
+            const std::string key = mode + "c|" + std::to_string(static_cast<int>(font.size)) +
+                                    "|" + std::to_string(font.argb) + "|" + label.name;
             label.key = fnv1a(key);
             for (int z = 0; z < kPlaceZooms; ++z)
                 label.rank_at[static_cast<std::size_t>(z)] =
                     static_cast<std::int8_t>(place_label_rank(label.place, z));
             label.image = images_.get(key, [&] {
-                return rasterize_text(QString::fromStdString(label.name), 20.0f, true, argb,
-                                      night);
+                return rasterize_text(QString::fromStdString(label.name), font.size, true,
+                                      font.argb, night);
             });
         }
         labels.places.erase(std::remove_if(labels.places.begin(), labels.places.end(),
@@ -1883,12 +1960,19 @@ struct VectorMap::Impl {
     };
     // Per-frame working sets. Cleared, never shrunk: after the first frames
     // a steady frame allocates nothing.
+    // Screen bounds of an accepted label, padded: a cheap test before the
+    // exact (trigonometric) overlap test.
+    struct LabelBounds {
+        float x0, y0, x1, y1;
+        bool axis_aligned;
+    };
     struct FrameScratch {
         std::vector<TileKey> wanted, request, draw_list;
         std::vector<TileOrder> ordered;
         std::vector<SelectNode> stack;
         std::vector<BuiltTile> arrivals;   // finished tiles not yet uploaded
         std::vector<OrientedBox> accepted;
+        std::vector<LabelBounds> accepted_bounds;  // parallel to accepted
         std::vector<Candidate> candidates;
         LabelIdMap<char> seen_streets{4096};
         std::vector<std::pair<std::uint64_t, ScreenPoint>> placed_streets;
@@ -1905,6 +1989,7 @@ struct VectorMap::Impl {
             stack.reserve(256);
             arrivals.reserve(64);
             accepted.reserve(256);
+            accepted_bounds.reserve(256);
             candidates.reserve(4096);
             placed_streets.reserve(32);
             screen_path.reserve(256);
@@ -1936,6 +2021,23 @@ struct VectorMap::Impl {
     std::vector<TileUploader::Ready> uploaded;  // scratch
 
     std::map<TileKey, TileLabels> labels;
+    // Bumped whenever `labels` changes (tiles arrive, are evicted, palette
+    // switch): the cached label placement below is then stale.
+    std::uint64_t labels_epoch = 0;
+    // Inputs of the last complete, settled label placement. While they are
+    // all unchanged the placement (label_vertices, placed_pois, fade) is
+    // still right and place_labels only draws it again.
+    struct LabelCache {
+        bool valid = false;
+        std::uint64_t epoch = 0;
+        std::size_t atlas_resets = 0;
+        int width = 0, height = 0;
+        double zoom = 0.0;
+        bool location_dot = false;
+        float dot_x = 0.0f, dot_y = 0.0f;
+        std::vector<std::array<float, 4>> blocked;
+        std::vector<TileKey> draw;
+    } label_cache;
     std::size_t gpu_bytes = 0;
     std::uint64_t frame = 0;
     // Previous frame's camera: labels snap to pixels only while it is still.
@@ -2101,6 +2203,7 @@ void VectorMap::release_gl(bool context_lost)
         d.builder.forget(entry.first);
     d.gpu.clear();
     d.labels.clear();
+    ++d.labels_epoch;
     d.fade.clear();
     d.gpu_bytes = 0;
     d.route_static = d.route_joint[0] = d.route_joint[1] = d.arrow_lines = d.arrow_head =
@@ -2182,6 +2285,7 @@ void VectorMap::Impl::apply_night()
         glDeleteBuffers(4, entry.second.buffers);
     gpu.clear();
     labels.clear();
+    ++labels_epoch;
     fade.clear();
     gpu_bytes = 0;
     atlas.clear();
@@ -2965,6 +3069,7 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
         glDeleteBuffers(4, oldest->second.buffers);
         gpu_bytes -= oldest->second.bytes;
         labels.erase(oldest->first);
+        ++labels_epoch;
         builder.forget(oldest->first);
         gpu.erase(oldest);
     }
@@ -3034,6 +3139,7 @@ void VectorMap::Impl::take_tiles(std::uint64_t generation)
             }
             gpu[tile.key] = mesh;
             labels[tile.key] = std::move(tile.labels);
+            ++labels_epoch;
         }
         return;
     }
@@ -3074,6 +3180,7 @@ void VectorMap::Impl::take_tiles(std::uint64_t generation)
         }
         gpu[tile.key] = mesh;
         labels[tile.key] = std::move(tile.labels);
+        ++labels_epoch;
     }
     if (used == arrivals.size())
         arrivals.clear();  // keeps capacity for the next swap
@@ -3108,37 +3215,126 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
         ok = w > 0.0;
         return ScreenPoint{static_cast<float>(sx), static_cast<float>(sy)};
     };
+    const auto draw_label_buffers = [&](bool upload) {
+        if (label_indices.empty())
+            return;
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glUseProgram(label_prog);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, atlas.texture());
+        glUniform1i(label_tex, 0);
+        if (upload)
+            label_slot = (label_slot + 1) % kLabelRing;
+        const std::size_t vbytes = label_vertices.size() * sizeof(LabelVertex);
+        const std::size_t ibytes = label_indices.size() * 2;
+        if (upload) {
+            const auto gl_started = Clock::now();
+            glBindBuffer(GL_ARRAY_BUFFER, label_vbo[label_slot]);
+            if (vbytes > label_vbo_capacity[label_slot]) {
+                label_vbo_capacity[label_slot] = std::max<std::size_t>(vbytes * 2, 16384);
+                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(label_vbo_capacity[label_slot]),
+                             nullptr, GL_DYNAMIC_DRAW);
+            }
+            glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vbytes), label_vertices.data());
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, label_ibo[label_slot]);
+            if (ibytes > label_ibo_capacity[label_slot]) {
+                label_ibo_capacity[label_slot] = std::max<std::size_t>(ibytes * 2, 8192);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(label_ibo_capacity[label_slot]),
+                             nullptr, GL_DYNAMIC_DRAW);
+            }
+            glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(ibytes),
+                            label_indices.data());
+            timing.label_buffers_us = static_cast<std::uint32_t>(std::chrono::duration_cast<
+                std::chrono::microseconds>(Clock::now() - gl_started).count());
+        } else {
+            // The slot of the last upload still holds this placement.
+            glBindBuffer(GL_ARRAY_BUFFER, label_vbo[label_slot]);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, label_ibo[label_slot]);
+        }
+        for (GLuint a = 0; a < 3; ++a)
+            glEnableVertexAttribArray(a);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), nullptr);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), reinterpret_cast<void*>(8));
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), reinterpret_cast<void*>(16));
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(label_indices.size()), GL_UNSIGNED_SHORT,
+                       nullptr);
+        for (GLuint a = 0; a < 3; ++a)
+            glDisableVertexAttribArray(a);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        ++calls;
+    };
+    // Nothing moved since the last settled placement: draw it again.
+    {
+        LabelCache& cache = label_cache;
+        if (cache.valid && camera_still && cache.epoch == labels_epoch &&
+            cache.atlas_resets == atlas.resets() && cache.width == W && cache.height == H &&
+            cache.zoom == zoom && cache.location_dot == view.location_dot &&
+            cache.dot_x == view.dot_x && cache.dot_y == view.dot_y &&
+            cache.blocked == view.blocked && cache.draw == draw_list) {
+            timing.label_reused = 1;
+            draw_label_buffers(false);
+            return;
+        }
+        cache.valid = false;
+    }
     std::vector<OrientedBox>& accepted = scratch.accepted;
+    std::vector<LabelBounds>& accepted_bounds = scratch.accepted_bounds;
     accepted.clear();
+    accepted_bounds.clear();
+    std::uint32_t overlap_tests = 0;
+    bool deferred = false;
+    const auto bounds_of = [](const OrientedBox& box, float pad) {
+        const float hw = box.half_width + pad, hh = box.half_height + pad;
+        if (box.angle == 0.0f)
+            return LabelBounds{box.cx - hw, box.cy - hh, box.cx + hw, box.cy + hh, true};
+        const float c = std::fabs(std::cos(box.angle)), s = std::fabs(std::sin(box.angle));
+        const float ex = hw * c + hh * s, ey = hw * s + hh * c;
+        return LabelBounds{box.cx - ex, box.cy - ey, box.cx + ex, box.cy + ey, false};
+    };
+    const auto accept = [&](const OrientedBox& box) {
+        accepted.push_back(box);
+        accepted_bounds.push_back(bounds_of(box, 3.0f));
+    };
     if (view.location_dot || view.dot_x > 0.0f)
-        accepted.push_back({view.dot_x, view.dot_y, 14.0f, 14.0f, 0.0f});
+        accept({view.dot_x, view.dot_y, 14.0f, 14.0f, 0.0f});
     // UI panels: nothing is placed underneath.
     for (const auto& r : view.blocked)
-        accepted.push_back({r[0] + r[2] / 2.0f, r[1] + r[3] / 2.0f, r[2] / 2.0f, r[3] / 2.0f, 0.0f});
+        accept({r[0] + r[2] / 2.0f, r[1] + r[3] / 2.0f, r[2] / 2.0f, r[3] / 2.0f, 0.0f});
     label_vertices.clear();
     label_indices.clear();
     next_fade.clear();
     placed_pois.clear();
     atlas.begin_frame(6);
+    // The box and all its corners lie inside the screen (2 px margin).
     const auto on_screen = [&](const OrientedBox& box) {
-        ScreenPoint c[4];
-        navicore_osmand::box_corners(box, c);
-        for (const auto& q : c)
-            if (q.x < 2 || q.y < 2 || q.x > W - 2 || q.y > H - 2)
-                return false;
-        return true;
+        const LabelBounds b = bounds_of(box, 0.0f);
+        return b.x0 >= 2 && b.y0 >= 2 && b.x1 <= W - 2 && b.y1 <= H - 2;
     };
+    // Same result as testing every accepted box with boxes_overlap(.., 3):
+    // the padded bounds reject most pairs, two axis-aligned boxes are
+    // decided by them, only rotated pairs reach the exact test.
     const auto free_of = [&](const OrientedBox& box) {
-        for (const auto& other : accepted)
-            if (navicore_osmand::boxes_overlap(box, other, 3.0f))
+        const LabelBounds b = bounds_of(box, 3.0f);
+        for (std::size_t i = 0; i < accepted_bounds.size(); ++i) {
+            const LabelBounds& o = accepted_bounds[i];
+            if (b.x1 < o.x0 || o.x1 < b.x0 || b.y1 < o.y0 || o.y1 < b.y0)
+                continue;
+            if (b.axis_aligned && o.axis_aligned)
                 return false;
+            ++overlap_tests;
+            if (navicore_osmand::boxes_overlap(box, accepted[i], 3.0f))
+                return false;
+        }
         return true;
     };
     const auto quad = [&](std::uint64_t atlas_key, const LabelImage& image, OrientedBox box,
                           float alpha) {
         LabelAtlas::Slot slot;
-        if (!atlas.slot(atlas_key, image, slot))
+        if (!atlas.slot(atlas_key, image, slot)) {
+            deferred = true;  // waits for a later frame: do not cache this placement
             return;
+        }
         if (camera_still && box.angle == 0.0f) {  // crisp: snap to pixels
             box.cx = std::round(box.cx - box.half_width) + box.half_width;
             box.cy = std::round(box.cy - box.half_height) + box.half_height;
@@ -3183,6 +3379,7 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
         quad(atlas_key, image, box, alpha);
     };
 
+    const auto collect_started = Clock::now();
     std::vector<Candidate>& candidates = scratch.candidates;
     candidates.clear();
     LabelIdMap<char>& seen_streets = scratch.seen_streets;
@@ -3217,21 +3414,29 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
         if (a.rank != b.rank) return a.rank < b.rank;
         return a.order < b.order;
     });
+    timing.label_collect_us = static_cast<std::uint32_t>(std::chrono::duration_cast<
+        std::chrono::microseconds>(Clock::now() - collect_started).count());
+    timing.label_candidates = static_cast<std::uint32_t>(candidates.size());
     // Pins of the street names placed this frame (at most 16: scanned).
     auto& placed_streets = scratch.placed_streets;
     placed_streets.clear();
     std::size_t streets = 0, pois = 0, places = 0, controls = 0;
     std::vector<ScreenPoint>& screen_path = scratch.screen_path;
-    std::vector<float>& lengths = scratch.lengths;
     for (const auto& c : candidates) {
         if (c.kind == 0) {
             if (streets >= 16) continue;
             const auto& street = *static_cast<const StreetLabel*>(c.label);
             const auto& image = *street.image;
-            lengths.assign(1, 0.0f);
-            for (std::size_t i = 1; i < street.path.size(); ++i)
-                lengths.push_back(lengths.back() + std::hypot(street.path[i][0] - street.path[i - 1][0],
-                                                              street.path[i][1] - street.path[i - 1][1]));
+            // Tile-local, so the lengths never change: computed once.
+            if (street.cumulative.size() != street.path.size()) {
+                street.cumulative.assign(1, 0.0f);
+                for (std::size_t i = 1; i < street.path.size(); ++i)
+                    street.cumulative.push_back(
+                        street.cumulative.back() +
+                        std::hypot(street.path[i][0] - street.path[i - 1][0],
+                                   street.path[i][1] - street.path[i - 1][1]));
+            }
+            const std::vector<float>& lengths = street.cumulative;
             bool projected = false, path_ok = true;
             for (const float fraction : {0.5f, 0.3f, 0.7f, 0.15f, 0.85f}) {
                 const float target = fraction * lengths.back();
@@ -3271,7 +3476,7 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
                     continue;
                 if (!on_screen(box) || !free_of(box))
                     continue;
-                accepted.push_back(box);
+                accept(box);
                 placed_streets.emplace_back(street.name_hash, pin_screen);
                 emit_label(street.name_hash, street.key, image, box, to_world(*c.key, pin),
                            pin_screen);
@@ -3291,12 +3496,12 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
             const OrientedBox text{at.x + icon_image.width / 2.0f + 3.0f + poi.text->width / 2.0f, at.y,
                                    poi.text->width / 2.0f, poi.text->height / 2.0f, 0.0f};
             const bool with_text = on_screen(text) && free_of(text);
-            accepted.push_back(icon);
+            accept(icon);
             const auto anchor = to_world(*c.key, poi.pos);
             emit_label(poi.id_hash, poi.icon_key, icon_image, icon, anchor, at);
             placed_pois.push_back({&poi, c.key, at.x, at.y, icon_image.width / 2.0f});
             if (with_text) {
-                accepted.push_back(text);
+                accept(text);
                 emit_label(poi.id_hash ^ kPoiTextSalt, poi.text_key, *poi.text, text, anchor, at);
             }
             ++pois;
@@ -3311,12 +3516,12 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
             const OrientedBox box{at.x, at.y, image.width / 2.0f, image.height / 2.0f, 0.0f};
             if (!on_screen(box) || !free_of(box))
                 continue;
-            accepted.push_back(box);
+            accept(box);
             emit_label(control.id_hash, control.icon_key, image, box, to_world(*c.key, control.pos),
                        at);
             ++controls;
         } else {
-            if (places >= 6) continue;
+            if (places >= (view_zoom <= kBasemapMaxZoom ? 14u : 6u)) continue;
             const auto& place = *static_cast<const PlaceLabel*>(c.label);
             bool ok = false;
             const ScreenPoint at = to_screen(*c.key, place.pos, ok);
@@ -3324,7 +3529,7 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
             const OrientedBox box{at.x, at.y, place.image->width / 2.0f, place.image->height / 2.0f, 0.0f};
             if (!on_screen(box) || !free_of(box))
                 continue;
-            accepted.push_back(box);
+            accept(box);
             emit_label(place.key, place.key, *place.image, box, to_world(*c.key, place.pos), at);
             placed_pois.push_back({nullptr, c.key, at.x, at.y, 0.0f, &place, box.half_width,
                                    box.half_height});
@@ -3349,7 +3554,7 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
                               shown.half_w, shown.half_h, shown.angle};
         if (!on_screen(box) || !free_of(box))
             continue;
-        accepted.push_back(box);
+        accept(box);
         quad(shown.atlas_key, *shown.image, box, shown.alpha);
         fading = true;
         next_fade[id] = shown;
@@ -3360,46 +3565,24 @@ void VectorMap::Impl::place_labels(const MapView& view, const std::vector<TileKe
         quad(location_key, *location_dot, dot, 1.0f);
     }
     fade.swap(next_fade);
-    if (label_indices.empty())
-        return;
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    glUseProgram(label_prog);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, atlas.texture());
-    glUniform1i(label_tex, 0);
-    const auto gl_started = Clock::now();
-    label_slot = (label_slot + 1) % kLabelRing;
-    const std::size_t vbytes = label_vertices.size() * sizeof(LabelVertex);
-    const std::size_t ibytes = label_indices.size() * 2;
-    glBindBuffer(GL_ARRAY_BUFFER, label_vbo[label_slot]);
-    if (vbytes > label_vbo_capacity[label_slot]) {
-        label_vbo_capacity[label_slot] = std::max<std::size_t>(vbytes * 2, 16384);
-        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(label_vbo_capacity[label_slot]),
-                     nullptr, GL_DYNAMIC_DRAW);
+    {
+        LabelCache& cache = label_cache;
+        cache.valid = camera_still && !fading && !deferred;
+        if (cache.valid) {
+            cache.epoch = labels_epoch;
+            cache.atlas_resets = atlas.resets();
+            cache.width = W;
+            cache.height = H;
+            cache.zoom = zoom;
+            cache.location_dot = view.location_dot;
+            cache.dot_x = view.dot_x;
+            cache.dot_y = view.dot_y;
+            cache.blocked = view.blocked;
+            cache.draw = draw_list;
+        }
     }
-    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vbytes), label_vertices.data());
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, label_ibo[label_slot]);
-    if (ibytes > label_ibo_capacity[label_slot]) {
-        label_ibo_capacity[label_slot] = std::max<std::size_t>(ibytes * 2, 8192);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(label_ibo_capacity[label_slot]),
-                     nullptr, GL_DYNAMIC_DRAW);
-    }
-    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(ibytes),
-                    label_indices.data());
-    timing.label_buffers_us = static_cast<std::uint32_t>(std::chrono::duration_cast<
-        std::chrono::microseconds>(Clock::now() - gl_started).count());
-    for (GLuint a = 0; a < 3; ++a)
-        glEnableVertexAttribArray(a);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), nullptr);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), reinterpret_cast<void*>(8));
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(LabelVertex), reinterpret_cast<void*>(16));
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(label_indices.size()), GL_UNSIGNED_SHORT,
-                   nullptr);
-    for (GLuint a = 0; a < 3; ++a)
-        glDisableVertexAttribArray(a);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    ++calls;
+    timing.label_tests = overlap_tests;
+    draw_label_buffers(true);
 }
 
 bool VectorMap::pick_poi(float x, float y, float radius, PoiPick& out) const

@@ -16,6 +16,11 @@ struct Config {
     std::string map = "/navi_map/osm";
     std::string fonts = "/datastore/navicore-backend/fonts";
     std::string recents = "/datastore/navicore-backend/recents.tsv";
+    // UI language: the marker holds "uk", "en", "fr-CA" or "es-MX" (bench
+    // override, also OPEN_NAVICORE_OSMAND_LANGUAGE); without one the radio's
+    // own HMI language file is read ("english.cfg"); English otherwise.
+    std::string language_marker = "/datastore/navicore-backend/language";
+    std::string hmi_language_file = "/datastore/dc_hmi_language.txt";
     // Built vector tiles, per map file; empty disables the disk cache.
     std::string vector_cache = "/datastore/navicore-backend/vectorcache";
 

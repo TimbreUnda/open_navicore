@@ -31,7 +31,9 @@ struct FrameMeasurement {
     // Our vector map's parts (VectorFrameTiming).
     std::uint32_t vec_take_us = 0, vec_uploads = 0, vec_route_us = 0, vec_want_us = 0,
                   vec_draw_us = 0, vec_labels_us = 0, vec_evict_us = 0,
-                  vec_upload_max_us = 0, vec_atlas_us = 0, vec_label_buffers_us = 0;
+                  vec_upload_max_us = 0, vec_atlas_us = 0, vec_label_buffers_us = 0,
+                  vec_label_collect_us = 0, vec_label_candidates = 0, vec_label_tests = 0,
+                  vec_label_reused = 0;
     std::uint32_t post_us = 0;          // after the UI: search/route submit,
                                         // cluster, dev menu, recents
 };

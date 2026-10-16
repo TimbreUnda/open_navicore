@@ -163,6 +163,60 @@ int main()
     check(place_label_rank("suburb", 13) >= 0 && place_label_rank("suburb", 17) < 0,
           "suburb names zoomed out only");
 
+    // Overview maps (basemap, zoom 4-10): visible roads, borders, landcover,
+    // sea, and place names by class.
+    for (const bool night : {false, true}) {
+        const auto primary = classify(tags({{"highway", "primary"}}), false, 7, night);
+        check(primary.has_line && primary.line.casing_width == 0.0f,
+              "overview primary has a line");
+        // At least a pixel and a half on screen: width * 2^((z - 16) / 2).
+        check(primary.line.width * std::exp2((7 - 16) * 0.5f) >= 1.3f,
+              "overview primary visible");
+        check(!classify(tags({{"highway", "secondary"}}), false, 6, night).has_line &&
+                  classify(tags({{"highway", "secondary"}}), false, 8, night).has_line,
+              "secondary from z8");
+        check(!classify(tags({{"highway", "tertiary"}}), false, 9, night).has_line &&
+                  classify(tags({{"highway", "tertiary"}}), false, 10, night).has_line,
+              "tertiary from z10");
+        check(!classify(tags({{"highway", "motorway_link"}}), false, 8, night).has_line,
+              "no links in the overview");
+        check(classify(tags({{"highway", "motorway"}}), false, 6, night).line.fill.r !=
+                  land_colour(night).r ||
+                  classify(tags({{"highway", "motorway"}}), false, 6, night).line.fill.b !=
+                      land_colour(night).b,
+              "overview motorway differs from land");
+        check(classify(tags({{"admin_level", "2"}}), false, 5, night).line.layer ==
+                  LineLayer::Boundary, "country border");
+        check(classify(tags({{"admin_level", "4"}}), false, 6, night).has_line &&
+                  !classify(tags({{"admin_level", "4"}}), false, 11, night).has_line,
+              "region border only in the overview");
+        check(!classify(tags({{"admin_level", "8"}, {"boundary", "administrative"}}), false, 8,
+                        night).has_line, "no municipal borders");
+    }
+    check(classify(tags({{"natural", "glacier"}}), true, 6).has_area, "glacier");
+    check(classify(tags({{"natural", "wetland"}}), true, 8).has_area, "wetland");
+    check(classify(tags({{"landuse", "residential"}}), true, 8).has_area &&
+              !classify(tags({{"landuse", "residential"}}), true, 13).has_area,
+          "residential tint in the overview only");
+    check(!classify(tags({{"natural", "coastline"}}), false, 6).has_line &&
+              is_coastline(tags({{"natural", "coastline"}})) &&
+              !is_coastline(tags({{"natural", "water"}})),
+          "coastlines are not drawn as lines");
+    check(!treat_as_area(tags({{"admin_level", "2"}}), false, true), "closed border stays a line");
+    check(AreaLayer::Sea < AreaLayer::Land && AreaLayer::Land < AreaLayer::Landuse &&
+              AreaLayer::Landuse < AreaLayer::Water,
+          "sea below everything");
+    check(place_label_rank("country", 5) == 0 && place_label_rank("country", 9) < 0,
+          "countries at low zoom");
+    check(place_label_rank("state", 6) >= 0 && place_label_rank("state", 10) < 0, "states");
+    check(place_label_rank("city", 4) >= 0 && place_label_rank("city", 12) >= 0, "cities");
+    check(place_label_rank("town", 6) < 0 && place_label_rank("town", 9) >= 0, "towns from z8");
+    check(place_label_rank("country", 5) < place_label_rank("state", 5) &&
+              place_label_rank("state", 5) < place_label_rank("city", 5) &&
+              place_label_rank("city", 9) < place_label_rank("town", 9),
+          "place ranks order");
+    check(place_font("country", false).size > place_font("town", false).size, "country larger");
+
     // Levels: tunnels below ground, bridges above it, layer 2 above those.
     check(line_level(tags({{"highway", "primary"}})) == kGroundLevel, "ground level");
     check(line_level(tags({{"highway", "primary"}, {"tunnel", "yes"}})) == kTunnelLevel,

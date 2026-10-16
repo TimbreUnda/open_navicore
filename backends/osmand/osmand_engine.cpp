@@ -9,6 +9,7 @@
 #include "guidance_tracker.h"
 #include "navigation_worker.h"
 #include "ui/gl_overlay_compositor.h"
+#include "ui/localization.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
 #include "ui/recents_store.h"
@@ -299,6 +300,14 @@ bool OsmAndEngine::initialize(const Config& config,
                              std::shared_ptr<Wakeup> wakeup)
 {
     config_ = config;
+    {
+        const auto language = ui::loc::detect_language(
+            std::getenv("OPEN_NAVICORE_OSMAND_LANGUAGE"), config.language_marker,
+            config.hmi_language_file);
+        ui::loc::set_language(language.language);
+        trace(("language=" + std::string(ui::loc::language_code(language.language)) +
+               " source=" + language.source).c_str());
+    }
     simulation_enabled_ = config.simulate_route;
     simulate_detour_ = config.simulate_detour;
     if (simulate_detour_)
@@ -318,7 +327,7 @@ bool OsmAndEngine::initialize(const Config& config,
                 std::to_string(map_known ? map_info.st_size : 0) + "|" +
                 std::to_string(map_known ? map_info.st_mtime : 0) + ";";
         }
-        vector_cache_identity_ += "|vector-style-3";
+        vector_cache_identity_ += "|vector-style-4";
     }
     frame_metrics_ = FrameMetrics(config.performance_metrics);
 
@@ -1257,12 +1266,8 @@ std::string OsmAndEngine::with_distance(std::string text, const OsmAnd::LatLon& 
         return text;
     const double metres = OsmAnd::Utilities::distance(
         OsmAnd::LatLon(vehicle.latitude, vehicle.longitude), location);
-    char distance[32] = {};
-    if (metres < 1000.0)
-        std::snprintf(distance, sizeof(distance), "%.0f m", std::round(metres / 10.0) * 10.0);
-    else
-        std::snprintf(distance, sizeof(distance), "%.1f km", metres / 1000.0);
-    return text.empty() ? std::string(distance) : text + " · " + distance;
+    const std::string distance = ui::loc::format_distance(metres, ui::loc::Rounding::Tens);
+    return text.empty() ? distance : text + " · " + distance;
 }
 
 void OsmAndEngine::handle_map_touch(const ui::MapTouch& touch)
@@ -1304,17 +1309,9 @@ void OsmAndEngine::handle_map_tap(int x, int y)
                std::to_string(static_cast<long long>(pick.x31)) + "," +
                std::to_string(static_cast<long long>(pick.y31));
     place.title = pick.name;
-    // "amenity_fuel" -> "Fuel": the category after the key, readable; a
+    // "amenity_fuel" -> "Fuel" (or "АЗС"): the category in the UI language; a
     // place name shows its type ("city" -> "City").
-    std::string category = is_place ? pick.place : pick.icon;
-    const auto underscore = category.find('_');
-    if (!is_place && underscore != std::string::npos && underscore + 1 < category.size())
-        category = category.substr(underscore + 1);
-    for (auto& c : category)
-        if (c == '_')
-            c = ' ';
-    if (!category.empty())
-        category[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(category[0])));
+    const std::string category = ui::loc::poi_category(is_place ? pick.place : pick.icon);
     place.latitude = location.latitude;
     place.longitude = location.longitude;
     place.subtitle = with_distance(category, location);
@@ -1334,7 +1331,7 @@ void OsmAndEngine::drop_pin(int x, int y)
                   location.longitude);
     ui::Destination pin;
     pin.id = std::string(ui::NavigationModel::pin_prefix) + coordinates;
-    pin.title = "Dropped pin";
+    pin.title = ui::loc::tr(ui::loc::Str::DroppedPin);
     pin.latitude = location.latitude;
     pin.longitude = location.longitude;
     pin.subtitle = with_distance(coordinates, location);
@@ -1547,6 +1544,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         measurement.vec_upload_max_us = vt.upload_max_us;
         measurement.vec_atlas_us = vt.atlas_us;
         measurement.vec_label_buffers_us = vt.label_buffers_us;
+        measurement.vec_label_collect_us = vt.label_collect_us;
+        measurement.vec_label_candidates = vt.label_candidates;
+        measurement.vec_label_tests = vt.label_tests;
+        measurement.vec_label_reused = vt.label_reused;
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
