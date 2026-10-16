@@ -1,7 +1,10 @@
 // Renders the navigation UI in the design's reference states and writes each
 // LVGL canvas as raw ARGB8888 (OUT_DIR/<state>.argb, 1024x574), for pixel
 // comparison against the Uconnect navigation mockups:
-//   ui-render-tool OUT_DIR
+//   ui-render-tool OUT_DIR [LANGUAGE]
+// LANGUAGE is en (default), uk, fr-CA or es-MX; texts that come from the
+// engine (categories, distances) are produced in that language too.
+#include "ui/localization.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
 
@@ -11,6 +14,13 @@
 #include <vector>
 
 using namespace navicore_osmand::ui;
+namespace {
+// "Fuel · 0.4 km" the way the engine builds a place card subtitle.
+std::string fuel_subtitle(const std::string& tail = std::string())
+{
+    return loc::poi_category("amenity_fuel") + " · " + loc::format_distance(400.0) + tail;
+}
+} // namespace
 
 namespace {
 void settle(NavigationView& view)
@@ -31,19 +41,34 @@ bool write(const NavigationView& view, const std::string& path)
     return std::fclose(file) == 0 && ok;
 }
 
-const Destination ocean{"ocean", "Ocean Plaza", "Antonovycha St 176 · Shopping centre",
-                        "3.1 km", 50.4123, 30.5221};
+// Fixture texts the engine would produce (distances, categories) follow the
+// UI language like in production.
+std::string km(double value) { return loc::format_distance(value * 1000.0); }
+std::string cat(const char* key, const std::string& tail = std::string())
+{
+    return tail.empty() ? loc::poi_category(key) : loc::poi_category(key) + " · " + tail;
+}
+std::string kind(loc::Str key, const std::string& tail)
+{
+    return std::string(loc::tr(key)) + " · " + tail;
+}
+
+Destination make_ocean()
+{
+    return {"ocean", "Ocean Plaza", "Antonovycha St 176 · " + cat("mall"), km(3.1), 50.4123,
+            30.5221};
+}
 
 // Search -> preview through the real model transitions.
 void to_preview(NavigationView& view)
 {
     const auto search = view.set_query("Ocean");
-    (void)view.apply_search_results(search, {ocean});
+    (void)view.apply_search_results(search, {make_ocean()});
     const auto route_revision = view.select_result(0);
     RouteAlternative route;
     route.id = "fast";
-    route.duration = "9 min";
-    route.distance = "2.4 km";
+    route.duration = loc::format_duration_minutes(9);
+    route.distance = km(2.4);
     route.reason = "Fastest";
     route.duration_seconds = 540.0;
     route.distance_metres = 2400.0;
@@ -55,12 +80,20 @@ void to_preview(NavigationView& view)
 int main(int argc, char** argv)
 {
     const std::string out = argc > 1 ? argv[1] : ".";
+    if (argc > 2) {
+        loc::Language language = loc::Language::English;
+        if (!loc::parse_language(argv[2], language)) {
+            std::fprintf(stderr, "unknown language %s\n", argv[2]);
+            return 2;
+        }
+        loc::set_language(language);
+    }
     bool ok = true;
     {
         NavigationModel model;
-        model.set_recents({ocean,
-                           {"rail", "Kyiv-Pasazhyrskyi", "Railway station", "2.4 km", 50.44, 30.49},
-                           {"olena", "Home of Olena", "Saksahanskoho St 41", "1.2 km", 50.43, 30.51}});
+        model.set_recents({make_ocean(),
+                           {"rail", "Kyiv-Pasazhyrskyi", cat("station"), km(2.4), 50.44, 30.49},
+                           {"olena", "Home of Olena", "Saksahanskoho St 41", km(1.2), 50.43, 30.51}});
         NavigationView view(model, 1024, 574);
         MapViewState night;  // the design boards show the night map
         night.night = true;
@@ -96,17 +129,17 @@ int main(int argc, char** argv)
         ok = write(view, out + "/guidance.argb") && ok;
     }
     const std::vector<Destination> results = {
-        {"s1", "Khreshchatyk St", "Street · Shevchenkivskyi, Kyiv", "1.9 km", 50.44, 30.52},
-        {"s2", "Khreshchatyk St 22", "House · Kyiv", "2.0 km", 50.44, 30.52},
-        {"s3", "Khreshchatyk St 15", "House · Kyiv", "2.1 km", 50.44, 30.52},
-        {"s4", "Khreshchatyk Park", "Park · Kyiv", "2.6 km", 50.44, 30.52}};
+        {"s1", "Khreshchatyk St", kind(loc::Str::AddressStreet, "Shevchenkivskyi, Kyiv"), km(1.9), 50.44, 30.52},
+        {"s2", "Khreshchatyk St 22", kind(loc::Str::AddressBuilding, "Kyiv"), km(2.0), 50.44, 30.52},
+        {"s3", "Khreshchatyk St 15", kind(loc::Str::AddressBuilding, "Kyiv"), km(2.1), 50.44, 30.52},
+        {"s4", "Khreshchatyk Park", cat("park", "Kyiv"), km(2.6), 50.44, 30.52}};
     for (const bool lock : {false, true}) {
         NavigationModel model;
-        model.set_recents({ocean,
-                           {"rail", "Kyiv-Pasazhyrskyi", "Railway station", "2.4 km", 50.44, 30.49},
-                           {"olena", "Home of Olena", "Saksahanskoho St 41", "1.2 km", 50.43, 30.51},
-                           {"arsenalna", "Arsenalna", "Metro station", "4.8 km", 50.44, 30.54},
-                           {"kbp", "Boryspil Airport (KBP)", "Airport · Boryspil", "34 km", 50.34, 30.89}});
+        model.set_recents({make_ocean(),
+                           {"rail", "Kyiv-Pasazhyrskyi", cat("station"), km(2.4), 50.44, 30.49},
+                           {"olena", "Home of Olena", "Saksahanskoho St 41", km(1.2), 50.43, 30.51},
+                           {"arsenalna", "Arsenalna", cat("subway_entrance"), km(4.8), 50.44, 30.54},
+                           {"kbp", "Boryspil Airport (KBP)", cat("airport", "Boryspil"), km(34), 50.34, 30.89}});
         NavigationView view(model, 1024, 574);
         view.open_search();
         const auto revision = view.set_query("Khreshchatyk");
@@ -119,14 +152,14 @@ int main(int argc, char** argv)
     {
         // Place card over free drive (design proposal G2).
         NavigationModel model;
-        model.set_recents({ocean,
-                           {"rail", "Kyiv-Pasazhyrskyi", "Railway station", "2.4 km", 50.44, 30.49},
-                           {"olena", "Home of Olena", "Saksahanskoho St 41", "1.2 km", 50.43, 30.51}});
+        model.set_recents({make_ocean(),
+                           {"rail", "Kyiv-Pasazhyrskyi", cat("station"), km(2.4), 50.44, 30.49},
+                           {"olena", "Home of Olena", "Saksahanskoho St 41", km(1.2), 50.43, 30.51}});
         NavigationView view(model, 1024, 574);
         MapViewState night;
         night.night = true;
         (void)model.set_map_view(night);
-        (void)view.show_place_card({"poi:1,2", "WOG", "Fuel · 0.4 km · вулиця Саксаганського", "",
+        (void)view.show_place_card({"poi:1,2", "WOG", fuel_subtitle(" · вулиця Саксаганського"), "",
                                     50.44, 30.52}, "amenity_fuel");
         settle(view);
         ok = write(view, out + "/place.argb") && ok;
@@ -136,12 +169,14 @@ int main(int argc, char** argv)
         NavigationModel model;
         NavigationView view(model, 1024, 574);
         const auto search = view.set_query("Ocean");
-        (void)view.apply_search_results(search, {ocean});
+        (void)view.apply_search_results(search, {make_ocean()});
         const auto route_revision = view.select_result(0);
         std::vector<RouteAlternative> routes;
         for (const auto& [time, distance, reason] :
-             {std::tuple<const char*, const char*, const char*>{"9 min", "2.4 km", "Fastest"},
-              {"11 min", "2.2 km", "Shortest"}, {"12 min", "2.9 km", "Fewer turns"}}) {
+             {std::tuple<std::string, std::string, const char*>{
+                  loc::format_duration_minutes(9), km(2.4), "Fastest"},
+              {loc::format_duration_minutes(11), km(2.2), "Shortest"},
+              {loc::format_duration_minutes(12), km(2.9), "Fewer turns"}}) {
             RouteAlternative route;
             route.duration = time;
             route.distance = distance;
@@ -251,7 +286,7 @@ int main(int argc, char** argv)
         NavigationModel model;
         NavigationView view(model, 1024, 574);
         settle(view);
-        (void)view.show_place_card({"poi:1,2", "WOG", "Fuel · 0.4 km · вулиця Саксаганського", "",
+        (void)view.show_place_card({"poi:1,2", "WOG", fuel_subtitle(" · вулиця Саксаганського"), "",
                                     50.44, 30.52}, "amenity_fuel");
         const auto revision = view.select_place(*model.place_card());
         if (failed)
@@ -268,11 +303,93 @@ int main(int argc, char** argv)
         state.heading_known = false;
         (void)model.set_map_view(state);
         settle(view);
-        (void)view.show_place_card({"pin:50.44000, 30.52000", "Dropped pin",
-                                    "вулиця Хрещатик, 22 · 0.4 km", "", 50.44, 30.52}, "pin");
+        (void)view.show_place_card({"pin:50.44000, 30.52000", loc::tr(loc::Str::DroppedPin),
+                                    "вулиця Хрещатик, 22 · " + loc::format_distance(400.0), "",
+                                    50.44, 30.52}, "pin");
         view.set_pin_marker(true, 640, 300);
         settle(view);
         ok = write(view, out + "/pin.argb") && ok;
+    }
+    {
+        // Simulated guidance into a roundabout with a long instruction (two
+        // lines) and a long road name.
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        to_preview(view);
+        (void)view.start_guidance(0);
+        MapViewState night;
+        night.night = true;
+        (void)model.set_map_view(night);
+        GuidanceState state;
+        state.position_available = true;
+        state.simulated = true;
+        state.distance_to_maneuver_metres = 290.0;
+        state.remaining_metres = 12400.0;
+        state.remaining_seconds = 4500.0;
+        state.maneuver.kind = ManeuverKind::Roundabout;
+        state.maneuver.roundabout_exit = 2;
+        state.maneuver.road = "проспект Академіка Глушкова";
+        state.road = "проспект Академіка Глушкова";
+        state.speed_limit_kmh = 60;
+        (void)view.apply_guidance(state);
+        settle(view);
+        ok = write(view, out + "/roundabout.argb") && ok;
+    }
+    {
+        // Sharp left with the longest turn wording.
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        to_preview(view);
+        (void)view.start_guidance(0);
+        GuidanceState state;
+        state.position_available = true;
+        state.distance_to_maneuver_metres = 1500.0;
+        state.remaining_metres = 2000.0;
+        state.remaining_seconds = 360.0;
+        state.maneuver.kind = ManeuverKind::SharpLeft;
+        state.maneuver.road = "вулиця Антоновича";
+        (void)view.apply_guidance(state);
+        settle(view);
+        ok = write(view, out + "/sharp.argb") && ok;
+    }
+    {
+        // No GPS fix.
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        to_preview(view);
+        (void)view.start_guidance(0);
+        GuidanceState state;
+        state.position_available = false;
+        state.maneuver.kind = ManeuverKind::KeepRight;
+        state.maneuver.road = "вулиця Антоновича";
+        (void)view.apply_guidance(state);
+        settle(view);
+        ok = write(view, out + "/nogps.argb") && ok;
+    }
+    {
+        // Empty states: free drive without recents, search messages, no route.
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        settle(view);
+        ok = write(view, out + "/free_empty.argb") && ok;
+    }
+    for (const int stage : {0, 1, 2, 3}) {
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        view.open_search();
+        if (stage >= 1) {
+            const auto revision = view.set_query("Khreshchatyk");
+            if (stage == 2)
+                (void)view.apply_search_results(revision, {});
+            if (stage == 3) {
+                (void)view.apply_search_results(revision, {make_ocean()});
+                const auto route = view.select_result(0);
+                (void)view.apply_routes(route, {});
+            }
+        }
+        (void)view.set_moving(stage == 0);
+        settle(view);
+        ok = write(view, out + "/search_" + std::to_string(stage) + ".argb") && ok;
     }
     {
         // Developer menu with typical rows.

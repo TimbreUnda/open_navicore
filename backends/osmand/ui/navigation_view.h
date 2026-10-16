@@ -197,6 +197,7 @@ private:
     lv_obj_t* guidance_bar_ = nullptr;
     lv_obj_t* guidance_bar_fill_ = nullptr;
     lv_obj_t* guidance_time_ = nullptr;
+    int trip_text_limit_ = 0;  // width left of the trip card buttons
     lv_obj_t* guidance_remaining_ = nullptr;
     lv_obj_t* guidance_next_glyph_ = nullptr;
     lv_obj_t* guidance_instruction_ = nullptr;

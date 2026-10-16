@@ -4,6 +4,7 @@
 #include "diagnostics.h"
 #include "route_check.h"
 #include "session.h"
+#include "ui/localization.h"
 
 #include <OsmAndCore/Data/Address.h>
 #include <OsmAndCore/Data/Amenity.h>
@@ -70,23 +71,19 @@ std::string distance_text(const OsmAnd::PointI& point)
 {
     const auto destination = OsmAnd::Utilities::convert31ToLatLon(point);
     const double metres = OsmAnd::Utilities::distance(kDemoOrigin, destination);
-    char text[32] = {};
-    if (metres < 1000.0)
-        std::snprintf(text, sizeof(text), "%.0f m", metres);
-    else
-        std::snprintf(text, sizeof(text), "%.1f km", metres / 1000.0);
-    return text;
+    return ui::loc::format_distance(metres);
 }
 
 std::string address_kind(OsmAnd::AddressType type)
 {
     switch (type) {
-    case OsmAnd::AddressType::StreetGroup: return "Place";
-    case OsmAnd::AddressType::Street: return "Street";
-    case OsmAnd::AddressType::Building: return "Address";
-    case OsmAnd::AddressType::StreetIntersection: return "Intersection";
+    case OsmAnd::AddressType::StreetGroup: return ui::loc::tr(ui::loc::Str::AddressPlace);
+    case OsmAnd::AddressType::Street: return ui::loc::tr(ui::loc::Str::AddressStreet);
+    case OsmAnd::AddressType::Building: return ui::loc::tr(ui::loc::Str::AddressBuilding);
+    case OsmAnd::AddressType::StreetIntersection:
+        return ui::loc::tr(ui::loc::Str::AddressIntersection);
     }
-    return "Address";
+    return ui::loc::tr(ui::loc::Str::AddressBuilding);
 }
 
 ui::Destination destination(const OsmAnd::Address& address)
@@ -108,6 +105,7 @@ ui::Destination destination(const OsmAnd::Amenity& amenity)
     if (title.empty()) title = utf8(amenity.nativeName);
     std::string subtitle = utf8(amenity.subType);
     if (subtitle.empty()) subtitle = utf8(amenity.type);
+    if (!subtitle.empty()) subtitle = ui::loc::poi_category(subtitle);
     return {"amenity:" + std::to_string(amenity.position31.x) + ":" +
                 std::to_string(amenity.position31.y),
             std::move(title), std::move(subtitle),
@@ -164,19 +162,12 @@ std::string write_routing_xml(const std::string& xml)
 
 std::string distance_label(double metres)
 {
-    char text[32] = {};
-    if (metres < 1000.0) std::snprintf(text, sizeof(text), "%.0f m", metres);
-    else std::snprintf(text, sizeof(text), "%.1f km", metres / 1000.0);
-    return text;
+    return ui::loc::format_distance(metres);
 }
 
 std::string duration_label(double seconds)
 {
-    const int minutes = static_cast<int>(std::lround(seconds / 60.0));
-    char text[32] = {};
-    if (minutes < 60) std::snprintf(text, sizeof(text), "%d min", minutes);
-    else std::snprintf(text, sizeof(text), "%d h %02d min", minutes / 60, minutes % 60);
-    return text;
+    return ui::loc::format_duration_minutes(static_cast<int>(std::lround(seconds / 60.0)));
 }
 
 ui::ManeuverKind maneuver_kind(int value)

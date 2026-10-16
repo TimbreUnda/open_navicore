@@ -73,6 +73,8 @@ Config Config::from_environment()
     config.fonts = path("OPEN_NAVICORE_OSMAND_FONTS", config.fonts);
     config.recents = path("OPEN_NAVICORE_OSMAND_RECENTS", config.recents);
     config.vector_cache = path("OPEN_NAVICORE_OSMAND_VECTOR_CACHE", config.vector_cache);
+    config.language_marker = path("OPEN_NAVICORE_OSMAND_LANGUAGE_MARKER", config.language_marker);
+    config.hmi_language_file = path("OPEN_NAVICORE_OSMAND_HMI_LANGUAGE", config.hmi_language_file);
     config.simulate_route = marker_or_environment(
         "OPEN_NAVICORE_OSMAND_SIMULATE_ROUTE",
         "/datastore/navicore-backend/enable-route-simulation");

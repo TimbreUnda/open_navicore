@@ -276,6 +276,18 @@ vehicle moves. The camera keeps the vehicle low in the map in heading-up mode,
 zooms out with speed, extrapolates between 1 Hz GPS fixes and returns to
 following ten seconds after the last touch.
 
+Language (`ui/localization.*`): the UI texts, turn instructions, distance and
+duration formats and POI categories follow the radio. English, Ukrainian,
+French (Canada) and Spanish (Mexico) are in the table; a missing entry falls
+back to English, and the developer menu stays English. The language is read
+once at start: `OPEN_NAVICORE_OSMAND_LANGUAGE`, else the first line of
+`/datastore/navicore-backend/language` (`uk`, `en`, `fr-CA`, `es-MX`), else the
+radio's HMI file `/datastore/dc_hmi_language.txt` (`english.cfg`, `french.cfg`,
+`spanish.cfg`), else English. The HMI file only names the compiled bank, so a
+unit whose English bank is Ukrainian needs the marker (`uk`). The log line
+`language=<code> source=<environment|marker|hmi|default>` shows the result.
+Units stay metric. `ui_render_tool OUT_DIR uk` renders the screens in a language.
+
 Developer menu: hold the day/night button for 1.5 s in free drive while
 standing still (a short tap still toggles day/night; moving closes it). It
 shows raw GPS fields, the camera, map file and vector cache space, tile and
