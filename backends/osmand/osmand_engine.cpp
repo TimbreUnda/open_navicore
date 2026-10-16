@@ -1547,6 +1547,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         measurement.vec_upload_max_us = vt.upload_max_us;
         measurement.vec_atlas_us = vt.atlas_us;
         measurement.vec_label_buffers_us = vt.label_buffers_us;
+        measurement.vec_label_collect_us = vt.label_collect_us;
+        measurement.vec_label_candidates = vt.label_candidates;
+        measurement.vec_label_tests = vt.label_tests;
+        measurement.vec_label_reused = vt.label_reused;
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
