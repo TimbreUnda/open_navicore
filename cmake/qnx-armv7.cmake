@@ -58,8 +58,11 @@ set(ENV{QNX_HOST} ${QNX_HOST})
 set(ENV{QNX_TARGET} ${QNX_TARGET})
 set(ENV{LD_LIBRARY_PATH} ${QNX_HOST_LIBS})
 set(QNX_ENV env QNX_HOST=${QNX_HOST} QNX_TARGET=${QNX_TARGET} LD_LIBRARY_PATH=${QNX_HOST_LIBS})
-set(CMAKE_C_COMPILER_LAUNCHER ${QNX_ENV})
-set(CMAKE_CXX_COMPILER_LAUNCHER ${QNX_ENV})
+# ccache (when installed) runs inside env, so the cached compiler sees the
+# SDK variables; set CCACHE_DISABLE=1 to bypass it.
+find_program(ONC_CCACHE ccache)
+set(CMAKE_C_COMPILER_LAUNCHER ${QNX_ENV} ${ONC_CCACHE})
+set(CMAKE_CXX_COMPILER_LAUNCHER ${QNX_ENV} ${ONC_CCACHE})
 set(CMAKE_C_LINKER_LAUNCHER ${QNX_ENV})
 set(CMAKE_CXX_LINKER_LAUNCHER ${QNX_ENV})
 set(QNX_READELF ${QNX_HOST}/usr/bin/ntoarmv7-readelf)

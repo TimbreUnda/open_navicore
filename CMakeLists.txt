@@ -9,6 +9,16 @@
 # The same CMakeLists builds the product when configured with
 # cmake/qnx-armv7.cmake, and the host tests otherwise.
 cmake_minimum_required(VERSION 3.21)
+
+# Host builds use ccache when installed (the QNX toolchain file does the same).
+if(NOT CMAKE_TOOLCHAIN_FILE)
+  find_program(ONC_CCACHE ccache)
+  if(ONC_CCACHE)
+    set(CMAKE_C_COMPILER_LAUNCHER ${ONC_CCACHE})
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${ONC_CCACHE})
+  endif()
+endif()
+
 project(open_navicore C CXX)
 
 set(CMAKE_C_STANDARD 99)
