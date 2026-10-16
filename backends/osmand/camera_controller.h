@@ -50,7 +50,7 @@ public:
     };
 
     struct Settings {
-        float min_zoom = 3.0f;
+        float min_zoom = 4.0f;  // tiles are built down to z4 (vector_map.cpp)
         float max_zoom = 18.5f;
         float follow_base_zoom = 17.0f;  // zoom at or below slow_speed
         float slow_speed_mps = 8.0f;     // ~30 km/h
