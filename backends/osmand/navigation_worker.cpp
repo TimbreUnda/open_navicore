@@ -475,10 +475,12 @@ private:
         // Every region is opened: the router searches all open map files, so
         // a route may cross regions. Files without a routing index are closed.
         std::size_t routable = 0;
+        bool any_hh = false;
         for (const std::string& path : map_paths_) {
             const auto map = initBinaryMapFile(path, false, true);
             if (map && !map->routingIndexes.empty()) {
                 ++routable;
+                any_hh = any_hh || !map->hhIndexes.empty();
             } else {
                 (void)closeBinaryMapFile(path);
             }
@@ -487,7 +489,7 @@ private:
             trace("error=map_has_no_routing_index");
             return false;
         }
-        has_hh_ = !map->hhIndexes.empty();
+        has_hh_ = any_hh;
         trace(has_hh_ ? "worker=router hh=1" : "worker=router hh=0");
         router_ready_ = true;
         return true;
