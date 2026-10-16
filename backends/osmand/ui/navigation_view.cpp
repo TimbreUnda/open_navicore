@@ -1317,7 +1317,7 @@ void NavigationView::build_route_preview()
         const std::string reason = loc::route_reason(route.reason);
         if (!reason.empty()) {
             const int width = text_width(reason.c_str(), &nav_font_14_600) + 20;
-            lv_obj_t* tag = box(card, column - 16 - width, 29, width, 28, base, 6);
+            lv_obj_t* tag = box(card, column - 16 - width, 50, width, 28, base, 6);
             design::text(tag, reason.c_str(), &nav_font_14_600, text2, 10, 5);
         }
         lv_obj_add_event_cb(card, route_cb, LV_EVENT_CLICKED, this);

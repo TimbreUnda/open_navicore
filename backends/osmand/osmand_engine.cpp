@@ -327,7 +327,11 @@ bool OsmAndEngine::initialize(const Config& config,
                 std::to_string(map_known ? map_info.st_size : 0) + "|" +
                 std::to_string(map_known ? map_info.st_mtime : 0) + ";";
         }
-        vector_cache_identity_ += "|vector-style-4";
+        // Labels are baked into the tiles, so the label languages are part of the identity.
+        vector_cache_identity_ += "|labels=";
+        for (const std::string& language : ui::loc::name_languages(ui::loc::language()))
+            vector_cache_identity_ += language + ",";
+        vector_cache_identity_ += "|vector-style-5";
     }
     frame_metrics_ = FrameMetrics(config.performance_metrics);
 
@@ -420,7 +424,8 @@ bool OsmAndEngine::initialize(const Config& config,
     try {
         vector_map_.reset(new navicore_vector::VectorMap(
             obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); },
-            basemap_obfs_->getObfFiles().isEmpty() ? nullptr : basemap_obfs_));
+            basemap_obfs_->getObfFiles().isEmpty() ? nullptr : basemap_obfs_,
+            ui::loc::name_languages(ui::loc::language())));
         vector_map_->set_upload_thread(true);
         if (!vector_map_->init_gl())
             throw std::runtime_error("vector_map gl");

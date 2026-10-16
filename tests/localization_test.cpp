@@ -305,8 +305,18 @@ void font_coverage()
 }
 } // namespace
 
+void name_language_chain()
+{
+    using Names = std::vector<std::string>;
+    assert(loc::name_languages(Language::Ukrainian) == Names{"uk"});
+    assert(loc::name_languages(Language::English) == Names{"en"});
+    assert((loc::name_languages(Language::FrenchCanadian) == Names{"fr", "en"}));
+    assert((loc::name_languages(Language::SpanishMexican) == Names{"es", "en"}));
+}
+
 int main()
 {
+    name_language_chain();
     parse_and_detect();
     table_complete();
     plurals();

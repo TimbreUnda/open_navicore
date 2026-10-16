@@ -295,6 +295,17 @@ const char* language_code(Language value) noexcept
     return "en";
 }
 
+std::vector<std::string> name_languages(Language value)
+{
+    switch (value) {
+    case Language::English: return {"en"};
+    case Language::Ukrainian: return {"uk"};
+    case Language::FrenchCanadian: return {"fr", "en"};
+    case Language::SpanishMexican: return {"es", "en"};
+    }
+    return {"en"};
+}
+
 bool parse_language(const std::string& text, Language& out)
 {
     std::string name = lower(trim(text));
