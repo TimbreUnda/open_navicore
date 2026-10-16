@@ -1,5 +1,6 @@
 #include "vector_style.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -40,6 +41,39 @@ const Palette& palette(bool night)
     return night ? kNight : kDay;
 }
 
+// Overview colours (zoom 4-10, from the world basemap): roads are one or two
+// pixels wide there, so they take the darker outline tone instead of white,
+// which would vanish on the land colour.
+struct OverviewPalette {
+    Rgba wetland, glacier, urban, border_country, border_region, motorway, trunk,
+        primary, secondary, tertiary, rail;
+};
+constexpr OverviewPalette kDayOverview = {
+    rgb(0xCDE6DA), rgb(0xEAF2F8), rgb(0xE9E6E0), rgb(0x8F82B0), rgb(0xB4A9CC),
+    rgb(0xE0952A), rgb(0xE9B23E), rgb(0xE3BE72), rgb(0xCFC8B8), rgb(0xD9D4C8),
+    rgb(0xB4B3BA)};
+constexpr OverviewPalette kNightOverview = {
+    rgb(0x1E3338), rgb(0x3A4757), rgb(0x252E3B), rgb(0x7886A3), rgb(0x56637B),
+    rgb(0xB48A3C), rgb(0x9A7D45), rgb(0x7D7050), rgb(0x586270), rgb(0x485262),
+    rgb(0x4E5868)};
+
+const OverviewPalette& overview(bool night)
+{
+    return night ? kNightOverview : kDayOverview;
+}
+
+// Line widths are pixels at zoom 16 and the renderer scales them by
+// 2^((zoom - 16) / 2) below that, never under one pixel: the width that
+// shows as `px` on screen at `zoom`.
+float screen_width(float px, int zoom)
+{
+    return px / std::exp2((zoom - 16) * 0.5f);
+}
+
+// Tile zoom up to which the overview styling applies (the basemap's own
+// levels; the regional files start at 11).
+constexpr int kOverviewMaxZoom = 10;
+
 constexpr Rgba kNone{};
 
 const std::string* find(const Tags& tags, const char* tag)
@@ -72,9 +106,50 @@ LineStyle road(LineLayer layer, Rgba fill, Rgba casing, float width,
             casing.a ? width + casing_extra : 0.0f};
 }
 
+// Overview roads (zoom <= kOverviewMaxZoom): thin coloured lines by class,
+// the minor classes appearing as the basemap gets denser (it holds primary
+// and up from level 6, secondary from 8, tertiary from 10).
+bool overview_road_style(const std::string& base, int zoom, bool night, LineStyle& out)
+{
+    const OverviewPalette& o = overview(night);
+    const bool near = zoom >= 8;
+    if (base == "motorway")
+        out = road(LineLayer::Motorway, o.motorway, kNone,
+                   screen_width(near ? 2.4f : 1.8f, zoom), 0.0f);
+    else if (base == "trunk")
+        out = road(LineLayer::Trunk, o.trunk, kNone,
+                   screen_width(near ? 2.1f : 1.6f, zoom), 0.0f);
+    else if (base == "primary")
+        out = road(LineLayer::Primary, o.primary, kNone,
+                   screen_width(near ? 1.8f : 1.4f, zoom), 0.0f);
+    else if (base == "secondary" && zoom >= 8)
+        out = road(LineLayer::Secondary, o.secondary, kNone, screen_width(1.4f, zoom), 0.0f);
+    else if (base == "tertiary" && zoom >= 10)
+        out = road(LineLayer::Tertiary, o.tertiary, kNone, screen_width(1.1f, zoom), 0.0f);
+    else
+        return false;
+    return true;
+}
+
+// Country (admin_level 2) and region (3-4) borders; the finer boundaries of
+// the regional files are not drawn.
+bool boundary_style(const std::string& admin_level, int zoom, bool night, LineStyle& out)
+{
+    const OverviewPalette& o = overview(night);
+    if (admin_level == "2" && zoom <= 12)
+        out = road(LineLayer::Boundary, o.border_country, kNone,
+                   screen_width(zoom >= 7 ? 1.6f : 1.3f, zoom), 0.0f);
+    else if ((admin_level == "3" || admin_level == "4") && zoom <= kOverviewMaxZoom)
+        out = road(LineLayer::Boundary, o.border_region, kNone, screen_width(1.1f, zoom), 0.0f);
+    else
+        return false;
+    return true;
+}
+
 // Road style by highway class; *_link roads are drawn like their class but
 // narrower.
-bool road_style(const std::string& highway, int zoom, const Palette& p, LineStyle& out)
+bool road_style(const std::string& highway, int zoom, bool night, const Palette& p,
+                LineStyle& out)
 {
     std::string base = highway;
     bool link = false;
@@ -82,6 +157,8 @@ bool road_style(const std::string& highway, int zoom, const Palette& p, LineStyl
         base.resize(base.size() - 5);
         link = true;
     }
+    if (zoom <= kOverviewMaxZoom)
+        return !link && overview_road_style(base, zoom, night, out);
     if (base == "motorway")
         out = road(LineLayer::Motorway, p.motorway, p.motorway_casing, 9.0f, 2.0f);
     else if (base == "trunk")
@@ -123,7 +200,7 @@ bool treat_as_area(const Tags& tags, bool is_area_flag, bool closed)
     if (find(tags, "highway"))
         return is(find(tags, "area"), "yes");
     for (const char* linear : {"railway", "barrier", "waterway", "power",
-                               "route", "natural=coastline"})
+                               "route", "admin_level"})
         if (find(tags, linear))
             return false;
     return true;
@@ -255,12 +332,49 @@ int street_label_rank(const std::string& highway)
 
 int place_label_rank(const std::string& place, int zoom)
 {
-    if (place == "city" && zoom <= 13) return 0;
-    if (place == "borough" && zoom <= 14) return 1;
-    if (place == "suburb" && zoom >= 12 && zoom <= 15) return 2;
-    if (place == "quarter" && zoom >= 14 && zoom <= 16) return 3;
-    if (place == "neighbourhood" && zoom >= 15) return 4;
+    // Basemap overview names: countries, then regions, cities, towns.
+    if (place == "country" && zoom >= 3 && zoom <= 7) return 0;
+    if (place == "state" && zoom >= 3 && zoom <= 8) return 1;
+    if (place == "city" && zoom >= 3 && zoom <= 13) return 2;
+    if (place == "town" && zoom >= 8 && zoom <= 12) return 3;
+    if (place == "borough" && zoom <= 14) return 4;
+    if (place == "suburb" && zoom >= 12 && zoom <= 15) return 5;
+    if (place == "quarter" && zoom >= 14 && zoom <= 16) return 6;
+    if (place == "neighbourhood" && zoom >= 15) return 7;
+    if (place == "ocean" && zoom >= 3 && zoom <= 6) return 8;
+    if (place == "sea" && zoom >= 4 && zoom <= 8) return 9;
     return -1;
+}
+
+PlaceFont place_font(const std::string& place, bool night)
+{
+    if (place == "ocean" || place == "sea")
+        return {17.0f, night ? 0xFF6F8FB5u : 0xFF4F7FB0u};
+    if (place == "country")
+        return {22.0f, night ? 0xFFB4BCC8u : 0xFF3C4043u};
+    if (place == "state")
+        return {18.0f, night ? 0xFF8F99A6u : 0xFF80868Bu};
+    if (place == "town")
+        return {17.0f, night ? 0xFF9AA3AEu : 0xFF70757Au};
+    return {20.0f, night ? 0xFF9AA3AEu : 0xFF70757Au};
+}
+
+bool is_coastline(const Tags& tags)
+{
+    for (const auto& entry : tags)
+        if (entry.first == "natural" && entry.second == "coastline")
+            return true;
+    return false;
+}
+
+Rgba sea_colour(bool night)
+{
+    return palette(night).water;
+}
+
+Rgba island_colour(bool night)
+{
+    return palette(night).land;
 }
 
 std::uint8_t line_level(const Tags& tags)
@@ -351,6 +465,19 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night)
                    any_of(natural, {"grassland", "scrub", "heath"})) {
             style.has_area = true;
             style.area = {AreaLayer::Park, p.park};
+        } else if (is(natural, "desert") && zoom <= 13) {
+            style.has_area = true;
+            style.area = {AreaLayer::Sand, p.sand};
+        } else if (is(natural, "glacier") && zoom <= 13) {
+            style.has_area = true;
+            style.area = {AreaLayer::Sand, overview(night).glacier};
+        } else if (is(natural, "wetland") && zoom <= 13) {
+            style.has_area = true;
+            style.area = {AreaLayer::Forest, overview(night).wetland};
+        } else if (is(landuse, "residential") && zoom <= kOverviewMaxZoom) {
+            // Built-up tint on the overview maps only.
+            style.has_area = true;
+            style.area = {AreaLayer::Landuse, overview(night).urban};
         } else if (any_of(natural, {"beach", "sand"})) {
             style.has_area = true;
             style.area = {AreaLayer::Sand, p.sand};
@@ -374,7 +501,7 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night)
     const std::uint8_t level = line_level(tags);
     const auto on_bridge = [&](LineStyle& line) {
         line.level = level;
-        if (level < kBridgeLevel)
+        if (level < kBridgeLevel || zoom <= kOverviewMaxZoom)
             return;
         // Bridges: a darker, wider outline, also for paths and rails.
         line.casing = p.bridge_casing;
@@ -382,7 +509,7 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night)
     };
 
     if (highway) {
-        if (road_style(*highway, zoom, p, style.line)) {
+        if (road_style(*highway, zoom, night, p, style.line)) {
             style.has_line = true;
             if (is(find(tags, "tunnel"), "yes")) {
                 // Tunnels: faded, no outline.
@@ -392,6 +519,19 @@ FeatureStyle classify(const Tags& tags, bool is_area, int zoom, bool night)
             }
             on_bridge(style.line);
         }
+        return style;
+    }
+    if (const auto* level_tag = find(tags, "admin_level")) {
+        if (boundary_style(*level_tag, zoom, night, style.line)) {
+            style.has_line = true;
+            return style;
+        }
+    }
+    if (is(railway, "rail") && zoom >= kOverviewMaxZoom && zoom < 13 &&
+        !is(find(tags, "tunnel"), "yes")) {
+        style.has_line = true;
+        style.line = road(LineLayer::Rail, overview(night).rail, kNone,
+                          screen_width(1.0f, zoom), 0.0f);
         return style;
     }
     if (any_of(railway, {"rail", "light_rail", "narrow_gauge"}) && zoom >= 13 &&

@@ -72,7 +72,8 @@ add_library(osmand_backend SHARED
   thread_priority.cpp crash_reporter.cpp frame_metrics.cpp build_info.cpp
   gpu_upload_context.cpp
   ui/gl_overlay_compositor.cpp
-  vector/vector_map.cpp vector/vector_style.cpp vector/vector_tessellator.cpp)
+  vector/vector_map.cpp vector/vector_style.cpp vector/vector_tessellator.cpp
+  vector/coastline.cpp)
 add_dependencies(osmand_backend build_info_git)
 target_include_directories(osmand_backend PRIVATE ${ONC_OSMAND_INCLUDES}
                            ${CMAKE_CURRENT_BINARY_DIR})
