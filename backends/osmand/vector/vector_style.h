@@ -21,6 +21,7 @@ enum class AreaLayer : std::uint8_t {
     Water = 4,
     Plaza = 5,
     Building = 6,
+    BridgeDeck = 7,  // man_made=bridge outlines, above water
 };
 
 enum class LineLayer : std::uint8_t {
@@ -36,8 +37,17 @@ enum class LineLayer : std::uint8_t {
     Trunk = 9,
     Motorway = 10,
 };
-constexpr int kAreaLayers = 7;
+constexpr int kAreaLayers = 8;
 constexpr int kLineLayers = 11;
+
+// Vertical levels from bridge/tunnel/layer tags. Each level is drawn whole
+// (casings, fills, then its arrows and markings) before the next, so a
+// bridge covers the roads beneath it.
+constexpr int kLineLevels = 4;
+constexpr std::uint8_t kTunnelLevel = 0;  // tunnels and layer < 0
+constexpr std::uint8_t kGroundLevel = 1;
+constexpr std::uint8_t kBridgeLevel = 2;  // bridges and layer 1
+constexpr std::uint8_t kUpperLevel = 3;   // layer 2 and above
 
 struct AreaStyle {
     AreaLayer layer = AreaLayer::Landuse;
@@ -52,6 +62,7 @@ struct LineStyle {
     Rgba casing;
     float width = 0.0f;
     float casing_width = 0.0f;
+    std::uint8_t level = kGroundLevel;
 };
 
 struct FeatureStyle {
@@ -81,8 +92,28 @@ struct PoiStyle {
     Rgba colour;
     const char* icon = "";  // OsmAnd map icon name, e.g. "amenity_fuel"
     int min_zoom = 15;
+    // Traffic control on the road (signals, stop, give way, level
+    // crossing): OsmAnd's own colour icon, no disc and no name.
+    bool control = false;
 };
 PoiStyle classify_poi(const Tags& tags, int zoom);
+// Only the traffic controls (classify_poi checks them first).
+PoiStyle classify_control(const Tags& tags, int zoom);
+
+// Level of a line feature (kTunnelLevel..kUpperLevel).
+std::uint8_t line_level(const Tags& tags);
+
+// Driving direction of a one-way road: 1 along the way, -1 against it, 0
+// for two-way roads.
+int oneway_direction(const Tags& tags);
+
+// A pedestrian crossing node drawn as a zebra (highway=crossing, unless
+// tagged unmarked).
+bool marked_crossing(const Tags& tags);
+
+// Colours of the one-way arrows on a road of `layer` and of zebra stripes.
+Rgba oneway_arrow_colour(LineLayer layer, bool night);
+Rgba zebra_colour(bool night);
 
 // Street-name priority by highway class (lower = more important); -1 for
 // roads whose names are not shown (paths, service roads).

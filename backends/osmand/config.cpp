@@ -44,6 +44,7 @@ Config Config::from_environment()
     config.performance_metrics = marker_or_environment(
         "OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS",
         "/datastore/navicore-backend/enable-performance-metrics");
+
     return config;
 }
 } // namespace navicore_osmand

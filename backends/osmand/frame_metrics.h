@@ -18,10 +18,29 @@ struct FrameMeasurement {
     std::uint32_t ui_render_us = 0;
     std::uint32_t ui_composite_us = 0;
     std::uint32_t ui_upload_bytes = 0;
+    // Frame-log only: the logic around the measured stages.
+    std::uint32_t results_us = 0;       // worker results (search, address, route)
+    std::uint32_t guidance_us = 0;      // update_guidance(), both calls
+    std::uint32_t tracker_us = 0;       //   route tracking and simulation
+    std::uint32_t route_sync_us = 0;    //   sync_vector_guidance()
+    std::uint32_t guidance_ui_us = 0;   //   view apply_guidance()
+    std::uint32_t input_us = 0;         // LVGL input processing
+    std::uint32_t camera_us = 0;        // apply_camera()
+    std::uint32_t vector_us = 0;        // our vector map (map_render_us is OsmAnd's)
+    std::uint32_t cpu_us = 0;           // render-thread CPU time in this frame
+    // Our vector map's parts (VectorFrameTiming).
+    std::uint32_t vec_take_us = 0, vec_uploads = 0, vec_route_us = 0, vec_want_us = 0,
+                  vec_draw_us = 0, vec_labels_us = 0, vec_evict_us = 0,
+                  vec_upload_max_us = 0, vec_atlas_us = 0, vec_label_buffers_us = 0;
+    std::uint32_t post_us = 0;          // after the UI: search/route submit,
+                                        // cluster, dev menu, recents
 };
 
 // Allocation-free rolling telemetry for the context-owning render thread.
 // Buckets are one millisecond wide; the final bucket contains >=127 ms.
+// When enabled it also writes one line per frame to
+// /tmp/open-navicore-frames.log (exact 1% lows and per-hitch stage times;
+// buffered, flushed with each one-second report).
 class FrameMetrics {
 public:
     explicit FrameMetrics(bool enabled) noexcept;

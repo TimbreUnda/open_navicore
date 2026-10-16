@@ -95,6 +95,11 @@ int open_navi_renderer_platform_end_frame(int present, char *diagnostic,
     return 0;
 }
 
+int open_navi_renderer_platform_input_pending(void)
+{
+    return 1;
+}
+
 int open_navi_renderer_platform_poll_pointer(OpenNaviBackendPointerV2 *pointer_out,
                                         int contacts,
                                         char *diagnostic,

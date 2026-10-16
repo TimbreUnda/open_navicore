@@ -19,6 +19,9 @@ int open_navi_renderer_platform_end_frame(int present, char *diagnostic,
  * This function never blocks. */
 /* contacts: decode a second touch contact too (the backend wants
  * OpenNaviBackendPointerV2 contacts); otherwise only the first. */
+/* Nonzero when poll_pointer should be called now (input may be queued).
+ * Platforms without event notification always return 1. */
+int open_navi_renderer_platform_input_pending(void);
 int open_navi_renderer_platform_poll_pointer(OpenNaviBackendPointerV2 *pointer_out,
                                         int contacts,
                                         char *diagnostic,

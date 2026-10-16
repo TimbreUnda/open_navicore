@@ -70,6 +70,7 @@ add_custom_target(build_info_git
 add_library(osmand_backend SHARED
   osmand_backend.cpp config.cpp session.cpp osmand_engine.cpp navigation_worker.cpp
   thread_priority.cpp crash_reporter.cpp frame_metrics.cpp build_info.cpp
+  gpu_upload_context.cpp
   ui/gl_overlay_compositor.cpp
   vector/vector_map.cpp vector/vector_style.cpp vector/vector_tessellator.cpp)
 add_dependencies(osmand_backend build_info_git)
@@ -89,3 +90,21 @@ add_custom_command(TARGET osmand_backend POST_BUILD
   COMMAND ${QNX_ENV} READELF=${QNX_READELF} sh ${ONC_ROOT}/tests/check_osmand_elf.sh
           $<TARGET_FILE:osmand_backend>
   VERBATIM)
+
+# Bench-only route calculation timer (deploy/bench/route_bench.cpp; not in
+# navigation.ifs). A shared library like the plugin (an executable cannot
+# link the core with a static libgcc) plus a dlopen launcher; both run from
+# /tmp on the radio against the /open-navicore libraries.
+add_library(route_bench SHARED ${ONC_ROOT}/deploy/bench/route_bench.cpp
+  ${ONC_ROOT}/deploy/bench/map_tags.cpp)
+target_include_directories(route_bench PRIVATE ${ONC_OSMAND_INCLUDES})
+target_compile_definitions(route_bench PRIVATE ${ONC_OSMAND_DEFINES})
+target_compile_options(route_bench PRIVATE ${ONC_OSMAND_FLAGS} -w)
+target_link_libraries(route_bench PRIVATE osmand_core m c)
+set_target_properties(route_bench PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bench
+  SKIP_BUILD_RPATH ON)
+target_link_options(route_bench PRIVATE -static-libstdc++ -static-libgcc -Wl,-Bsymbolic
+  -Wl,-rpath,/open-navicore)
+add_executable(route_bench_run ${ONC_ROOT}/deploy/bench/route_bench_run.c)
+target_link_libraries(route_bench_run PRIVATE c)
+set_target_properties(route_bench_run PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bench)

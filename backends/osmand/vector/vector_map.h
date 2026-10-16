@@ -57,6 +57,7 @@ struct VectorMapStats {
     std::size_t gpu_bytes = 0;
     std::size_t atlas_uploads = 0, atlas_resets = 0;
     std::uint64_t disk_hits = 0, disk_writes = 0, disk_failures = 0;
+    std::uint64_t disk_pruned = 0;  // files of stale cache directories deleted
     std::uint64_t block_reads = 0;  // map reads (one per z14 block and detail)
     std::uint64_t block_hits = 0;   // tiles cut from an already read block
     double disk_ms_total = 0.0;     // reading cached tiles
@@ -78,6 +79,20 @@ struct PoiPick {
     std::string place;    // place name: its OSM place type ("city", "village")
     double x31 = 0.0, y31 = 0.0;
     float screen_x = 0.0f, screen_y = 0.0f;
+};
+
+// Where the last render() spent its time, in microseconds (bench timing).
+struct VectorFrameTiming {
+    std::uint32_t take_us = 0;    // finished tiles: builder lock + GL uploads
+    std::uint32_t uploads = 0;    // tiles uploaded
+    std::uint32_t route_us = 0;   // route mesh update
+    std::uint32_t want_us = 0;    // tile selection + builder.want()
+    std::uint32_t draw_us = 0;    // GL draw calls (tiles, route, arrow)
+    std::uint32_t labels_us = 0;  // label placement and label GL
+    std::uint32_t evict_us = 0;   // LRU eviction (glDeleteBuffers, builder.forget)
+    std::uint32_t upload_max_us = 0;  // slowest single tile upload
+    std::uint32_t atlas_us = 0;       // label atlas glyph uploads (part of labels_us)
+    std::uint32_t label_buffers_us = 0;  // label vertex/index upload (part of labels_us)
 };
 
 class VectorMap {
@@ -114,6 +129,11 @@ public:
     void set_overzoom(bool on);
     // Night palette; tiles are rebuilt (or read from their own cache).
     void set_night(bool night);
+    // Upload tiles on a thread with a shared GL context (call before
+    // init_gl; falls back to render-thread uploads if the context fails).
+    // GL buffer uploads wait on Screen (19-136 ms seen) while it composites.
+    void set_upload_thread(bool on);
+    bool upload_thread_active() const;
 
     // Draws map, route and labels into the current framebuffer; clear fills
     // it with the land colour first. Returns true while it wants more frames
@@ -132,6 +152,7 @@ public:
 
     // Maxima (fetch_ms_max, label_place_ms_max) are since the previous call.
     VectorMapStats stats() const;
+    VectorFrameTiming frame_timing() const;
     // The POI shown in the last frame nearest to (x, y) within `radius`
     // pixels of its icon, else a place name shown there (city, town...);
     // false when there is neither.

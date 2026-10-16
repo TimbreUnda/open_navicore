@@ -20,6 +20,7 @@ struct Config {
     bool benchmark_autostart = false;  // enable-benchmark-autostart
     bool simulate_detour = false;      // simulate-detour
     bool performance_metrics = false;  // enable-performance-metrics
+
     double simulation_speed_metres_per_second = 20.0;
 
     static Config from_environment();

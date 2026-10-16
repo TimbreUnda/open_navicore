@@ -1,0 +1,125 @@
+HH (highway hierarchy) alternative routes in core-legacy, which found none:
+
+- calcAlternativeRoute() sized its loops with sizeof(distances), a pointer
+  (4 on ARM32), instead of the number of route points, and read useToSkip
+  uninitialised; its arrays leaked. Now vectors of points.size().
+- DataTileManager::getClosestObjects() kept a tile only when the tile's
+  centre was within the radius; with zoom-11 tiles (about 12 km) and radii
+  of 0.3-2 km it returned nothing, so no point was ever excluded and every
+  "alternative" was the main route again. Now the distance to the tile's
+  nearest edge.
+- An exclusion with no route (a start's only network exit) stopped the
+  search; it now tries the next point.
+- runRouting() prepared detailed results for the main route only; the
+  alternatives get them too.
+
+Apply from the OsmAnd source-aggregate root after qnx-legacy-routing.patch.
+Bench (Kyiv, route_bench): 1-2 alternatives per route for 1-2 s extra.
+
+--- a/core-legacy/native/src/hhRouteDataStructure.cpp
++++ b/core-legacy/native/src/hhRouteDataStructure.cpp
+@@ -18,8 +18,12 @@
+ 	std::map<int64_t, double> tiles;
+ 	for (int xTile = -tileDistInt; xTile <= tileDistInt; xTile++) {
+ 		for (int yTile = -tileDistInt; yTile <= tileDistInt; yTile++) {
+-			double dx = xTile + 0.5 - (px - stTileX);
+-			double dy = yTile + 0.5 - (py - stTileY);
++			// Distance from the point to the nearest edge of the tile (in
++			// tiles), so that a radius smaller than a tile still selects the
++			// tile containing the point and its close neighbours.
++			double fx = px - stTileX, fy = py - stTileY;
++			double dx = xTile > 0 ? xTile - fx : (xTile < 0 ? fx - (xTile + 1) : 0);
++			double dy = yTile > 0 ? yTile - fy : (yTile < 0 ? fy - (yTile + 1) : 0);
+ 			double dist = std::sqrt(dx * dx + dy * dy);
+ 			if (dist <= tileDist) {
+ 				tiles.insert(std::pair<int64_t, double>(evTile(stTileX + xTile, stTileY + yTile), dist));
+--- a/core-legacy/native/src/hhRoutePlanner.cpp
++++ b/core-legacy/native/src/hhRoutePlanner.cpp
+@@ -429,6 +429,9 @@
+ 	
+ 	timer.Restart();
+ 	prepareRouteResults(hctx, route, startX, startY, endX, endY);
++	for (HHNetworkRouteRes * alt : route->altRoutes) {
++		prepareRouteResults(hctx, alt, startX, startY, endX, endY);
++	}
+ 	hctx->stats.prepTime += timer.GetElapsedMs();
+ 
+ 	OsmAnd::LogPrintf(OsmAnd::LogSeverityLevel::Info, "Prepare results (turns, alt routes)... prepTime %.f ms", hctx->stats.prepTime);
+@@ -1280,13 +1283,14 @@
+ 		}
+ 		points.push_back(s->end);
+ 	}
+-	double * distances = new double[points.size()];
++	const int pointsCount = (int) points.size();
++	std::vector<double> distances(pointsCount);
+ 	NetworkDBPoint * prev = nullptr;
+-	for (int i = 0; i < sizeof(distances); i++) {
++	for (int i = 0; i < pointsCount; i++) {
+ 		NetworkDBPoint * pnt = points.at(i);
+ 		if (i == 0) {
+ 			distances[i] = squareRootDist31(hctx->startX, hctx->startY, pnt->midX(), pnt->midY());
+-		} else if (i == sizeof(distances) - 1) {
++		} else if (i == pointsCount - 1) {
+ 			distances[i] = squareRootDist31(hctx->endX, hctx->endY, pnt->midX(), pnt->midY());
+ 		} else {
+ 			distances[i] = squareRootDist31(prev->midX(), prev->midY(), pnt->midX(), pnt->midY());
+@@ -1295,21 +1299,21 @@
+ 	}
+ 	
+ 	// calculate min(cumPos, cumNeg) distance
+-	double * cdistPos = new double[sizeof(distances)];
+-	double * cdistNeg = new double[sizeof(distances)];
+-	for (int i = 0; i < sizeof(distances); i++) {
++	std::vector<double> cdistPos(pointsCount);
++	std::vector<double> cdistNeg(pointsCount);
++	for (int i = 0; i < pointsCount; i++) {
+ 		if(i == 0) {
+ 			cdistPos[0] = distances[i];
+-			cdistNeg[sizeof(distances) - 1] = distances[sizeof(distances)- 1];
++			cdistNeg[pointsCount - 1] = distances[pointsCount- 1];
+ 		} else {
+ 			cdistPos[i] = cdistPos[i - 1] + distances[i];
+-			cdistNeg[sizeof(distances) - i - 1] = cdistNeg[sizeof(distances) - i] + distances[sizeof(distances) - i - 1];
++			cdistNeg[pointsCount - i - 1] = cdistNeg[pointsCount - i] + distances[pointsCount - i - 1];
+ 		}
+ 	}
+-	double * minDistance = new double[sizeof(distances)];
+-	bool * useToSkip = new bool[sizeof(distances)];
++	std::vector<double> minDistance(pointsCount);
++	std::vector<bool> useToSkip(pointsCount, false);
+ 	int altPoints = 0;
+-	for (int i = 0; i < sizeof(distances); i++) {
++	for (int i = 0; i < pointsCount; i++) {
+ 		minDistance[i] = std::min(cdistNeg[i], cdistPos[i]) * hctx->config->ALT_EXCLUDE_RAD_MULT;
+ 		bool coveredByPrevious = false;
+ 		for (int j = 0; j < i; j++) {
+@@ -1327,7 +1331,7 @@
+ 	}
+ 	if (DEBUG_VERBOSE_LEVEL >= 1) {
+ 		std::string s = "[";
+-		for (int i = 0; i < sizeof(minDistance); i++) {
++		for (int i = 0; i < pointsCount; i++) {
+ 			if (i > 0) {
+ 				s += ", ";
+ 			}
+@@ -1339,7 +1343,7 @@
+ 	if (progress->isCancelled()) {
+ 		return;
+ 	}
+-	for (int i = 0; i < sizeof(distances); i++) {
++	for (int i = 0; i < pointsCount; i++) {
+ 		if (!useToSkip[i]) {
+ 			continue;
+ 		}
+@@ -1371,9 +1375,9 @@
+ 			}
+ 			rt = createRouteSegmentFromFinalPoint(hctx, finalPnt);
+ 			route->altRoutes.push_back(rt);
+-		} else {
+-			break;
+ 		}
++		// No route around this point (e.g. it was the start's only network
++		// exit): try the next point instead of giving up.
+ 	}
+ 	
+ 	std::sort(route->altRoutes.begin(), route->altRoutes.end(), [](HHNetworkRouteRes * o1, HHNetworkRouteRes * o2) {

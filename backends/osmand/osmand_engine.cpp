@@ -183,6 +183,7 @@ private:
     bool night_ = false;
     bool overview_pending_ = false;
     bool route_shown_ = false;  // the vector map draws a route
+    std::size_t shown_route_index_ = 0;  // which of the routes it draws
     double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
     OpenNaviBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
@@ -213,6 +214,10 @@ private:
     std::vector<ui::UploadRect> upload_rects_;
     bool overlay_enabled_ = true;
     FrameMetrics frame_metrics_{false};
+    // update_guidance() parts of the current frame (frame log only).
+    std::uint32_t guidance_tracker_us_ = 0;
+    std::uint32_t guidance_sync_us_ = 0;
+    std::uint32_t guidance_apply_us_ = 0;
 };
 
 bool failure(const char* message)
@@ -308,9 +313,10 @@ bool OsmAndEngine::initialize(const Config& config,
         vector_cache_dir_ = config.vector_cache;
         vector_cache_identity_ = config.map + "|" +
             std::to_string(map_known ? map_info.st_size : 0) + "|" +
-            std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-2";
+            std::to_string(map_known ? map_info.st_mtime : 0) + "|vector-style-3";
     }
     frame_metrics_ = FrameMetrics(config.performance_metrics);
+
     if (config.performance_metrics)
         trace("performance_metrics=enabled");
     simulation_speed_metres_per_second_ =
@@ -397,12 +403,15 @@ bool OsmAndEngine::initialize(const Config& config,
     try {
         vector_map_.reset(new navicore_vector::VectorMap(
             obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); }));
+        vector_map_->set_upload_thread(true);
         if (!vector_map_->init_gl())
             throw std::runtime_error("vector_map gl");
         if (!vector_cache_dir_.empty())
             vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
                                         200ull << 20);
         vector_map_->set_night(night_);
+        trace(vector_map_->upload_thread_active() ? "vector_upload=thread"
+                                                  : "vector_upload=render_thread");
         trace("init=vector_map");
     } catch (...) {
         if (vector_map_)
@@ -549,6 +558,11 @@ bool OsmAndEngine::update_guidance()
         position_available = true;
         simulated = true;
     }
+    const auto tracker_started = std::chrono::steady_clock::now();
+    const auto since_us = [](std::chrono::steady_clock::time_point started) {
+        return static_cast<std::uint32_t>(std::chrono::duration_cast<
+            std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
+    };
     if (position_available) {
         state = guidance_tracker_.update(route, {
             position.latitude, position.longitude});
@@ -569,8 +583,14 @@ bool OsmAndEngine::update_guidance()
     state.recalculating = navigation_->rerouting();
     gps_dirty_ = false;
     guidance_active_ = true;
+    guidance_tracker_us_ += since_us(tracker_started);
+    const auto sync_started = std::chrono::steady_clock::now();
     sync_vector_guidance(&state);
-    return view_->apply_guidance(std::move(state));
+    guidance_sync_us_ += since_us(sync_started);
+    const auto apply_started = std::chrono::steady_clock::now();
+    const bool changed = view_->apply_guidance(std::move(state));
+    guidance_apply_us_ += since_us(apply_started);
+    return changed;
 }
 
 // More than 50 m from the route for 4 s (GPS noise and short parallel
@@ -601,7 +621,7 @@ void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
     submitted_route_revision_ = revision;
     trace_result("reroute=submit", revision,
                  static_cast<std::size_t>(state.off_route_metres));
-    navigation_worker_->submit_route(revision, *navigation_->destination(), position);
+    navigation_worker_->submit_route(revision, *navigation_->destination(), position, false);
 }
 
 bool OsmAndEngine::apply_camera()
@@ -1355,6 +1375,14 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     using Clock = std::chrono::steady_clock;
     const auto frame_started = Clock::now();
     FrameMeasurement measurement;
+    // Render-thread CPU time: wall time far above it means the thread was
+    // preempted or blocked, not busy.
+    const auto thread_cpu_us = [] {
+        timespec now{};
+        (void)clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now);
+        return static_cast<std::int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
+    };
+    const std::int64_t cpu_started = thread_cpu_us();
     const auto elapsed_us = [](Clock::time_point started) {
         const auto value = std::chrono::duration_cast<std::chrono::microseconds>(
             Clock::now() - started).count();
@@ -1376,11 +1404,14 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         }
         measurement.outcome = outcome;
         measurement.total_us = elapsed_us(frame_started);
+        measurement.cpu_us = static_cast<std::uint32_t>(
+            std::max<std::int64_t>(0, thread_cpu_us() - cpu_started));
         frame_metrics_.record(measurement);
         return result;
     };
     if (phase_ != Phase::Ready)
         return finish({FrameOutcome::Fault}, MeasuredFrameOutcome::Fault);
+    guidance_tracker_us_ = guidance_sync_us_ = guidance_apply_us_ = 0;
     NavigationWorker::SearchResult search_result;
     if (navigation_worker_ && navigation_worker_->take_search_result(search_result))
     {
@@ -1411,6 +1442,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
                 if (found) {
                     trace("reroute=applied");
                     show_route(navigation_->routes().front(), false);
+                    shown_route_index_ = 0;
                     if (detour_phase_ == 1) detour_phase_ = 2;
                 } else {
                     // Keep the old route; try again a little later.
@@ -1423,10 +1455,14 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         } else {
             const bool accepted = view_->apply_routes(
                 route_result.revision, std::move(route_result.routes));
-            if (accepted && !navigation_->routes().empty())
+            if (accepted && !navigation_->routes().empty()) {
                 show_route(navigation_->routes().front());
+                shown_route_index_ = 0;
+            }
         }
     }
+    measurement.results_us = elapsed_us(frame_started);
+    auto logic_started = Clock::now();
     bool guidance_changed = false;
     if (navigation_->screen() == ui::Screen::Guidance &&
         (!guidance_active_ || gps_dirty_ ||
@@ -1442,8 +1478,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         if (!has_valid_position_) motion_.reset();
         pose_applied_ = false;
     }
+    measurement.guidance_us = elapsed_us(logic_started);
     if (target.width != width_ || target.height != height_)
         resize(target);
+    logic_started = Clock::now();
     if (overlay_enabled_) {
         const auto input_now = std::chrono::steady_clock::now();
         const auto elapsed_ms = input_at_ == std::chrono::steady_clock::time_point{} ? 16 :
@@ -1451,7 +1489,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         input_at_ = input_now;
         view_->process_input(static_cast<uint32_t>(std::clamp<long long>(elapsed_ms, 0, 250)));
     }
+    measurement.input_us = elapsed_us(logic_started);
+    logic_started = Clock::now();
     const bool camera_animating = apply_camera();
+    measurement.camera_us = elapsed_us(logic_started);
     auto stage_started = Clock::now();
     const bool update_ok = renderer_->update();
     measurement.update_us = elapsed_us(stage_started);
@@ -1469,7 +1510,11 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     // The bool API collapses StageResult::Wait and ::Fail. Preserve the live
     // resource-wait behavior, but let Session report sustained lack of progress.
     stage_started = Clock::now();
-    const bool map_rendered = renderer_->renderFrame();
+    // OsmAnd's renderer has no layers; with the vector map (which clears and
+    // covers the frame) its renderFrame() draws nothing visible, and it was
+    // seen blocked 20-38 ms in the driver. update()/prepareFrame() above
+    // still keep its camera current.
+    const bool map_rendered = vector_map_ || renderer_->renderFrame();
     measurement.map_render_us = elapsed_us(stage_started);
     if (!map_rendered)
         return finish({FrameOutcome::Pending, PendingStage::Render, true},
@@ -1478,7 +1523,18 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     if (vector_map_) {
         stage_started = Clock::now();
         vector_wants_frames = render_vector_map(target);
-        measurement.map_render_us += elapsed_us(stage_started);
+        measurement.vector_us = elapsed_us(stage_started);
+        const auto vt = vector_map_->frame_timing();
+        measurement.vec_take_us = vt.take_us;
+        measurement.vec_uploads = vt.uploads;
+        measurement.vec_route_us = vt.route_us;
+        measurement.vec_want_us = vt.want_us;
+        measurement.vec_draw_us = vt.draw_us;
+        measurement.vec_labels_us = vt.labels_us;
+        measurement.vec_evict_us = vt.evict_us;
+        measurement.vec_upload_max_us = vt.upload_max_us;
+        measurement.vec_atlas_us = vt.atlas_us;
+        measurement.vec_label_buffers_us = vt.label_buffers_us;
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
@@ -1511,6 +1567,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     }
     // A Start/End click is dispatched by LVGL above. Apply the new camera and
     // guidance model now, then request the frame that presents that rebuild.
+    const auto post_started = Clock::now();
     if (navigation_->screen() == ui::Screen::Guidance && !guidance_active_)
         guidance_changed = update_guidance() || guidance_changed;
     else if (navigation_->screen() != ui::Screen::Guidance &&
@@ -1528,6 +1585,14 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     if (route_shown_ && navigation_->screen() != ui::Screen::RoutePreview &&
         navigation_->screen() != ui::Screen::Guidance)
         guidance_changed = clear_route() || guidance_changed;
+    // Route preview: the map draws the selected route card's route.
+    if (route_shown_ && navigation_->screen() == ui::Screen::RoutePreview &&
+        navigation_->selected_route() != shown_route_index_ &&
+        navigation_->selected_route() < navigation_->routes().size()) {
+        shown_route_index_ = navigation_->selected_route();
+        show_route(navigation_->routes()[shown_route_index_], false);
+        guidance_changed = true;
+    }
     if (navigation_->screen() == ui::Screen::Search) {
         const auto revision = navigation_->search_revision();
         const auto now = std::chrono::steady_clock::now();
@@ -1574,7 +1639,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
                                    10000000.0;
             }
             navigation_worker_->submit_route(submitted_route_revision_,
-                                              *navigation_->destination(), origin);
+                                              *navigation_->destination(), origin, true);
         }
     }
     advance_benchmark_autostart();
@@ -1587,6 +1652,10 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         if (!recents_store_->save(navigation_->recents()))
             trace("error=recents_save");
     }
+    measurement.post_us = elapsed_us(post_started);
+    measurement.tracker_us = guidance_tracker_us_;
+    measurement.route_sync_us = guidance_sync_us_;
+    measurement.guidance_ui_us = guidance_apply_us_;
     return finish({FrameOutcome::Presented, PendingStage::None,
                    guidance_changed || camera_animating || vector_wants_frames ||
                        (overlay_enabled_ && view_->wants_frames()) ||
@@ -1686,12 +1755,13 @@ bool OsmAndEngine::render_vector_map(const OpenNaviBackendRenderTargetV1& target
         const auto s = vector_map_->stats();
         const double built = s.tiles_built ? static_cast<double>(s.tiles_built) : 1.0;
         const double disk = s.disk_hits ? static_cast<double>(s.disk_hits) : 1.0;
-        char message[512];
+        char message[640];
         std::snprintf(message, sizeof(message),
                       "vector_map frames=%llu incomplete=%llu tiles_built=%llu "
                       "fetch_avg_ms=%.0f fetch_max_ms=%.0f build_avg_ms=%.1f "
                       "labels_avg_ms=%.1f disk_hits=%llu disk_avg_ms=%.1f disk_writes=%llu "
-                      "disk_failures=%llu block_reads=%llu block_hits=%llu aborted=%llu "
+                      "disk_failures=%llu disk_pruned=%llu block_reads=%llu block_hits=%llu "
+                      "aborted=%llu "
                       "empty=%llu wanted=%zu prefetch=%zu gpu_tiles=%zu gpu_mb=%.1f "
                       "calls_avg=%.0f label_quads_avg=%.1f label_place_max_ms=%.1f "
                       "zoom=%.2f tile_zoom=%d..%d",
@@ -1703,6 +1773,7 @@ bool OsmAndEngine::render_vector_map(const OpenNaviBackendRenderTargetV1& target
                       static_cast<unsigned long long>(s.disk_hits), s.disk_ms_total / disk,
                       static_cast<unsigned long long>(s.disk_writes),
                       static_cast<unsigned long long>(s.disk_failures),
+                      static_cast<unsigned long long>(s.disk_pruned),
                       static_cast<unsigned long long>(s.block_reads),
                       static_cast<unsigned long long>(s.block_hits),
                       static_cast<unsigned long long>(s.aborted),

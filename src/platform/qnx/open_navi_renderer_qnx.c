@@ -8,6 +8,9 @@
 #include <screen/screen.h>
 
 #include <errno.h>
+#include <pthread.h>
+#include <sys/neutrino.h>
+#include <sched.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,6 +26,22 @@
 /* Frame cap in fps (10..120). Swaps never wait (swap interval 0), so a cheap
  * renderer would otherwise spin far above Screen's ~30 Hz composition. */
 #define OPEN_NAVI_PACE_MARKER "/datastore/navicore-backend/nav-pace-fps"
+/* Input by notification: Screen sends a pulse when an event is queued and
+ * the render loop calls screen_get_event() only then (plus a safety poll
+ * every 500 ms), instead of an IPC to Screen on every loop, which waits
+ * (up to 14 ms seen) whenever Screen is busy compositing. Falls back to
+ * polling every loop if the notification cannot be set up. */
+#define OPEN_NAVI_INPUT_SAFETY_POLL_NANOSECONDS UINT64_C(500000000)
+#define OPEN_NAVI_NOTIFY_PULSE_EVENT (_PULSE_CODE_MINAVAIL + 1)
+#define OPEN_NAVI_NOTIFY_PULSE_STOP (_PULSE_CODE_MINAVAIL + 2)
+/* Render thread priority. nv_navigation runs pinned to one core shared
+ * with other services; at the inherited 15 the render
+ * thread was preempted mid-frame (bench 2026-10-15: presents over 40 ms
+ * fell from 232 to 25 per drive at 20; 25 was no better). The marker
+ * (10..40) overrides it for bench runs. */
+#define OPEN_NAVI_RENDER_PRIORITY_DEFAULT 20
+#define OPEN_NAVI_RENDER_PRIORITY_MARKER \
+    "/datastore/navicore-backend/nav-render-priority"
 #define OPEN_NAVI_PRESENT_TRACE_PATH "/tmp/open-navicore-present.log"
 #define OPEN_NAVI_CONTENT_X 0
 #define OPEN_NAVI_CONTENT_Y 72
@@ -59,6 +78,19 @@ typedef struct {
     uint64_t trace_window_start_nanoseconds;
     uint64_t trace_pace_nanoseconds;
     uint64_t pace_nanoseconds;
+    int render_priority;
+    int render_priority_checked;
+    /* input notification */
+    int notify_chid;
+    int notify_coid;
+    int notify_active;
+    pthread_t notify_thread;
+    volatile int input_pending;
+    uint64_t last_drain_nanoseconds;
+    /* screen_get_event() cost, per present-trace window */
+    uint32_t poll_calls;
+    uint64_t poll_total_nanoseconds;
+    uint64_t poll_max_nanoseconds;
     uint64_t trace_swap_nanoseconds;
     uint64_t trace_swap_max_nanoseconds;
     uint32_t trace_presented;
@@ -218,6 +250,99 @@ static int marker_integer(const char *path)
     return value;
 }
 
+static void *notify_main(void *unused)
+{
+    (void)unused;
+    for (;;) {
+        struct _pulse pulse;
+        if (MsgReceivePulse(g_qnx.notify_chid, &pulse, sizeof(pulse), NULL) == -1) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (pulse.code == OPEN_NAVI_NOTIFY_PULSE_STOP) break;
+        if (pulse.code == OPEN_NAVI_NOTIFY_PULSE_EVENT)
+            __atomic_store_n(&g_qnx.input_pending, 1, __ATOMIC_RELEASE);
+    }
+    return NULL;
+}
+
+/* After the window exists. Any failure leaves polling on every loop. */
+static void start_input_notify(void)
+{
+    struct sigevent event;
+    g_qnx.notify_chid = ChannelCreate(_NTO_CHF_PRIVATE);
+    if (g_qnx.notify_chid == -1) return;
+    g_qnx.notify_coid = ConnectAttach(0, 0, g_qnx.notify_chid, _NTO_SIDE_CHANNEL, 0);
+    if (g_qnx.notify_coid != -1) {
+        SIGEV_PULSE_INIT(&event, g_qnx.notify_coid, SIGEV_PULSE_PRIO_INHERIT,
+                         OPEN_NAVI_NOTIFY_PULSE_EVENT, 0);
+        g_qnx.input_pending = 1;
+        if (pthread_create(&g_qnx.notify_thread, NULL, notify_main, NULL) == 0) {
+            if (screen_notify(g_qnx.screen_context, SCREEN_NOTIFY_EVENT, NULL,
+                              &event) == 0) {
+                g_qnx.notify_active = 1;
+            } else {
+                (void)MsgSendPulse(g_qnx.notify_coid, -1,
+                                   OPEN_NAVI_NOTIFY_PULSE_STOP, 0);
+                (void)pthread_join(g_qnx.notify_thread, NULL);
+            }
+        }
+    }
+    if (!g_qnx.notify_active) {
+        if (g_qnx.notify_coid != -1) (void)ConnectDetach(g_qnx.notify_coid);
+        (void)ChannelDestroy(g_qnx.notify_chid);
+        g_qnx.notify_chid = g_qnx.notify_coid = 0;
+    }
+}
+
+static void stop_input_notify(void)
+{
+    if (!g_qnx.notify_active) return;
+    (void)screen_notify(g_qnx.screen_context, SCREEN_NOTIFY_EVENT, NULL, NULL);
+    (void)MsgSendPulse(g_qnx.notify_coid, -1, OPEN_NAVI_NOTIFY_PULSE_STOP, 0);
+    (void)pthread_join(g_qnx.notify_thread, NULL);
+    (void)ConnectDetach(g_qnx.notify_coid);
+    (void)ChannelDestroy(g_qnx.notify_chid);
+    g_qnx.notify_active = 0;
+}
+
+int open_navi_renderer_platform_input_pending(void)
+{
+    uint64_t now;
+    if (!g_qnx.notify_active) return 1;
+    now = monotonic_nanoseconds();
+    if (__atomic_exchange_n(&g_qnx.input_pending, 0, __ATOMIC_ACQ_REL) != 0 ||
+        now - g_qnx.last_drain_nanoseconds >= OPEN_NAVI_INPUT_SAFETY_POLL_NANOSECONDS) {
+        g_qnx.last_drain_nanoseconds = now;
+        return 1;
+    }
+    return 0;
+}
+
+/* Runs on the render thread at its first frame, after the backend started:
+ * threads the backend created during its start keep the inherited
+ * priority. The result goes to the present trace. */
+static void apply_render_priority(void)
+{
+    const int marker = marker_integer(OPEN_NAVI_RENDER_PRIORITY_MARKER);
+    const int priority = (marker >= 10 && marker <= 40)
+                         ? marker : OPEN_NAVI_RENDER_PRIORITY_DEFAULT;
+    struct sched_param parameters;
+    int policy = 0;
+    int applied = 0;
+    if (pthread_getschedparam(pthread_self(), &policy, &parameters) != 0)
+        return;
+    g_qnx.render_priority = parameters.sched_priority;
+    parameters.sched_priority = priority;
+    applied = pthread_setschedparam(pthread_self(), policy, &parameters) == 0;
+    if (applied) g_qnx.render_priority = priority;
+    if (g_qnx.trace_file != NULL) {
+        (void)fprintf(g_qnx.trace_file, "render_priority=%d marker=%d applied=%d\n",
+                      g_qnx.render_priority, marker, applied);
+        (void)fflush(g_qnx.trace_file);
+    }
+}
+
 static void set_diagnostic(char *output, size_t capacity,
                            const char *format, ...)
 {
@@ -303,6 +428,7 @@ void open_navi_renderer_platform_destroy(void)
         if (g_qnx.context != EGL_NO_CONTEXT)
             (void)eglDestroyContext(g_qnx.display, g_qnx.context);
     }
+    stop_input_notify();
     if (g_qnx.event != NULL) (void)screen_destroy_event(g_qnx.event);
     if (g_qnx.window != NULL) (void)screen_destroy_window(g_qnx.window);
     if (g_qnx.screen_context != NULL)
@@ -537,6 +663,7 @@ int open_navi_renderer_platform_create(OpenNaviBackendRenderTargetV1 *target,
     target->native_egl_context = (uintptr_t)g_qnx.context;
     g_qnx.trace_file = fopen(OPEN_NAVI_PRESENT_TRACE_PATH, "a");
     g_qnx.gpu_finish_probe = marker_present(OPEN_NAVI_GPU_FINISH_MARKER);
+    start_input_notify();
     if (g_qnx.trace_file != NULL) {
         /* The provider diagnostic is capped at 256 bytes; keep composition
          * policy on its own trace line. */
@@ -575,6 +702,10 @@ fail:
 
 int open_navi_renderer_platform_begin_frame(char *diagnostic, size_t capacity)
 {
+    if (!g_qnx.render_priority_checked) {
+        g_qnx.render_priority_checked = 1;
+        apply_render_priority();
+    }
     if (eglGetCurrentContext() == g_qnx.context &&
         eglGetCurrentSurface(EGL_DRAW) == g_qnx.surface &&
         eglGetCurrentSurface(EGL_READ) == g_qnx.surface)
@@ -627,7 +758,8 @@ int open_navi_renderer_platform_end_frame(int present, char *diagnostic,
                 (void)fprintf(
                     g_qnx.trace_file,
                     "present window_ms=%llu presented=%u fps_x10=%llu "
-                    "pace_avg_us=%llu swap_avg_us=%llu swap_max_us=%llu\n",
+                    "pace_avg_us=%llu swap_avg_us=%llu swap_max_us=%llu "
+                    "poll_calls=%u poll_total_us=%llu poll_max_us=%llu notify=%d\n",
                     (unsigned long long)(elapsed_nanoseconds /
                                          UINT64_C(1000000)),
                     g_qnx.trace_presented,
@@ -641,7 +773,14 @@ int open_navi_renderer_platform_end_frame(int present, char *diagnostic,
                                          g_qnx.trace_presented /
                                          UINT64_C(1000)),
                     (unsigned long long)(g_qnx.trace_swap_max_nanoseconds /
-                                         UINT64_C(1000)));
+                                         UINT64_C(1000)),
+                    g_qnx.poll_calls,
+                    (unsigned long long)(g_qnx.poll_total_nanoseconds / 1000u),
+                    (unsigned long long)(g_qnx.poll_max_nanoseconds / 1000u),
+                    g_qnx.notify_active);
+                g_qnx.poll_calls = 0u;
+                g_qnx.poll_total_nanoseconds = 0u;
+                g_qnx.poll_max_nanoseconds = 0u;
                 (void)fflush(g_qnx.trace_file);
                 g_qnx.trace_window_start_nanoseconds = end_nanoseconds;
                 g_qnx.trace_pace_nanoseconds = 0u;
@@ -672,7 +811,15 @@ int open_navi_renderer_platform_poll_pointer(OpenNaviBackendPointerV2 *pointer_o
 
     if (pointer_out == NULL || g_qnx.screen_context == NULL ||
         g_qnx.event == NULL) return -1;
-    while (screen_get_event(g_qnx.screen_context, g_qnx.event, 0u) != 0) {
+    for (;;) {
+        const uint64_t poll_begin = monotonic_nanoseconds();
+        const int got = screen_get_event(g_qnx.screen_context, g_qnx.event, 0u);
+        const uint64_t poll_nanoseconds = monotonic_nanoseconds() - poll_begin;
+        ++g_qnx.poll_calls;
+        g_qnx.poll_total_nanoseconds += poll_nanoseconds;
+        if (poll_nanoseconds > g_qnx.poll_max_nanoseconds)
+            g_qnx.poll_max_nanoseconds = poll_nanoseconds;
+        if (got == 0) break;
         if (errno == EINTR) continue;
         increment_counter(&g_qnx.event_errors);
         (void)screen_error(diagnostic, capacity, "screen_get_event(0)");
