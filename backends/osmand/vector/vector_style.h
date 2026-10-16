@@ -114,6 +114,9 @@ int oneway_direction(const Tags& tags);
 // tagged unmarked).
 bool marked_crossing(const Tags& tags);
 
+// A country-level boundary line (admin_level=2).
+bool is_country_border(const Tags& tags);
+
 // Colours of the one-way arrows on a road of `layer` and of zebra stripes.
 Rgba oneway_arrow_colour(LineLayer layer, bool night);
 Rgba zebra_colour(bool night);

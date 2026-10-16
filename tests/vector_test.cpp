@@ -1,3 +1,4 @@
+#include "vector/boundary_filter.h"
 #include "vector/vector_style.h"
 #include "vector/vector_tessellator.h"
 
@@ -51,8 +52,50 @@ Tags tags(std::initializer_list<std::pair<const char*, const char*>> list)
 }
 } // namespace
 
+struct P31 {
+    std::int32_t x, y;
+};
+
+P31 at(double lat, double lon)
+{
+    return {static_cast<std::int32_t>(lon_to_x31(lon)), static_cast<std::int32_t>(lat_to_y31(lat))};
+}
+
+void crimea_border_checks()
+{
+    const Box31& box = crimea_box();
+    const P31 perekop = at(46.15, 33.7), simferopol = at(44.95, 34.1), kyiv = at(50.45, 30.52);
+    const P31 kherson = at(46.64, 32.62), kerch_strait = at(45.35, 36.7), azov_far = at(46.5, 37.5);
+    check(box.contains(perekop.x, perekop.y), "Perekop is inside the Crimea box");
+    check(box.contains(simferopol.x, simferopol.y), "Simferopol is inside the Crimea box");
+    check(!box.contains(kyiv.x, kyiv.y), "Kyiv is outside the Crimea box");
+    check(!box.contains(kherson.x, kherson.y), "Kherson is outside the Crimea box");
+    check(!box.contains(kerch_strait.x, kerch_strait.y), "the Kerch strait border stays");
+    check(!box.contains(azov_far.x, azov_far.y), "the Azov border far east stays");
+    // A line from Kherson through Perekop to the Azov coast keeps the outside parts only.
+    const std::vector<P31> line{kherson, at(46.5, 32.0), at(46.6, 31.5)};
+    check(split_outside_box(box, line).size() == 1, "a line outside Crimea is kept whole");
+    const std::vector<P31> through{at(47.0, 33.0), at(46.8, 33.5), perekop, simferopol, at(45.0, 35.0),
+                                   kerch_strait, azov_far};
+    const auto runs = split_outside_box(box, through);
+    check(runs.size() == 2, "a line through Crimea splits into two outside runs");
+    check(runs.size() == 2 && runs[0].size() == 3 && runs[1].size() == 2, "the Crimea middle is removed");
+    check(split_outside_box(box, std::vector<P31>{perekop, simferopol, at(45.0, 35.0)}).empty(),
+          "a line entirely inside Crimea is dropped");
+    check(is_russian_crimea_entity("Республика Крым", "", ""), "Republic of Crimea (ru name) is dropped");
+    check(is_russian_crimea_entity("", "Республіка Крим", ""), "Republic of Crimea (uk name) is dropped");
+    check(is_russian_crimea_entity("", "", "Republic of Crimea"), "Republic of Crimea (en name) is dropped");
+    check(!is_russian_crimea_entity("Автономна Республіка Крим", "Автономна Республіка Крим",
+                                    "Autonomous Republic of Crimea"),
+          "the Ukrainian Autonomous Republic of Crimea stays");
+    check(!is_russian_crimea_entity("Севастополь", "Севастополь", "Sevastopol"), "Sevastopol stays");
+    check(is_country_border({{"admin_level", "2"}}), "admin_level 2 is a country border");
+    check(!is_country_border({{"admin_level", "4"}}), "admin_level 4 is not a country border");
+}
+
 int main()
 {
+    crimea_border_checks();
     // A square half outside the tile keeps only its inside half.
     const Ring square{{-100, 100}, {100, 100}, {100, 300}, {-100, 300}};
     const Ring clipped = clip_ring(square, 0, kTileExtent);

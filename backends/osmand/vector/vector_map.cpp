@@ -2,6 +2,8 @@
 
 #include "vector_map.h"
 
+#include "boundary_filter.h"
+
 #include "coastline.h"
 #include "vector_style.h"
 #include "vector_tessellator.h"
@@ -59,6 +61,34 @@ using Clock = std::chrono::steady_clock;
 using navicore_osmand::LabelIdMap;
 using navicore_osmand::OrientedBox;
 using navicore_osmand::ScreenPoint;
+
+std::vector<QString> to_qstrings(const std::vector<std::string>& values)
+{
+    std::vector<QString> out;
+    out.reserve(values.size());
+    for (const std::string& value : values)
+        out.push_back(QString::fromStdString(value));
+    return out;
+}
+
+// The label text: the first name in the radio's languages, else the object's
+// own name. Inside Crimea the Ukrainian name comes before the own name, which
+// is often Russian there.
+QString pick_caption(const OsmAnd::MapObject& object, const std::vector<QString>& languages)
+{
+    for (const QString& language : languages) {
+        const QString name = object.getCaptionInLanguage(language);
+        if (!name.isEmpty())
+            return name;
+    }
+    if (!object.points31.isEmpty() &&
+        crimea_box().contains(object.points31[0].x, object.points31[0].y)) {
+        const QString ukrainian = object.getCaptionInLanguage(QStringLiteral("uk"));
+        if (!ukrainian.isEmpty())
+            return ukrainian;
+    }
+    return object.getCaptionInNativeLanguage();
+}
 
 // Coarsest tile zoom. Regional OBF files have no map level below 11 (levels
 // 11-12, 13-14, 15-22); the world basemap has levels 1-11 (and 12-22 for
@@ -671,9 +701,11 @@ public:
     TileBuilder(std::shared_ptr<const OsmAnd::IObfsCollection> obfs,
                 std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources,
                 int threads, std::function<void()> on_ready,
-                std::shared_ptr<const OsmAnd::IObfsCollection> basemap)
+                std::shared_ptr<const OsmAnd::IObfsCollection> basemap,
+                const std::vector<std::string>& label_languages)
         : obfs_(std::move(obfs)), basemap_(std::move(basemap)),
           resources_(std::move(resources)), on_ready_(std::move(on_ready)),
+          label_languages_(to_qstrings(label_languages)),
           started_(Clock::now())
     {
         for (int i = 0; i < threads; ++i)
@@ -1106,6 +1138,10 @@ private:
         for (const auto& object : block->objects) {
             if (!object || object->isCoastline || object->points31.isEmpty())
                 continue;
+            if (is_russian_crimea_entity(object->getCaptionInNativeLanguage().toStdString(),
+                                         object->getCaptionInLanguage(QStringLiteral("uk")).toStdString(),
+                                         object->getCaptionInLanguage(QStringLiteral("en")).toStdString()))
+                continue;
             // The block is larger than the tile: skip objects not touching it.
             const auto& box = object->bbox31;
             if (box.right() > box.left() || box.bottom() > box.top())
@@ -1142,6 +1178,19 @@ private:
             const FeatureStyle style = classify(tags, area, detail, night);
             if (!style.has_area && !style.has_line)
                 continue;
+            if (style.has_line && !style.has_area && style.line.layer == LineLayer::Boundary &&
+                is_country_border(tags)) {
+                // Crimea is part of Ukraine: no country border inside its box.
+                std::vector<OsmAnd::PointI> points(object->points31.begin(), object->points31.end());
+                for (const auto& piece : split_outside_box(crimea_box(), points)) {
+                    QVector<OsmAnd::PointI> kept;
+                    for (const auto& point : piece)
+                        kept.append(point);
+                    local(kept, outer);
+                    tessellator.add_line(outer, style.line);
+                }
+                continue;
+            }
             local(object->points31, outer);
             if (style.has_area) {
                 holes.resize(static_cast<std::size_t>(object->innerPolygonsPoints31.size()));
@@ -1289,7 +1338,7 @@ private:
                         double origin_x, double origin_y, double to_local,
                         TileLabels& out)
     {
-        const QString caption = object.getCaptionInNativeLanguage();
+        const QString caption = pick_caption(object, label_languages_);
         if (caption.isEmpty()) {
             // Traffic controls have no name.
             if (object.points31.size() != 1)
@@ -1471,6 +1520,8 @@ private:
     std::shared_ptr<const OsmAnd::IObfsCollection> basemap_;
     std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources_;
     std::function<void()> on_ready_;
+    // OSM name languages for labels, best first; empty: the object's own name.
+    const std::vector<QString> label_languages_;
     const Clock::time_point started_;
     ImageCache images_;
     DiskCache disk_;
@@ -1925,9 +1976,10 @@ struct VectorMap::Impl {
     Impl(std::shared_ptr<const OsmAnd::IObfsCollection> obfs,
          std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources, int threads,
          std::function<void()> on_ready,
-         std::shared_ptr<const OsmAnd::IObfsCollection> basemap)
+         std::shared_ptr<const OsmAnd::IObfsCollection> basemap,
+         const std::vector<std::string>& label_languages)
         : builder(std::move(obfs), std::move(resources), threads, std::move(on_ready),
-                  std::move(basemap))
+                  std::move(basemap), label_languages)
     {
     }
 
@@ -2121,9 +2173,10 @@ struct VectorMap::Impl {
 VectorMap::VectorMap(std::shared_ptr<const OsmAnd::IObfsCollection> obfs,
                      std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources,
                      int threads, std::function<void()> on_tile_ready,
-                     std::shared_ptr<const OsmAnd::IObfsCollection> basemap)
+                     std::shared_ptr<const OsmAnd::IObfsCollection> basemap,
+                     std::vector<std::string> label_languages)
     : impl_(new Impl(std::move(obfs), std::move(resources), threads, std::move(on_tile_ready),
-                     std::move(basemap)))
+                     std::move(basemap), label_languages))
 {
 }
 
