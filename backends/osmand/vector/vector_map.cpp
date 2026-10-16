@@ -59,7 +59,14 @@ using navicore_osmand::LabelIdMap;
 using navicore_osmand::OrientedBox;
 using navicore_osmand::ScreenPoint;
 
-constexpr int kMinTileZoom = 11;
+// Coarsest tile zoom. Regional OBF files have no map level below 11 (levels
+// 11-12, 13-14, 15-22); the world basemap has levels 1-11 (and 12-22 for
+// coastlines). Tiles up to kBasemapMaxZoom read the basemap at their own
+// level; without a basemap they read the regional level 11 (kMinDataLevel).
+// Either way a tile is styled for its own zoom.
+constexpr int kMinTileZoom = 4;
+constexpr int kBasemapMaxZoom = 10;
+constexpr int kMinDataLevel = 11;
 constexpr int kMaxTileZoom = 16;  // deeper zooms reuse z16 geometry
 // Map data is read in blocks of this zoom (at the detail level of the
 // tiles inside), then cut into the tiles: one read instead of up to 16.
@@ -661,8 +668,9 @@ class TileBuilder {
 public:
     TileBuilder(std::shared_ptr<const OsmAnd::IObfsCollection> obfs,
                 std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources,
-                int threads, std::function<void()> on_ready)
-        : obfs_(std::move(obfs)),
+                int threads, std::function<void()> on_ready,
+                std::shared_ptr<const OsmAnd::IObfsCollection> basemap)
+        : obfs_(std::move(obfs)), basemap_(std::move(basemap)),
           resources_(std::move(resources)), on_ready_(std::move(on_ready)),
           started_(Clock::now())
     {
@@ -776,8 +784,13 @@ private:
     using TagCache =
         std::unordered_map<TagKey, std::pair<std::string, std::string>, TagKeyHash>;
 
-    // Detail (OBF level and style zoom) for a tile: its own zoom, or z16
-    // for the deepest overzoomed tiles.
+    // Detail (style zoom, and the OBF level when not below kMinDataLevel)
+    // for a tile: its own zoom, or z16 for the deepest overzoomed tiles.
+    bool use_basemap(const TileKey& key) const
+    {
+        return basemap_ && key.z <= kBasemapMaxZoom;
+    }
+
     static int detail_zoom(const TileKey& key, bool overzoom)
     {
         return overzoom && key.z == kOverzoomTileZoom ? kMaxTileZoom : key.z;
@@ -859,7 +872,8 @@ private:
         bool loaded = false;
         QList<std::shared_ptr<const OsmAnd::BinaryMapObject>> objects;
         const auto level = static_cast<OsmAnd::ZoomLevel>(detail);
-        if (const auto data = obfs_->obtainDataInterface(
+        const auto& source = use_basemap(key) ? basemap_ : obfs_;
+        if (const auto data = source->obtainDataInterface(
                 &bbox31, level, level,
                 OsmAnd::ObfDataTypesMask().set(OsmAnd::ObfDataType::Map)))
             loaded = data->loadBinaryMapObjects(&objects, nullptr, nullptr, level, &bbox31,
@@ -1027,9 +1041,12 @@ private:
             out.labels = TileLabels{};
         }
 
+        // Style zoom (detail) follows the tile; the OBF level cannot go below
+        // the files' coarsest map level.
         const int detail = detail_zoom(key, overzoom);
+        const int data_level = use_basemap(key) ? detail : std::max(detail, kMinDataLevel);
         bool aborted = false;
-        const auto block = obtain_block(key, detail, generation, out.fetch_ms, aborted);
+        const auto block = obtain_block(key, data_level, generation, out.fetch_ms, aborted);
         if (aborted) {
             out.aborted = true;
             return out;
@@ -1372,6 +1389,9 @@ private:
     }
 
     std::shared_ptr<const OsmAnd::IObfsCollection> obfs_;
+    // World basemap: the source of tiles up to kBasemapMaxZoom (null: those
+    // tiles read the regional files' coarsest level instead).
+    std::shared_ptr<const OsmAnd::IObfsCollection> basemap_;
     std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources_;
     std::function<void()> on_ready_;
     const Clock::time_point started_;
@@ -1827,8 +1847,10 @@ double percentile_max(double a, double b) { return a > b ? a : b; }
 struct VectorMap::Impl {
     Impl(std::shared_ptr<const OsmAnd::IObfsCollection> obfs,
          std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources, int threads,
-         std::function<void()> on_ready)
-        : builder(std::move(obfs), std::move(resources), threads, std::move(on_ready))
+         std::function<void()> on_ready,
+         std::shared_ptr<const OsmAnd::IObfsCollection> basemap)
+        : builder(std::move(obfs), std::move(resources), threads, std::move(on_ready),
+                  std::move(basemap))
     {
     }
 
@@ -1996,8 +2018,10 @@ struct VectorMap::Impl {
 
 VectorMap::VectorMap(std::shared_ptr<const OsmAnd::IObfsCollection> obfs,
                      std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources,
-                     int threads, std::function<void()> on_tile_ready)
-    : impl_(new Impl(std::move(obfs), std::move(resources), threads, std::move(on_tile_ready)))
+                     int threads, std::function<void()> on_tile_ready,
+                     std::shared_ptr<const OsmAnd::IObfsCollection> basemap)
+    : impl_(new Impl(std::move(obfs), std::move(resources), threads, std::move(on_tile_ready),
+                     std::move(basemap)))
 {
 }
 

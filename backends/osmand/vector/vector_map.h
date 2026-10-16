@@ -101,7 +101,8 @@ public:
     // request a frame). Workers start immediately.
     VectorMap(std::shared_ptr<const OsmAnd::IObfsCollection> obfs,
               std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources,
-              int threads, std::function<void()> on_tile_ready);
+              int threads, std::function<void()> on_tile_ready,
+              std::shared_ptr<const OsmAnd::IObfsCollection> basemap = nullptr);
     ~VectorMap();
     VectorMap(const VectorMap&) = delete;
     VectorMap& operator=(const VectorMap&) = delete;

@@ -34,4 +34,8 @@ struct Config {
 // itself, or the *.obf entries of a directory. Empty when there are none.
 std::vector<std::string> obf_files(const std::string& map);
 
+// True for a world basemap file (its name contains "basemap", any case). The
+// vector map draws tiles up to z10 from it; search and routing never see it.
+bool is_basemap(const std::string& path);
+
 } // namespace navicore_osmand

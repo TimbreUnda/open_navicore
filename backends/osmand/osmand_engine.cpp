@@ -88,7 +88,8 @@ private:
     uint32_t width_ = 0;
     uint32_t height_ = 0;
     std::shared_ptr<const OsmAnd::CoreResourcesEmbeddedBundle> resources_;
-    std::shared_ptr<OsmAnd::ObfsCollection> obfs_;
+    std::shared_ptr<OsmAnd::ObfsCollection> obfs_;          // regional maps
+    std::shared_ptr<OsmAnd::ObfsCollection> basemap_obfs_;  // world basemap, tiles <= z10
     // OsmAnd's renderer only provides the camera (projection, unprojection)
     // and an empty frame; VectorMap draws the map, route and labels.
     std::shared_ptr<OsmAnd::IMapRenderer> renderer_;
@@ -363,8 +364,10 @@ bool OsmAndEngine::initialize(const Config& config,
 
     bool resource_ok = false;
     obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
+    basemap_obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
     for (const std::string& file : obf_files(config.map))
-        obfs_->addFile(QString::fromLocal8Bit(file.c_str()));
+        (is_basemap(file) ? basemap_obfs_ : obfs_)
+            ->addFile(QString::fromLocal8Bit(file.c_str()));
     if (obfs_->getObfFiles().isEmpty())
         return failure("error=map");
     trace("init=map");
@@ -407,7 +410,8 @@ bool OsmAndEngine::initialize(const Config& config,
     trace("init=rendering");
     try {
         vector_map_.reset(new navicore_vector::VectorMap(
-            obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); }));
+            obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); },
+            basemap_obfs_->getObfFiles().isEmpty() ? nullptr : basemap_obfs_));
         vector_map_->set_upload_thread(true);
         if (!vector_map_->init_gl())
             throw std::runtime_error("vector_map gl");
@@ -437,7 +441,10 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=routing_xml");
     trace("init=routing_resource");
     navigation_wakeup_ = std::move(wakeup);
-    navigation_maps_ = obf_files(config.map);
+    navigation_maps_.clear();
+    for (const std::string& file : obf_files(config.map))
+        if (!is_basemap(file))
+            navigation_maps_.push_back(file);
     navigation_routing_xml_.assign(
         routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
     trace("init=worker_deferred");
@@ -1910,6 +1917,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
     }
     renderer_.reset();
     obfs_.reset();
+    basemap_obfs_.reset();
     if (phase_ == Phase::CoreReady) {
         phase_ = Phase::Quarantined;
         OsmAnd::ReleaseCore();

@@ -1,6 +1,7 @@
 #include "config.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstdio>
 
@@ -50,6 +51,15 @@ std::vector<std::string> obf_files(const std::string& map)
     ::closedir(dir);
     std::sort(files.begin(), files.end());
     return files;
+}
+
+bool is_basemap(const std::string& path)
+{
+    const auto slash = path.rfind('/');
+    std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return name.find("basemap") != std::string::npos;
 }
 
 Config Config::from_environment()

@@ -489,6 +489,11 @@ void obf_directory()
     assert(obf_files(dir + "/a.obf") == std::vector<std::string>{dir + "/a.obf"});
     assert(obf_files(dir + "/missing").empty());
     assert(obf_files("").empty());
+    using navicore_osmand::is_basemap;
+    assert(is_basemap("/navi_map/osm/World_basemap_2.obf"));
+    assert(is_basemap("/x/world_BASEMAP_mini.obf"));
+    assert(!is_basemap("/navi_map/osm/Ukraine_kyiv_europe_2.obf"));
+    assert(!is_basemap("/basemap-dir/Ukraine.obf"));
     for (const char* name : {"b.obf", "a.obf", "notes.txt", ".hidden.obf", "c.obf.md5"})
         std::remove((dir + "/" + name).c_str());
     ::rmdir(dir.c_str());
