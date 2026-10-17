@@ -78,8 +78,9 @@ public:
     MapArea map_area() const noexcept;
     // HMI split screen (Media screen block, HMI_STATE_VISIBLE_SPLIT_SCREEN):
     // only `area` of the window is shown. Guidance shows the turn card
-    // there, everything else the map framed to the area; touches are the
-    // HMI's. Returns whether the layout changed.
+    // there, everything else an "open navigation" banner; the navigation
+    // takes no input there (all touches are dropped). Returns whether the
+    // layout changed.
     bool set_split_area(bool active, MapArea area);
     bool split() const noexcept { return split_; }
     // Re-reads model.map_view() into the map control buttons.

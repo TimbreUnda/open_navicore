@@ -427,7 +427,7 @@ int main(int argc, char** argv)
     }
     // HMI split screen (Media screen block): the area the stock HMI sends on
     // the bench (display 129,160 765x323), in NAV_main window pixels.
-    for (const char* name : {"split", "split_recalc", "split_free"}) {
+    for (const char* name : {"split", "split_recalc", "split_free", "split_nogps"}) {
         NavigationModel model;
         NavigationView view(model, 1024, 574);
         NavigationView::MapArea area;
@@ -440,7 +440,7 @@ int main(int argc, char** argv)
             to_preview(view);
             (void)view.start_guidance(0);
             GuidanceState state;
-            state.position_available = true;
+            state.position_available = std::strcmp(name, "split_nogps") != 0;
             state.recalculating = std::strcmp(name, "split_recalc") == 0;
             state.distance_to_maneuver_metres = 300.0;
             state.remaining_metres = 9400.0;

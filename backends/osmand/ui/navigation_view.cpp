@@ -401,7 +401,9 @@ void NavigationView::rebuild()
     clear_object_references();
     screen_ = lv_obj_create(nullptr);
     panel(screen_, base);
-    if (model_.screen() != Screen::Search || split_)
+    // Search and the split screen are opaque: no map shows through (the
+    // split screen covers the whole window, not only the HMI's area).
+    if (model_.screen() != Screen::Search && !split_)
         lv_obj_set_style_bg_opa(screen_, LV_OPA_TRANSP, 0);
     lv_obj_set_size(screen_, LV_PCT(100), LV_PCT(100));
     // Builders query map_area(), which depends on the screen being built.
@@ -1460,6 +1462,14 @@ bool NavigationView::set_split_area(bool active, MapArea area)
         return false;
     split_ = active;
     split_area_ = area;
+    if (split_) {
+        // The navigation takes no input through the Media screen.
+        pointer_queue_.clear();
+        pointer_down_ = false;
+        input_sequence_active_ = false;
+        pinching_ = false;
+        map_dragging_ = false;
+    }
     trace_result("ui=split", static_cast<unsigned>(area.width),
                  static_cast<unsigned>(area.height));
     rebuild();
@@ -1469,32 +1479,49 @@ bool NavigationView::set_split_area(bool active, MapArea area)
 // Split-screen turn card (design "Media · navigation block"): the manoeuvre
 // tile on the left; distance, road and the following turn on the right;
 // arrival time, time and distance left and the speed limit along the
-// bottom. Not guiding (or arrived): the map framed to the area.
+// bottom. Not guiding (free drive, search, preview, arrived): a banner that
+// sends the driver to the navigation itself.
 void NavigationView::build_split()
 {
     using namespace design;
     const auto& guidance = model_.guidance();
     const MapArea a = split_area_;
-    if (built_screen_ != Screen::Guidance || !guidance.position_available ||
-        guidance.arrived) {
-        build_vehicle_marker();
+    lv_obj_t* frame = box(screen_, a.x, a.y, a.width, a.height, base, 0);
+    if (built_screen_ != Screen::Guidance || guidance.arrived) {
+        // Route icon in an accent badge over the centred message.
+        constexpr int badge = 88;
+        const char* message = loc::tr(loc::Str::OpenNavigation);
+        const lv_font_t* font = text_width(message, &nav_font_28_800) > a.width - 64
+            ? &nav_font_24_800 : &nav_font_28_800;
+        const int line = lv_font_get_line_height(font);
+        const int top = std::max(8, (a.height - badge - 24 - line) / 2);
+        lv_obj_t* circle = box(frame, (a.width - badge) / 2, top, badge, badge, maneuver,
+                               badge / 2);
+        lv_obj_t* glyph = icon(circle, &nav_icon_message_route_32, white,
+                               (badge - 32) / 2, (badge - 32) / 2);
+        lv_image_set_scale(glyph, 512);
+        lv_obj_t* label = clipped_text(frame, message, font, text1, 32, top + badge + 24,
+                                       a.width - 64);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         return;
     }
     constexpr int pad = 28;
     constexpr int bottom_height = 76;
-    lv_obj_t* frame = box(screen_, a.x, a.y, a.width, a.height, base, 0);
     const int tile_width = std::min(a.height, a.width * 2 / 5);
-    const bool recalculating = guidance.recalculating;
+    // Guidance without a turn to show: re-routing, or no GPS fix.
+    const bool recalculating = guidance.position_available && guidance.recalculating;
+    const bool no_gps = !guidance.position_available;
+    const bool status = recalculating || no_gps;
     lv_obj_t* tile = box(frame, 0, 0, tile_width, a.height,
-                         recalculating ? 0x141d33 : maneuver, 0);
+                         no_gps ? warning_bg : recalculating ? 0x141d33 : maneuver, 0);
     // The 72 px glyph drawn at twice its size around its centre.
-    const lv_image_dsc_t* image = recalculating ? &nav_icon_recalc_38
-                                                : design::glyph(guidance.maneuver.kind, true);
+    const lv_image_dsc_t* image = no_gps ? &nav_icon_no_gps_38
+        : recalculating ? &nav_icon_recalc_38 : design::glyph(guidance.maneuver.kind, true);
     const int glyph_size = static_cast<int>(image->header.w);
-    split_glyph_ = icon(tile, image, white, (tile_width - glyph_size) / 2,
+    split_glyph_ = icon(tile, image, no_gps ? warning : white, (tile_width - glyph_size) / 2,
                         (a.height - glyph_size) / 2);
-    lv_image_set_scale(split_glyph_, recalculating ? 768 : 512);
-    if (!recalculating) {
+    lv_image_set_scale(split_glyph_, status ? 768 : 512);
+    if (!status) {
         // Roundabout exit number where the small card puts it, scaled.
         split_exit_ = design::text(tile, "", &nav_font_28_800, white, tile_width / 2 - 24,
                                    a.height / 2 - 18 - 17);
@@ -1508,12 +1535,13 @@ void NavigationView::build_split()
     const int top_height = a.height - bottom_height;
     (void)box(frame, tile_width, top_height, panel_width, 1, line, 0);
 
-    if (recalculating) {
+    if (status) {
         const int y = std::max(8, (top_height - 34 - 8 - 48) / 2);
-        clipped_text(frame, loc::tr(loc::Str::Recalculating), &nav_font_28_800, text1,
-                     split_text_x_, y, split_text_width_);
-        clipped_text(frame, loc::tr(loc::Str::OffRoute), &nav_font_20_400, text2,
-                     split_text_x_, y + 42, split_text_width_, 2);
+        clipped_text(frame, loc::tr(no_gps ? loc::Str::NoGps : loc::Str::Recalculating),
+                     &nav_font_28_800, no_gps ? warning : text1, split_text_x_, y,
+                     split_text_width_);
+        clipped_text(frame, loc::tr(no_gps ? loc::Str::NoGpsBody : loc::Str::OffRoute),
+                     &nav_font_20_400, text2, split_text_x_, y + 42, split_text_width_, 2);
     } else {
         // Distance in an 88 px line, road 34, the following turn 32.
         const int y = std::max(4, (top_height - 88 - 2 - 34 - 6 - 32) / 2);
@@ -1598,11 +1626,14 @@ void NavigationView::refresh_split()
             static_cast<std::time_t>(std::max(0.0, guidance.remaining_seconds));
         std::tm local{};
         char clock[8] = "--:--";
-        if (localtime_r(&arrival, &local))
+        // Without a position the arrival time is paused, as in the main UI.
+        if (guidance.position_available && localtime_r(&arrival, &local))
             std::snprintf(clock, sizeof(clock), "%02d:%02d", local.tm_hour, local.tm_min);
         set_label_text(split_eta_, clock);
-        const std::string left = duration_text(guidance.remaining_seconds) + " · " +
-                                 distance_text(guidance.remaining_metres);
+        const std::string left = !guidance.position_available
+            ? std::string(loc::tr(loc::Str::EtaPaused))
+            : duration_text(guidance.remaining_seconds) + " · " +
+                  distance_text(guidance.remaining_metres);
         set_label_text(split_remaining_, left.c_str());
         const int x = split_text_x_ + text_width(clock, &nav_font_28_800) + 16;
         const int limit = split_area_.width - 28 - 56 - 16;  // left of the speed sign
@@ -1610,7 +1641,7 @@ void NavigationView::refresh_split()
         lv_obj_set_width(split_remaining_, std::max(1, limit - x));
     }
     if (split_speed_) {
-        const bool shown = guidance.speed_limit_kmh > 0;
+        const bool shown = guidance.position_available && guidance.speed_limit_kmh > 0;
         set_hidden(split_speed_, !shown);
         if (shown)
             set_label_text(split_speed_label_, std::to_string(guidance.speed_limit_kmh).c_str());
@@ -1848,6 +1879,10 @@ void NavigationView::clear_object_references() noexcept
 
 void NavigationView::pointer(int action, int32_t x, int32_t y, int contact)
 {
+    if (split_) {
+        trace_pointer("split_dropped", static_cast<uint32_t>(action), x, y);
+        return;
+    }
     if (rendered_frames_ < input_quarantine_frames) {
         trace_pointer("quarantined", static_cast<uint32_t>(action), x, y);
         return;

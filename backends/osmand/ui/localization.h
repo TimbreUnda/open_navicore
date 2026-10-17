@@ -57,6 +57,7 @@ enum class Str {
     AddressPlace, AddressStreet, AddressBuilding, AddressIntersection,
     UnitMetre, UnitKilometre, UnitMinute, UnitHour,
     Then,             // split-screen card: "Then" before the following turn
+    OpenNavigation,   // split-screen banner when no route is being guided
     Count_
 };
 

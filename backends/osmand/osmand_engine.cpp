@@ -663,8 +663,7 @@ bool OsmAndEngine::apply_camera()
     const double now_s =
         std::chrono::duration<double>(now - clock_origin_).count();
     const auto screen = navigation_->screen();
-    // The split screen shows the map in its area, also behind search.
-    if (screen == ui::Screen::Search && !view_->split()) {
+    if (screen == ui::Screen::Search) {
         vector_view_.tile_zoom_limit = -1.0;
         return false;
     }
