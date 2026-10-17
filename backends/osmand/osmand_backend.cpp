@@ -121,6 +121,24 @@ int backend_pointer(void* context, const OpenNaviBackendPointerV1* event) noexce
     return static_cast<Session*>(context)->pointer(pointer);
 }
 
+// V2 payloads carry the window area the HMI shows (we declare the window
+// area capability); a V1 payload has no area.
+int backend_visibility(void* context, const OpenNaviBackendVisibilityV1* event) noexcept
+{
+    if (!context || !event)
+        return -1;
+    OpenNaviBackendVisibilityV2 visibility{};
+    if (event->abi_version == OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2 &&
+        event->struct_size >= sizeof(OpenNaviBackendVisibilityV2)) {
+        std::memcpy(&visibility, event, sizeof(visibility));
+    } else if (valid(event)) {
+        std::memcpy(&visibility, event, sizeof(*event));
+    } else {
+        return -1;
+    }
+    return static_cast<Session*>(context)->input(visibility);
+}
+
 int backend_gps(void* context, const OpenNaviBackendGpsV1* event) noexcept
 {
     if (!context || !valid(event))
@@ -165,7 +183,8 @@ void fill_v1_query(OpenNaviBackendPluginV1* output)
     output->gps_interval_v2_size = sizeof(OpenNaviBackendGpsIntervalV2);
     output->audio_v2_size = sizeof(OpenNaviBackendAudioV2);
     output->capabilities = OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES |
-                           OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS;
+                           OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS |
+                           OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA;
     std::memcpy(output->build_id, build_id, sizeof(build_id));
     output->backend.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
     output->backend.v1.struct_size = sizeof(OpenNaviBackendV2);
@@ -174,7 +193,7 @@ void fill_v1_query(OpenNaviBackendPluginV1* output)
     output->backend.v1.stop = backend_stop;
     output->backend.v1.surface_created = backend_surface_created;
     output->backend.v1.surface_destroyed = backend_surface_destroyed;
-    output->backend.v1.visibility_changed = forward_event<OpenNaviBackendVisibilityV1>;
+    output->backend.v1.visibility_changed = backend_visibility;
     output->backend.v1.screen_changed = forward_event<OpenNaviBackendScreenV1>;
     output->backend.v1.gps_changed = backend_gps;
     output->backend.v1.pointer_changed = backend_pointer;

@@ -9,6 +9,9 @@ int open_navi_renderer_platform_create(OpenNaviBackendRenderTargetV1 *target,
                                   char *diagnostic,
                                   size_t diagnostic_capacity);
 void open_navi_renderer_platform_destroy(void);
+/* Display position of the window's top-left pixel: the HMI's window
+ * attribute is in display pixels, backends draw in window pixels. */
+void open_navi_renderer_platform_window_origin(int32_t *x, int32_t *y);
 int open_navi_renderer_platform_begin_frame(char *diagnostic,
                                        size_t diagnostic_capacity);
 int open_navi_renderer_platform_end_frame(int present, char *diagnostic,

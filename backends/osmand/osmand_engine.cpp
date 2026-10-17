@@ -60,7 +60,9 @@ public:
                     std::shared_ptr<Wakeup>) override;
     FrameResult frame(const OpenNaviBackendRenderTargetV1&) override;
     int gps(const OpenNaviBackendGpsV1&) override;
-    void visibility(const OpenNaviBackendVisibilityV1& event) override;
+    void visibility(const OpenNaviBackendVisibilityV2& event) override;
+    // HMI split screen (Media screen block) from the latest visibility.
+    void apply_split();
     void screen(const OpenNaviBackendScreenV1& event) override;
     void vehicle(const OpenNaviBackendVehicleV2& event) override;
     void internationalization(const OpenNaviBackendInternationalizationV1& event) override;
@@ -134,7 +136,7 @@ private:
     // Platform inputs, raw (meanings not qualified): kept for the
     // developer menu and traced when they change; nothing acts on them.
     template <typename T> struct Raw { T value{}; bool has = false; };
-    Raw<OpenNaviBackendVisibilityV1> visibility_in_;
+    Raw<OpenNaviBackendVisibilityV2> visibility_in_;
     Raw<OpenNaviBackendScreenV1> screen_in_;
     Raw<OpenNaviBackendVehicleV2> vehicle_in_;
     Raw<OpenNaviBackendInternationalizationV1> language_in_;
@@ -449,6 +451,7 @@ bool OsmAndEngine::initialize(const Config& config,
     view_ = std::unique_ptr<ui::NavigationView>(
         new ui::NavigationView(*navigation_, target.width, target.height));
     trace("init=view");
+    apply_split();
     const QByteArray routing_xml = resources_->getResource(
         QStringLiteral("routing/routing.xml"), &resource_ok);
     if (!resource_ok || routing_xml.isEmpty())
@@ -660,7 +663,8 @@ bool OsmAndEngine::apply_camera()
     const double now_s =
         std::chrono::duration<double>(now - clock_origin_).count();
     const auto screen = navigation_->screen();
-    if (screen == ui::Screen::Search) {
+    // The split screen shows the map in its area, also behind search.
+    if (screen == ui::Screen::Search && !view_->split()) {
         vector_view_.tile_zoom_limit = -1.0;
         return false;
     }
@@ -883,10 +887,31 @@ std::string printf_string(const char* format, ...)
 }
 } // namespace
 
-void OsmAndEngine::visibility(const OpenNaviBackendVisibilityV1& event)
+void OsmAndEngine::visibility(const OpenNaviBackendVisibilityV2& event)
 {
     visibility_in_ = {event, true};
     trace_result("input=visibility", event.visibility, event.interactivity);
+    trace_result("input=visibility_area",
+                 static_cast<std::uint64_t>(static_cast<std::uint32_t>(event.area_x)) << 32 |
+                     static_cast<std::uint32_t>(event.area_y),
+                 static_cast<std::size_t>(event.area_width) << 16 | event.area_height);
+    apply_split();
+}
+
+void OsmAndEngine::apply_split()
+{
+    if (!view_ || !visibility_in_.has)
+        return;
+    const auto& event = visibility_in_.value;
+    const bool split = event.visibility == OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN &&
+                       event.area_width > 0 && event.area_height > 0;
+    ui::NavigationView::MapArea area;
+    area.x = event.area_x;
+    area.y = event.area_y;
+    area.width = static_cast<int>(std::min<std::uint32_t>(event.area_width, INT32_MAX));
+    area.height = static_cast<int>(std::min<std::uint32_t>(event.area_height, INT32_MAX));
+    if (view_->set_split_area(split, area))
+        trace_result("ui=split_layout", view_->split() ? 1u : 0u, 0u);
 }
 
 void OsmAndEngine::screen(const OpenNaviBackendScreenV1& event)

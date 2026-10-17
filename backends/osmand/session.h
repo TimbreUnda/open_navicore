@@ -35,7 +35,7 @@ public:
     int start_v2(const OpenNaviBackendServicesV2&, Config) noexcept;
     // Platform inputs: the latest of each is kept and forwarded (replayed
     // after attach).
-    int input(const OpenNaviBackendVisibilityV1&) noexcept;
+    int input(const OpenNaviBackendVisibilityV2&) noexcept;
     int input(const OpenNaviBackendScreenV1&) noexcept;
     int input(const OpenNaviBackendVehicleV2&) noexcept;
     int input(const OpenNaviBackendInternationalizationV1&) noexcept;
@@ -72,7 +72,7 @@ private:
     OpenNaviBackendServicesV2 services_v2_{};
     bool has_services_v2_ = false;
     template <typename T> struct Latest { T value{}; bool has = false; };
-    Latest<OpenNaviBackendVisibilityV1> visibility_;
+    Latest<OpenNaviBackendVisibilityV2> visibility_;
     Latest<OpenNaviBackendScreenV1> screen_;
     Latest<OpenNaviBackendVehicleV2> vehicle_;
     Latest<OpenNaviBackendInternationalizationV1> internationalization_;

@@ -38,7 +38,7 @@ typedef struct {
     uint64_t sequence;
     RenderEventType type;
     union {
-        OpenNaviBackendVisibilityV1 visibility;
+        OpenNaviBackendVisibilityV2 visibility;  /* V1 prefix unless window area */
         OpenNaviBackendScreenV1 screen;
         OpenNaviBackendGpsV1 gps;
         OpenNaviBackendVehicleV2 vehicle;
@@ -61,7 +61,7 @@ typedef enum {
 typedef struct {
     int pending;
     uint64_t sequence;
-    OpenNaviBackendVisibilityV1 value;
+    OpenNaviBackendVisibilityV2 value;  /* V1 header; area for V2 plugins */
 } VisibilitySlot;
 
 typedef struct {
@@ -164,6 +164,7 @@ typedef struct {
     uint32_t pointer_move_evicted;
     uint32_t pointer_gesture_pairs_evicted;
     int pointer_contacts;
+    int window_area;
     uint32_t platform_ignored;
     uint32_t platform_errors;
     uint32_t platform_window_lost;
@@ -672,9 +673,16 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
 
     switch (event->type) {
     case RENDER_EVENT_VISIBILITY:
-        if (backend.visibility_changed != NULL)
-            (void)backend.visibility_changed(backend.backend_context,
-                                             &event->data.visibility);
+        if (backend.visibility_changed != NULL) {
+            OpenNaviBackendVisibilityV2 visibility = event->data.visibility;
+            if (g_runtime.window_area != 0) {
+                visibility.abi_version = OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2;
+                visibility.struct_size = sizeof(visibility);
+            }
+            (void)backend.visibility_changed(
+                backend.backend_context,
+                (const OpenNaviBackendVisibilityV1 *)&visibility);
+        }
         break;
     case RENDER_EVENT_SCREEN:
         if (backend.screen_changed != NULL)
@@ -985,6 +993,18 @@ static void *renderer_thread(void *unused)
     (void)pthread_cond_broadcast(&g_runtime.condition);
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return NULL;
+}
+
+int open_navi_renderer_set_window_area(int enabled)
+{
+    int result = 0;
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    if (g_runtime.state != RENDERER_COLD)
+        result = -1;
+    else
+        g_runtime.window_area = enabled != 0;
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+    return result;
 }
 
 int open_navi_renderer_set_pointer_contacts(int enabled)
@@ -1427,6 +1447,56 @@ void open_navi_renderer_destroy(void)
 int open_navi_renderer_notify_visibility(uint32_t display, uint32_t visibility,
                                     uint32_t interactivity)
 {
+    return open_navi_renderer_notify_visibility_area(display, visibility,
+                                                     interactivity, NULL);
+}
+
+/* points: the native window attribute, four (x, y) float pairs in window
+ * pixels (corner order not recovered, so only their bounding box is used);
+ * NULL or a non-finite / empty box leaves the area empty. */
+/* Nearest integer without libm (the provider links no math library). */
+static int32_t round_to_int(float value)
+{
+    return (int32_t)(value >= 0.0f ? value + 0.5f : value - 0.5f);
+}
+
+static void window_area_from_points(const float *points,
+                                    OpenNaviBackendVisibilityV2 *value)
+{
+    float min_x, min_y, max_x, max_y;
+    int32_t origin_x = 0, origin_y = 0;
+    unsigned int index;
+
+    value->area_x = 0;
+    value->area_y = 0;
+    value->area_width = 0u;
+    value->area_height = 0u;
+    if (points == NULL) return;
+    min_x = max_x = points[0];
+    min_y = max_y = points[1];
+    for (index = 0u; index < 4u; ++index) {
+        const float x = points[index * 2u];
+        const float y = points[index * 2u + 1u];
+        if (!(x > -65536.0f && x < 65536.0f && y > -65536.0f && y < 65536.0f))
+            return;
+        if (x < min_x) min_x = x;
+        if (x > max_x) max_x = x;
+        if (y < min_y) min_y = y;
+        if (y > max_y) max_y = y;
+    }
+    if (max_x - min_x < 1.0f || max_y - min_y < 1.0f) return;
+    open_navi_renderer_platform_window_origin(&origin_x, &origin_y);
+    value->area_x = round_to_int(min_x) - origin_x;
+    value->area_y = round_to_int(min_y) - origin_y;
+    value->area_width = (uint32_t)round_to_int(max_x - min_x);
+    value->area_height = (uint32_t)round_to_int(max_y - min_y);
+}
+
+int open_navi_renderer_notify_visibility_area(uint32_t display,
+                                              uint32_t visibility,
+                                              uint32_t interactivity,
+                                              const float *points)
+{
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (display >= OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
@@ -1439,10 +1509,11 @@ int open_navi_renderer_notify_visibility(uint32_t display, uint32_t visibility,
     } else {
         VisibilitySlot *slot = &g_runtime.visibility[display];
         slot->value.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
-        slot->value.struct_size = sizeof(slot->value);
+        slot->value.struct_size = sizeof(OpenNaviBackendVisibilityV1);
         slot->value.display = display;
         slot->value.visibility = visibility;
         slot->value.interactivity = interactivity;
+        window_area_from_points(points, &slot->value);
         slot->sequence = next_event_sequence_locked();
         slot->pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
@@ -1850,7 +1921,8 @@ int open_navi_renderer_test_pending_visibility(
     if (display < OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
         pending = g_runtime.visibility[display].pending;
         if (pending != 0 && value_out != NULL)
-            *value_out = g_runtime.visibility[display].value;
+            memcpy(value_out, &g_runtime.visibility[display].value,
+                   sizeof(*value_out));
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return pending;

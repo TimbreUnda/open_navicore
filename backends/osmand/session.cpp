@@ -74,7 +74,7 @@ int Session::record(Latest<T>& latest, const T& event,
     return 0;
 }
 
-int Session::input(const OpenNaviBackendVisibilityV1& event) noexcept
+int Session::input(const OpenNaviBackendVisibilityV2& event) noexcept
 {
     return record(visibility_, event, &Engine::visibility);
 }

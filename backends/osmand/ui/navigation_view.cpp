@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <stdexcept>
 #include <string>
 
@@ -400,12 +401,14 @@ void NavigationView::rebuild()
     clear_object_references();
     screen_ = lv_obj_create(nullptr);
     panel(screen_, base);
-    if (model_.screen() != Screen::Search)
+    if (model_.screen() != Screen::Search || split_)
         lv_obj_set_style_bg_opa(screen_, LV_OPA_TRANSP, 0);
     lv_obj_set_size(screen_, LV_PCT(100), LV_PCT(100));
     // Builders query map_area(), which depends on the screen being built.
     built_screen_ = model_.screen();
-    switch (built_screen_) {
+    if (split_)
+        build_split();
+    else switch (built_screen_) {
     case Screen::FreeDrive: build_free_drive(); break;
     case Screen::Search: build_search(); break;
     case Screen::RoutePreview: build_route_preview(); break;
@@ -499,6 +502,8 @@ int NavigationView::rail_width() const noexcept
 
 NavigationView::MapArea NavigationView::map_area() const noexcept
 {
+    if (split_)
+        return split_area_;
     MapArea area;
     area.y = content_top(height_);
     area.height = content_height(height_);
@@ -779,7 +784,7 @@ void NavigationView::set_vehicle_marker(bool visible, int x, int y,
         return;
     // Floating screens show the map, and the car, under and around the cards.
     MapArea area = map_area();
-    if (built_screen_ == Screen::FreeDrive || built_screen_ == Screen::Guidance) {
+    if (!split_ && (built_screen_ == Screen::FreeDrive || built_screen_ == Screen::Guidance)) {
         area.x = 0;
         area.width = static_cast<int>(width_);
     }
@@ -1436,6 +1441,182 @@ void NavigationView::build_guidance()
     refresh_guidance();
 }
 
+// HMI split screen: the stock Media screen shows only `area` of the window
+// (VISIBLE_SPLIT_SCREEN, 765 x 323 px on the bench). Too small an area
+// keeps the full layout.
+bool NavigationView::set_split_area(bool active, MapArea area)
+{
+    const int right = std::min(area.x + area.width, static_cast<int>(width_));
+    const int bottom = std::min(area.y + area.height, static_cast<int>(height_));
+    area.x = std::max(0, area.x);
+    area.y = std::max(0, area.y);
+    area.width = right - area.x;
+    area.height = bottom - area.y;
+    active = active && area.width >= 320 && area.height >= 160;
+    if (!active)
+        area = {};
+    if (active == split_ && area.x == split_area_.x && area.y == split_area_.y &&
+        area.width == split_area_.width && area.height == split_area_.height)
+        return false;
+    split_ = active;
+    split_area_ = area;
+    trace_result("ui=split", static_cast<unsigned>(area.width),
+                 static_cast<unsigned>(area.height));
+    rebuild();
+    return true;
+}
+
+// Split-screen turn card (design "Media · navigation block"): the manoeuvre
+// tile on the left; distance, road and the following turn on the right;
+// arrival time, time and distance left and the speed limit along the
+// bottom. Not guiding (or arrived): the map framed to the area.
+void NavigationView::build_split()
+{
+    using namespace design;
+    const auto& guidance = model_.guidance();
+    const MapArea a = split_area_;
+    if (built_screen_ != Screen::Guidance || !guidance.position_available ||
+        guidance.arrived) {
+        build_vehicle_marker();
+        return;
+    }
+    constexpr int pad = 28;
+    constexpr int bottom_height = 76;
+    lv_obj_t* frame = box(screen_, a.x, a.y, a.width, a.height, base, 0);
+    const int tile_width = std::min(a.height, a.width * 2 / 5);
+    const bool recalculating = guidance.recalculating;
+    lv_obj_t* tile = box(frame, 0, 0, tile_width, a.height,
+                         recalculating ? 0x141d33 : maneuver, 0);
+    // The 72 px glyph drawn at twice its size around its centre.
+    const lv_image_dsc_t* image = recalculating ? &nav_icon_recalc_38
+                                                : design::glyph(guidance.maneuver.kind, true);
+    const int glyph_size = static_cast<int>(image->header.w);
+    split_glyph_ = icon(tile, image, white, (tile_width - glyph_size) / 2,
+                        (a.height - glyph_size) / 2);
+    lv_image_set_scale(split_glyph_, recalculating ? 768 : 512);
+    if (!recalculating) {
+        // Roundabout exit number where the small card puts it, scaled.
+        split_exit_ = design::text(tile, "", &nav_font_28_800, white, tile_width / 2 - 24,
+                                   a.height / 2 - 18 - 17);
+        lv_obj_set_width(split_exit_, 48);
+        lv_obj_set_style_text_align(split_exit_, LV_TEXT_ALIGN_CENTER, 0);
+    }
+
+    const int panel_width = a.width - tile_width;
+    split_text_x_ = tile_width + pad;
+    split_text_width_ = std::max(1, panel_width - 2 * pad);
+    const int top_height = a.height - bottom_height;
+    (void)box(frame, tile_width, top_height, panel_width, 1, line, 0);
+
+    if (recalculating) {
+        const int y = std::max(8, (top_height - 34 - 8 - 48) / 2);
+        clipped_text(frame, loc::tr(loc::Str::Recalculating), &nav_font_28_800, text1,
+                     split_text_x_, y, split_text_width_);
+        clipped_text(frame, loc::tr(loc::Str::OffRoute), &nav_font_20_400, text2,
+                     split_text_x_, y + 42, split_text_width_, 2);
+    } else {
+        // Distance in an 88 px line, road 34, the following turn 32.
+        const int y = std::max(4, (top_height - 88 - 2 - 34 - 6 - 32) / 2);
+        split_number_ = design::text(frame, "", &nav_font_72_800, text1, split_text_x_, y);
+        // Unit on the numeral's baseline (72 px: 88 - 18; 28 px: 34 - 7).
+        split_unit_ = design::text(frame, "", &nav_font_28_800, text1, split_text_x_,
+                                   y + (88 - 18) - (34 - 7));
+        split_road_ = clipped_text(frame, "", &nav_font_28_800, text1, split_text_x_,
+                                   y + 90, split_text_width_);
+        const int then_y = y + 90 + 34 + 6;
+        split_then_ = design::text(frame, loc::tr(loc::Str::Then), &nav_font_20_400, text2,
+                                   split_text_x_, then_y + 4);
+        const int then_width = text_width(loc::tr(loc::Str::Then), &nav_font_20_400);
+        split_then_glyph_ = icon(frame, &nav_icon_glyph_straight_32, text2,
+                                 split_text_x_ + then_width + 8, then_y);
+        split_then_road_ = clipped_text(frame, "", &nav_font_20_400, text2,
+                                        split_text_x_ + then_width + 48, then_y + 4,
+                                        std::max(1, split_text_width_ - then_width - 48));
+    }
+
+    const int row_y = top_height + 1;
+    split_eta_ = design::text(frame, "", &nav_font_28_800, text1, split_text_x_,
+                              row_y + (bottom_height - 1 - 34) / 2);
+    split_remaining_ = clipped_text(frame, "", &nav_font_20_400, text2, split_text_x_,
+                                    row_y + (bottom_height - 1 - 24) / 2, 1);
+    constexpr int sign = 56;
+    split_speed_ = box(frame, a.width - pad + 8 - sign, row_y + (bottom_height - 1 - sign) / 2,
+                       sign, sign, white, sign / 2);
+    ring(split_speed_, 5, 0xe0524a);
+    split_speed_label_ = design::text(split_speed_, "", &nav_font_24_800, base, 0, 13);
+    lv_obj_set_width(split_speed_label_, sign);
+    lv_obj_set_style_text_align(split_speed_label_, LV_TEXT_ALIGN_CENTER, 0);
+    refresh_split();
+}
+
+void NavigationView::refresh_split()
+{
+    using namespace design;
+    const auto& guidance = model_.guidance();
+    if (split_glyph_ && split_exit_) {
+        const auto* image = design::glyph(guidance.maneuver.kind, true);
+        if (lv_image_get_src(split_glyph_) != image)
+            lv_image_set_src(split_glyph_, image);
+        const int exit = guidance.maneuver.kind == ManeuverKind::Roundabout
+            ? guidance.maneuver.roundabout_exit : 0;
+        set_label_text(split_exit_, exit > 0 ? std::to_string(exit).c_str() : "");
+    }
+    if (split_number_ && split_unit_) {
+        // "300 m" / "1,2 км": the numeral large, the unit on its baseline.
+        const std::string distance = distance_text(guidance.distance_to_maneuver_metres);
+        const auto space = distance.rfind(' ');
+        const std::string number = space == std::string::npos ? distance : distance.substr(0, space);
+        const std::string unit = space == std::string::npos ? std::string() : distance.substr(space + 1);
+        set_label_text(split_number_, number.c_str());
+        set_label_text(split_unit_, unit.c_str());
+        lv_obj_set_x(split_unit_, split_text_x_ + text_width(number.c_str(), &nav_font_72_800) + 10);
+    }
+    if (split_road_) {
+        const Destination* destination = model_.destination();
+        const char* road = !guidance.maneuver.road.empty()
+            ? guidance.maneuver.road.c_str()
+            : (destination ? destination->title.c_str() : loc::tr(loc::Str::RouteFallback));
+        set_label_text(split_road_, road);
+    }
+    if (split_then_) {
+        const bool shown = guidance.has_following_maneuver;
+        set_hidden(split_then_, !shown);
+        set_hidden(split_then_glyph_, !shown);
+        set_hidden(split_then_road_, !shown);
+        if (shown) {
+            const auto& next = guidance.following_maneuver;
+            const auto* image = design::glyph(next.kind, false);
+            if (lv_image_get_src(split_then_glyph_) != image)
+                lv_image_set_src(split_then_glyph_, image);
+            const std::string road = next.road.empty() ? maneuver_text(next) : next.road;
+            set_label_text(split_then_road_, road.c_str());
+        }
+    }
+    if (split_eta_) {
+        // Arrival clock (24 h), then time and distance left.
+        const std::time_t arrival = std::time(nullptr) +
+            static_cast<std::time_t>(std::max(0.0, guidance.remaining_seconds));
+        std::tm local{};
+        char clock[8] = "--:--";
+        if (localtime_r(&arrival, &local))
+            std::snprintf(clock, sizeof(clock), "%02d:%02d", local.tm_hour, local.tm_min);
+        set_label_text(split_eta_, clock);
+        const std::string left = duration_text(guidance.remaining_seconds) + " · " +
+                                 distance_text(guidance.remaining_metres);
+        set_label_text(split_remaining_, left.c_str());
+        const int x = split_text_x_ + text_width(clock, &nav_font_28_800) + 16;
+        const int limit = split_area_.width - 28 - 56 - 16;  // left of the speed sign
+        lv_obj_set_x(split_remaining_, x);
+        lv_obj_set_width(split_remaining_, std::max(1, limit - x));
+    }
+    if (split_speed_) {
+        const bool shown = guidance.speed_limit_kmh > 0;
+        set_hidden(split_speed_, !shown);
+        if (shown)
+            set_label_text(split_speed_label_, std::to_string(guidance.speed_limit_kmh).c_str());
+    }
+}
+
 void NavigationView::layout_guidance_card()
 {
     if (!guidance_card_)
@@ -1621,6 +1802,9 @@ void NavigationView::refresh_road_widgets()
 
 void NavigationView::clear_object_references() noexcept
 {
+    split_glyph_ = split_exit_ = split_number_ = split_unit_ = nullptr;
+    split_road_ = split_then_ = split_then_glyph_ = split_then_road_ = nullptr;
+    split_eta_ = split_remaining_ = split_speed_ = split_speed_label_ = nullptr;
     results_panel_ = nullptr;
     query_label_ = nullptr;
     query_cursor_ = nullptr;
@@ -1773,6 +1957,8 @@ bool NavigationView::apply_guidance(GuidanceState guidance)
     if (accepted) {
         if (structure_changed)
             rebuild();
+        else if (split_)
+            refresh_split();
         else
             refresh_guidance();
     }

@@ -19,6 +19,11 @@ void open_navi_renderer_prepare_lifecycle(void);
 void open_navi_renderer_end_lifecycle(void);
 int open_navi_renderer_notify_visibility(uint32_t display, uint32_t visibility,
                                     uint32_t interactivity);
+/* As above, with the native window attribute (four float x,y points). */
+int open_navi_renderer_notify_visibility_area(uint32_t display,
+                                              uint32_t visibility,
+                                              uint32_t interactivity,
+                                              const float *points);
 int open_navi_renderer_notify_screen(uint32_t display, uint32_t screen_type,
                                 uint32_t animation);
 int open_navi_renderer_notify_gps(const OpenNaviGpsSnapshot *snapshot);
@@ -50,6 +55,7 @@ int open_navi_renderer_notify_driver_distraction(uint32_t source_slot,
  * touch contact, V2 payloads); otherwise only the first contact, as V1.
  * Set by the plugin loader before install; rejected unless cold. */
 int open_navi_renderer_set_pointer_contacts(int enabled);
+int open_navi_renderer_set_window_area(int enabled);
 
 #if defined(OPEN_NAVI_TESTING)
 int open_navi_renderer_test_submit_contact(uint32_t action, int32_t x, int32_t y,

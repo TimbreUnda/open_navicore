@@ -2310,8 +2310,16 @@ static uint32_t open_navi_hmi_state_transition(void *self,
     OpenNaviLifecycleLease lease;
     unsigned int queue_depth = 0u;
     int accepted = 0;
+    /* 32-byte native attribute: four float (x, y) points, NAV host +0x4c.
+     * Only the split screen's area is used: read synchronously for
+     * VISIBLE_SPLIT_SCREEN, never retained; other states leave it opaque. */
+    const int split = visibility == OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN &&
+                      window_attribute != NULL;
+    float points[8] = {0.0f};
 
     if (!open_navi_lifecycle_acquire(&lease)) return 1u;
+    if (split)
+        memcpy(points, window_attribute, sizeof(points));
     (void)pthread_mutex_lock(&g_worker_lock);
     if (g_worker_stop == 0 &&
         g_transition_queue_count < OPEN_NAVI_TRANSITION_QUEUE_CAPACITY &&
@@ -2327,8 +2335,9 @@ static uint32_t open_navi_hmi_state_transition(void *self,
             interactivity;
         ++g_hmi_event_queue_count;
         ++g_transition_queue_count;
-        if (open_navi_renderer_notify_visibility(display, visibility,
-                                            interactivity) == 0) {
+        if (open_navi_renderer_notify_visibility_area(
+                display, visibility, interactivity,
+                split ? points : NULL) == 0) {
             queue_depth = g_transition_queue_count;
             accepted = 1;
             (void)pthread_cond_signal(&g_worker_condition);
@@ -2347,11 +2356,15 @@ static uint32_t open_navi_hmi_state_transition(void *self,
     open_navi_log(LOG_NOTICE,
              "HMI requestHMIStateTransition slot=5 self=%p adapter=%u "
              "handle=%u display=%u visibility=%u interactivity=%u "
-             "window_attribute=%p accepted=%d queue_depth=%u",
+             "window_attribute=%p points=%.0f,%.0f %.0f,%.0f %.0f,%.0f "
+             "%.0f,%.0f accepted=%d queue_depth=%u",
              self,
              adapter != NULL ? adapter->adapter_id : UINT32_MAX,
              handle, display, visibility, interactivity,
-             window_attribute, accepted, queue_depth);
+             window_attribute, (double)points[0], (double)points[1],
+             (double)points[2], (double)points[3], (double)points[4],
+             (double)points[5], (double)points[6], (double)points[7],
+             accepted, queue_depth);
     open_navi_lifecycle_release(&lease);
     return accepted != 0 ? 0u : 1u;
 }

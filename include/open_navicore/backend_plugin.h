@@ -36,7 +36,11 @@ enum {
     /* Optional in every query version: the plugin understands
      * OpenNaviBackendPointerV2 and wants every touch contact. */
     OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS = 1u << 11,
-    OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES = OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS,
+    /* Optional in every query version: the plugin understands
+     * OpenNaviBackendVisibilityV2 (the window area the HMI shows). */
+    OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA = 1u << 12,
+    OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES =
+        OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS | OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA,
     OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES =
         OPEN_NAVI_PLUGIN_CAP_LIFECYCLE |
         OPEN_NAVI_PLUGIN_CAP_RENDER |

@@ -93,6 +93,33 @@ typedef struct {
     uint32_t interactivity;
 } OpenNaviBackendVisibilityV1;
 
+/* Visibility with the part of the window the HMI shows: the exact V1
+ * fields, then the bounding box of the four points of the native window
+ * attribute (SI_HMIIntegration slot 5, NAV +0x4c). Delivered through
+ * visibility_changed (abi_version OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2,
+ * struct_size the V2 size) only to a plugin that declares
+ * OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA; every other backend receives V1.
+ * The area is in window pixels (the attribute's display pixels less the
+ * window origin); area_width/area_height are 0 when the HMI gave no
+ * attribute. Seen on the bench: VISIBLE_SPLIT_SCREEN (19) on the Media
+ * screen with display 129,160 to 894,483, i.e. window 129,88 765x323 for
+ * NAV_main at 0,72. */
+enum {
+    OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2 = 2u,
+    OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN = 19u
+};
+typedef struct {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t display;
+    uint32_t visibility;
+    uint32_t interactivity;
+    int32_t area_x;
+    int32_t area_y;
+    uint32_t area_width;
+    uint32_t area_height;
+} OpenNaviBackendVisibilityV2;
+
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;

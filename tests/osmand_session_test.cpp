@@ -32,6 +32,7 @@ struct Probe {
     const OpenNaviBackendServicesV2* outbound = nullptr;
     unsigned outbound_calls = 0;
     OpenNaviBackendVehicleV2 vehicle{};
+    OpenNaviBackendVisibilityV2 visibility{};
     unsigned vehicle_events = 0, visibility_events = 0, distraction_events = 0,
              language_events = 0, cluster_display_events = 0;
 };
@@ -69,7 +70,11 @@ public:
         return 0;
     }
     int pointer(const OpenNaviBackendPointerV2&) override { return 0; }
-    void visibility(const OpenNaviBackendVisibilityV1&) override { ++p_->visibility_events; }
+    void visibility(const OpenNaviBackendVisibilityV2& event) override
+    {
+        ++p_->visibility_events;
+        p_->visibility = event;
+    }
     void vehicle(const OpenNaviBackendVehicleV2& event) override
     {
         p_->vehicle = event;
@@ -406,6 +411,7 @@ void backend_v5()
     assert((v1.capabilities & ~uint32_t(OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES)) ==
            OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
     assert(v1.capabilities & OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS);
+    assert(v1.capabilities & OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA);
     assert(plugin.v3.v2.capabilities_v2 == OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
     assert(plugin.v3.capabilities_v3 == OPEN_NAVI_PLUGIN_V3_REQUIRED_CAPABILITIES);
     assert(plugin.capabilities_v4 == OPEN_NAVI_PLUGIN_V4_REQUIRED_CAPABILITIES);
@@ -459,6 +465,19 @@ void backend_v5()
     OpenNaviBackendVisibilityV1 visible{OPEN_NAVI_BACKEND_ABI_V1, sizeof(visible), 0, 1, 1};
     assert(api.visibility_changed(context, &visible) == 0);
     assert(probe->visibility_events == 1);
+    assert(probe->visibility.area_width == 0 && probe->visibility.area_height == 0);
+    // Window area capability: a V2 payload keeps the split-screen area.
+    OpenNaviBackendVisibilityV2 split{OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2, sizeof(split), 0,
+                                      OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN, 2,
+                                      129, 160, 765, 323};
+    assert(api.visibility_changed(context,
+        reinterpret_cast<const OpenNaviBackendVisibilityV1*>(&split)) == 0);
+    assert(probe->visibility_events == 2);
+    assert(probe->visibility.visibility == OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN);
+    assert(probe->visibility.area_x == 129 && probe->visibility.area_width == 765);
+    split.struct_size = sizeof(OpenNaviBackendVisibilityV1);  // V2 tag, V1 size
+    assert(api.visibility_changed(context,
+        reinterpret_cast<const OpenNaviBackendVisibilityV1*>(&split)) != 0);
     api.surface_destroyed(context);
     api.stop(context);
 
