@@ -47,9 +47,14 @@ Dijkstra's and every unpacked path is a connected edge chain with that cost.
 Kyiv test routes (nearest-junction snapping, guessed coordinates for Lavra and
 Teremky): 4.8, 12.8 and 27.4 km, 0.02-0.03 ms plus 0.005-0.023 ms to unpack.
 
-All 26 regions as one graph: 2,068,016 car roads, 22.3 M points, 3,333,879
-junction nodes, 8,486,440 directed edges, built in 66 s. Not contracted
-(stopped by the operator: the proof of concept is Kyiv/Kherson).
+All 26 regions as one graph (PC): 2,068,016 car roads, 22.3 M points, 3,333,879
+junction nodes, 8,486,440 directed edges, built in 66 s; contracted in 93 s to
+14,324,431 upward arcs (1.69 per base edge), 211.9 MB. `verify` on 300 random
+pairs across the country: 0 mismatches, CH 0.075 ms (169 settled on average) against
+Dijkstra 214 ms (1.6 M settled). Kyiv (Maidan) to Kherson (46.6354 N 32.6169 E): 614.7 km,
+411.8 min by this cost model, CH 0.091 ms + 0.204 ms unpack (203 settled), Dijkstra
+348 ms (2.2 M settled). Not run on the radio: `/navi_map` is read-only and the whole
+set does not fit in `/datastore`.
 
 ### On the radio (M9304002366, 2 x Cortex-A15 1.5 GHz per `pidin info`, 2026-10-18, beside the running navigation)
 
