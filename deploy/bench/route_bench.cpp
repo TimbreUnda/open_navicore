@@ -2,6 +2,8 @@
 //
 //   route_bench_run MAP ROUTING_XML MODE MEMORY_MB LAT1 LON1 LAT2 LON2 [REPEAT]
 //
+// MAP is one .obf file or a directory of them (all are opened).
+//
 // MODE: astar (what the navigation worker does), hh (highway hierarchy),
 // hhalt (hh with alternatives). Prints wall time per phase and OsmAnd's own
 // load/calculate timers and tile counters, one line per run.
@@ -19,11 +21,14 @@
 #include "routingContext.h"
 
 #include <chrono>
+#include <dirent.h>
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <sys/stat.h>
+#include <vector>
 
 namespace {
 
@@ -79,8 +84,31 @@ int route_bench_main(int argc, char** argv)
     if (!builder) { std::fprintf(stderr, "routing.xml parse failed\n"); return 1; }
     const double parse_ms = ms_since(started);
     started = Clock::now();
-    const auto file = initBinaryMapFile(map, false, true);
-    if (!file || file->routingIndexes.empty()) {
+    // MAP is one .obf or a directory: every .obf in it is opened, like the
+    // navigation worker does, so a route can cross regions.
+    std::vector<std::string> map_files;
+    struct stat map_info {};
+    if (::stat(map.c_str(), &map_info) == 0 && S_ISDIR(map_info.st_mode)) {
+        if (DIR* dir = ::opendir(map.c_str())) {
+            while (const dirent* entry = ::readdir(dir)) {
+                const std::string name = entry->d_name;
+                if (name.size() > 4 && name[0] != '.' && name.compare(name.size() - 4, 4, ".obf") == 0)
+                    map_files.push_back(map + "/" + name);
+            }
+            ::closedir(dir);
+        }
+    } else {
+        map_files.push_back(map);
+    }
+    size_t routing_indexes = 0, hh_indexes = 0, opened = 0;
+    for (const auto& path : map_files) {
+        const auto file = initBinaryMapFile(path, false, true);
+        if (!file || file->routingIndexes.empty()) continue;
+        ++opened;
+        routing_indexes += file->routingIndexes.size();
+        hh_indexes += file->hhIndexes.size();
+    }
+    if (opened == 0) {
         std::fprintf(stderr, "map has no routing index\n");
         return 1;
     }
@@ -88,8 +116,8 @@ int route_bench_main(int argc, char** argv)
     Dl_info core{};
     if (dladdr(reinterpret_cast<void*>(&parseRoutingConfigurationFromXml), &core) && core.dli_fname)
         std::printf("core: %s\n", core.dli_fname);
-    std::printf("setup: parse_xml=%.0fms open_map=%.0fms routing_indexes=%zu hh_indexes=%zu\n",
-                parse_ms, open_ms, file->routingIndexes.size(), file->hhIndexes.size());
+    std::printf("setup: parse_xml=%.0fms open_map=%.0fms files=%zu routing_indexes=%zu hh_indexes=%zu\n",
+                parse_ms, open_ms, opened, routing_indexes, hh_indexes);
 
     for (int run = 0; run < repeat; ++run) {
         MAP_STR_STR parameters;

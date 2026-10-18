@@ -51,7 +51,7 @@ All 26 regions as one graph: 2,068,016 car roads, 22.3 M points, 3,333,879
 junction nodes, 8,486,440 directed edges, built in 66 s. Not contracted
 (stopped by the operator: the proof of concept is Kyiv/Kherson).
 
-### On the radio (M9304002366, Cortex-A9, 2026-10-18, beside the running navigation)
+### On the radio (M9304002366, 2 x Cortex-A15 1.5 GHz per `pidin info`, 2026-10-18, beside the running navigation)
 
 `ch_tool` cross-compiled with the product toolchain, run from `/tmp`; Kyiv city graph
 (89,272 nodes). Costs, edge counts and lengths equal the PC run, so the ARM build is
