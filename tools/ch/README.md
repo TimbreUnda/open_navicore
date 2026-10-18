@@ -51,8 +51,30 @@ All 26 regions as one graph: 2,068,016 car roads, 22.3 M points, 3,333,879
 junction nodes, 8,486,440 directed edges, built in 66 s. Not contracted
 (stopped by the operator: the proof of concept is Kyiv/Kherson).
 
-Not measured: anything on the radio (a Cortex-A9 will be much slower than the PC),
-memory-mapped loading, and the guidance step (street names and turns for the route).
+### On the radio (M9304002366, Cortex-A9, 2026-10-18, beside the running navigation)
+
+`ch_tool` cross-compiled with the product toolchain, run from `/tmp`; Kyiv city graph
+(89,272 nodes). Costs, edge counts and lengths equal the PC run, so the ARM build is
+correct. The unit's clock ticks in whole milliseconds, so `bench` and `benchfull` time a
+batch of 5,000 random pairs (4,777 reachable) and divide.
+
+| What | Time per route |
+|---|---|
+| CH query (`bench`) | 0.073 ms |
+| CH query + unpack to base edges (`benchfull`) | 0.126 ms |
+| Plain Dijkstra, same graph, same CPU | 19-20 ms |
+| OsmAnd HH (`route_bench hh`), Maidan -> Troieshchyna, 15.17 km | 2,973 ms |
+| OsmAnd A* (`route_bench astar`), same pair, same 15,171 m route | 14,724 ms |
+
+The CH figure is the graph search plus unpacking only. It does not include attaching the
+start and end to a road, loading the route's roads, turn instructions, street names or
+geometry, which are part of the HH and A* figures (HH: about 1.2 s attaching start/end,
+0.25 s result preparation, the rest network search, detailed geometry and tile loading).
+CH graph routes use a simplified cost model (no turn penalties), so the 12.8 km CH route
+and the 15.17 km HH route are different routes; compare times, not routes.
+
+Not measured: memory-mapped loading, and the guidance step (street names and turns for
+the route).
 
 ## Findings
 

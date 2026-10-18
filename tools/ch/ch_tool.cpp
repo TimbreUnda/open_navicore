@@ -2,7 +2,7 @@
 //
 //   ch_tool build  <in.graph> <out.ch>
 //   ch_tool verify <in.graph> <in.ch> <pairs>          random pairs vs Dijkstra
-//   ch_tool bench  <in.graph> <in.ch> <pairs>          query time
+//   ch_tool bench  <in.graph> <in.ch> <pairs>          batch query time (benchfull: + unpack)
 //   ch_tool route  <in.graph> <in.ch> lat lon lat lon  one route, nearest nodes
 //
 // Ordering: edge difference + deleted neighbours + level, lazy updates;
@@ -427,6 +427,31 @@ int main(int argc, char** argv) {
     std::mt19937 rng(12345);
     u32 bad = 0, reachable = 0;
     double total = 0, total_unpack = 0, total_plain = 0; size_t settled_ch = 0, settled_plain = 0;
+    // The clock of some targets ticks in whole milliseconds, so per-query
+    // timings are rounded; the batch wall time below is the reliable figure.
+    std::vector<std::pair<u32, u32>> queries;
+    for (u32 i = 0; i < pairs; ++i) { u32 s = rng() % g.n; queries.push_back({s, (u32)(rng() % g.n)}); }
+    if (cmd == "bench" || cmd == "benchfull") {
+        u32 meet, found = 0; size_t edges_total = 0;
+        double t0 = now();
+        for (const auto& pr : queries) {
+            u32 cost = q.run(pr.first, pr.second, meet);
+            if (cost == INF) continue;
+            ++found;
+            if (cmd == "benchfull") edges_total += q.path_edges(pr.first, pr.second, meet).size();
+        }
+        double wall = now() - t0;
+        std::printf("%s: %u pairs, %u reachable; batch %.1f ms, %.4f ms per query%s\n", cmd.c_str(), pairs, found,
+                    wall * 1e3, wall * 1e3 / pairs, cmd == "benchfull" ? " (query + unpack to base edges)" : "");
+        (void)edges_total;
+        double d0 = now();
+        size_t ds; u32 dn = 0;
+        u32 plain_pairs = std::min<u32>(pairs, 200);
+        for (u32 i = 0; i < plain_pairs; ++i) { if (plain.run(queries[i].first, queries[i].second, ds) != INF) ++dn; }
+        double dwall = now() - d0;
+        std::printf("dijkstra: %u pairs, %.1f ms per query\n", plain_pairs, dwall * 1e3 / plain_pairs);
+        return 0;
+    }
     for (u32 i = 0; i < pairs; ++i) {
         u32 s = rng() % g.n, t = rng() % g.n, meet;
         double t0 = now();
