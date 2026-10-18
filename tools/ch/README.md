@@ -78,6 +78,33 @@ geometry, which are part of the HH and A* figures (HH: about 1.2 s attaching sta
 CH graph routes use a simplified cost model (no turn penalties), so the 12.8 km CH route
 and the 15.17 km HH route are different routes; compare times, not routes.
 
+#### Whole Ukraine on the radio: HH vs CH
+
+All 26 regional OBFs in `/navi_map/osm` (2.3 GiB, hashes verified on the unit), run beside
+the running navigation. HH is `route_bench hh` with every file open; CH is `ch_tool leanroute`
+with the whole-country hierarchy (3,333,879 nodes, 14,324,431 upward arcs, 211.9 MB) and the
+node coordinates (26.7 MB) from flash.
+
+| Route | OsmAnd HH | CH query | CH query + unpack to base edges |
+|---|---|---|---|
+| Kyiv Maidan -> Kherson, HH 615.0 km / CH graph 614.7 km | 13,836 ms | 0.110 ms | 0.320 ms (1,591 base edges, 203 nodes settled) |
+| Maidan -> Troieshchyna, 15.2 km | 5,170-5,454 ms (3 runs) | 0.070 ms | 0.095 ms |
+| 3,000 random pairs (2,873 reachable), average | n/a | 0.153 ms | 1.07 ms |
+
+* HH needs a one-time 9.8-10.1 s to open the 26 files; CH needs about 10 s to read its
+  239 MB from flash. Neither is in the per-route figures.
+* With all 26 files open HH takes 5.2-5.4 s on the 15 km route, against 3.0 s with only the
+  Kyiv map open (tiles loaded 2,618 vs 1,305).
+* The Kyiv-Kherson routes agree within 0.05% in distance (615.03 vs 614.70 km), so they are
+  very likely the same road. Times differ by model: HH 27,382 s (OsmAnd, with turn and signal
+  costs) against 26,231 s of profile cost for CH.
+* CH figures are the graph search and unpacking only, as above. They exclude snapping the
+  start/end to a road (the tool's brute-force nearest-node scan takes about 70 ms on the
+  radio and is not part of CH), loading the route's roads, turn instructions, street names
+  and geometry.
+* A* was started on Kyiv-Kherson and dropped at the operator's request; the process was gone
+  when I came to stop it and produced no result.
+
 Not measured: memory-mapped loading, and the guidance step (street names and turns for
 the route).
 

@@ -379,9 +379,77 @@ static u32 nearest(const Graph& g, double lat, double lon) {
     return best;
 }
 
+// Low-memory commands for the radio: only the hierarchy and the node
+// coordinates are loaded (no edge arrays, no Dijkstra), so a whole-country
+// hierarchy fits in RAM.  Edge lengths are unavailable; results are cost,
+// number of base edges and timings.
+//   leanroute <graph> <ch> lat lon lat lon [repeats]
+//   leanbench <graph> <ch> <pairs>
+static int lean_main(int argc, char** argv) {
+    std::string cmd = argv[1];
+    double t0 = now();
+    FILE* f = std::fopen(argv[2], "rb");
+    if (!f) die("cannot open graph");
+    char magic[4];
+    Graph g;
+    if (std::fread(magic, 1, 4, f) != 4 || std::memcmp(magic, "CHG1", 4)) die("not a CHG1 graph");
+    if (std::fread(&g.n, 4, 1, f) != 1 || std::fread(&g.m, 4, 1, f) != 1) die("short header");
+    read_vec(f, g.x, g.n); read_vec(f, g.y, g.n);
+    std::fclose(f);
+    Hierarchy h = load_hierarchy(argv[3]);
+    std::printf("loaded %u nodes, %zu upward arcs in %.2f s\n", g.n,
+                h.out_arcs.size() + h.in_arcs.size(), now() - t0);
+    Query q(h);
+    if (cmd == "leanroute") {
+        if (argc < 8) die("leanroute needs lat lon lat lon");
+        double s0 = now();
+        u32 s = nearest(g, std::atof(argv[4]), std::atof(argv[5]));
+        u32 t = nearest(g, std::atof(argv[6]), std::atof(argv[7]));
+        double snap_ms = (now() - s0) * 1e3;
+        u32 repeats = argc > 8 ? std::atoi(argv[8]) : 200, meet = 0, cost = INF;
+        double a0 = now();
+        for (u32 i = 0; i < repeats; ++i) cost = q.run(s, t, meet);
+        double query_ms = (now() - a0) * 1e3 / repeats;
+        if (cost == INF) { std::printf("no route\n"); return 0; }
+        size_t edges = 0;
+        double b0 = now();
+        for (u32 i = 0; i < repeats; ++i) { cost = q.run(s, t, meet); edges = q.path_edges(s, t, meet).size(); }
+        double full_ms = (now() - b0) * 1e3 / repeats;
+        std::printf("cost %.1fs, %zu base edges, %zu nodes settled; query %.3f ms, query+unpack %.3f ms"
+                    " (avg of %u); nearest-node snap (brute force, not part of CH) %.1f ms\n",
+                    cost / 1000.0, edges, q.settled, query_ms, full_ms, repeats, snap_ms);
+        return 0;
+    }
+    u32 pairs = argc > 4 ? std::atoi(argv[4]) : 1000;
+    std::mt19937 rng(12345);
+    std::vector<std::pair<u32, u32>> queries;
+    for (u32 i = 0; i < pairs; ++i) { u32 s = rng() % g.n; queries.push_back({s, (u32)(rng() % g.n)}); }
+    u32 meet, found = 0; size_t settled = 0;
+    double a0 = now();
+    for (const auto& pr : queries) {
+        if (q.run(pr.first, pr.second, meet) != INF) ++found;
+        settled += q.settled;
+    }
+    double query_s = now() - a0;
+    found = 0;
+    double b0 = now();
+    for (const auto& pr : queries) {
+        u32 cost = q.run(pr.first, pr.second, meet);
+        if (cost == INF) continue;
+        ++found;
+        q.path_edges(pr.first, pr.second, meet);
+    }
+    double full_s = now() - b0;
+    std::printf("leanbench: %u pairs, %u reachable; query %.4f ms, query+unpack %.4f ms per pair "
+                "(%zu nodes settled on average)\n", pairs, found, query_s * 1e3 / pairs,
+                full_s * 1e3 / pairs, settled / pairs);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc < 4) die("usage: ch_tool build|verify|bench|route ...");
     std::string cmd = argv[1];
+    if (cmd == "leanroute" || cmd == "leanbench") return lean_main(argc, argv);
     Graph g = load_graph(argv[2]);
     std::fprintf(stderr, "graph: %u nodes, %u edges\n", g.n, g.m);
     if (cmd == "build") {
