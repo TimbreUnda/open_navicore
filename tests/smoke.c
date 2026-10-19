@@ -1269,7 +1269,7 @@ int main(void)
     assert(voice_reply_count == 1u);
     assert(voice_reply_handle == 0x252519u);
     /* The result word passes through; guidance_status is the constant
-     * stock idle value 1 without the report-guidance-status marker. */
+     * idle value 0 without the report-guidance-status marker. */
     assert(voice_reply_result == 9u &&
            voice_reply_status == OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE);
     open_navi_callback_test_state(&callback_state);
@@ -1405,10 +1405,9 @@ int main(void)
     assert(transition_reply_count == 4u);
     assert(get_adapter(root, 0u, 0) != 0u);
 
-    /* Route guidance.  The slot-19 reply carries the constant stock idle
-     * value 1 unless the report-guidance-status marker was present at
-     * provider start; then the backend's published state (0 guiding,
-     * 1 idle).  requestGuidanceStop (slot 13) returns at once and
+    /* Route guidance.  The slot-19 reply carries the constant idle value
+     * 0 unless the report-guidance-status marker was present at provider
+     * start; then the backend's published state (1 guiding, 0 idle).  requestGuidanceStop (slot 13) returns at once and
      * replyGuidanceStop (callback 17, always result 2) follows from the
      * worker. */
     {
@@ -1423,7 +1422,7 @@ int main(void)
         guidance.guiding = OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE;
         assert(open_navi_service_publish_guidance_state(&guidance) ==
                OPEN_NAVI_BACKEND_SERVICE_OK);
-        /* Default (marker absent): constant 1 while guiding. */
+        /* Default (marker absent): constant idle (0) while guiding. */
         open_navi_test_reload_guidance_status_marker(
             "/nonexistent/open-navicore-report-guidance-status");
         assert((*(const PanaGenericVirtual **)first_interfaces[25])[19](
@@ -1432,7 +1431,7 @@ int main(void)
         assert(voice_reply_handle == 0x25190u);
         assert(voice_reply_result == OPEN_NAVI_VOICE_RESULT_OK);
         assert(voice_reply_status == OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE);
-        /* Marker present: the backend's state, 0 while guiding. */
+        /* Marker present: the backend's state, 1 while guiding. */
         {
             static char marker[64];
             FILE *file;

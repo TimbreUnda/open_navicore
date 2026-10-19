@@ -1409,7 +1409,7 @@ static void open_navi_read_guidance_status_marker(void)
         access(g_report_guidance_status_marker, F_OK) == 0;
     open_navi_log(LOG_NOTICE,
              "replyRouteGuidanceStatus guidance_status=%s (marker %s %s)",
-             g_report_guidance_status != 0 ? "backend-state" : "constant-1",
+             g_report_guidance_status != 0 ? "backend-state" : "constant-idle-0",
              g_report_guidance_status_marker,
              g_report_guidance_status != 0 ? "present" : "absent");
 }
@@ -1516,11 +1516,12 @@ static uint32_t open_navi_25_13(void *self, uintptr_t handle_word)
  * OnRouteGuidanceRepeatTimer (1000 ms, re-armed after every poll from
  * adapterReady on), answered with replyRouteGuidanceStatus (callback 25/23:
  * handle, result 2, guidance_status).  The meaning of guidance_status is not
- * recovered: SAL publishes 0 as event status 1 (projection navigation
- * allowed), but stock answered 1 while idle.  Default: always 1, the stock
- * idle value.  With the bench marker OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER
- * present at provider start, the backend's published state is reported
- * instead: 0 while guiding, 1 otherwise. */
+ * settled live (2026-10-19): 0 = no native guidance (SAL event status 1,
+ * projection navigation allowed), 1 = native guidance (status 2; mm_gal
+ * then gives Android Auto NATIVE focus).  Default: always idle (0).  With
+ * the bench marker OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER present at
+ * provider start, the backend's published state is reported instead:
+ * 1 while guiding, 0 otherwise. */
 static uint32_t open_navi_25_19(void *self, uint32_t handle)
 {
     OpenNaviLifecycleLease inbound;

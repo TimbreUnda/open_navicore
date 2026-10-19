@@ -316,8 +316,8 @@ Additional backend-driven APIs expose only contracts supported by real state:
   and synchronously forwards it through InstrumentCluster slot 3. A rejected
   callback does not advance publication history.
 - A provider Voice slot-19 request is answered through callback slot 23 with
-  that exact incoming handle, result 2 and guidance_status 1 (the stock idle
-  value), or the backend's guidance state with the bench marker
+  that exact incoming handle, result 2 and guidance_status 0 (idle), or the
+  backend's guidance state with the bench marker
   `report-guidance-status` (see "Route guidance and phone-projection
   navigation focus"); no timer or captured handle is replayed.
 - Voice slot 13 (`requestGuidanceStop`) is answered asynchronously through
@@ -916,14 +916,18 @@ Open NaviCore therefore:
   under a lifecycle lease, always with result `2`, also when nothing was
   guiding (stock always answers). A missing callback-17 proxy drops that
   reply but keeps the FIFO running. A full FIFO returns 1 (no reply).
-- Answers slot 19 with `guidance_status` 1 by default, the value stock sent
-  while idle. The meaning of `guidance_status` is not recovered: SAL's logic
-  suggests 0 -> event status 1 -> projection allowed, while the stock idle
-  trace shows 1. Bench marker `/datastore/navicore-backend/report-guidance-status`
-  (read once in `panaInitialize`; logged as
-  `replyRouteGuidanceStatus guidance_status=constant-1|backend-state`):
-  when present, the reply carries the backend's state instead, 0 while
-  guiding and 1 otherwise. The OsmAnd backend publishes `guiding` when it
+- Answers slot 19 with `guidance_status` 0 (idle) by default. Live
+  2026-10-19 with a constant 1 (the earlier default): the provider answered
+  requestGuidanceStop and requestGuidanceInstructionsRepeat correctly, yet
+  mm_gal answered every Android Auto NavFocusRequest with NavFocusNotification
+  NATIVE (`0x000e 08 01`), about 7 s after it had first sent PROJECTED
+  (`08 02`), and Android Auto navigation dropped. So 1 is read as "native
+  guidance active"; the 0 default tests that reading. Bench marker
+  `/datastore/navicore-backend/report-guidance-status` (read once in
+  `panaInitialize`; logged as
+  `replyRouteGuidanceStatus guidance_status=constant-idle-0|backend-state`):
+  when present, the reply carries the backend's state instead, 1 while
+  guiding and 0 otherwise. The OsmAnd backend publishes `guiding` when it
   enters and leaves `ui::Screen::Guidance` (Start, End, arrival auto-end, the
   stop request, engine release); the provider tracks it in both modes.
 - After a stop reaches the backend the provider reports idle at once and
@@ -935,8 +939,9 @@ Encodings recovered from nv_navigation (`replyRouteGuidanceStatus`,
 errors and nothing is published); `guidance_status == 0` is published to SAL
 as RouteGuidanceStatus 1 and any other value as 2. In `sa_vp4_sal_service`
 (`0x082c4db6`) status 1 sets the native-guidance-active flags and 2 (its
-default) clears them; with the marker the provider sends `0` while guiding
-and `1` otherwise; stock replied `1` when idle on the bench. The names
+default) clears them; with the marker the provider sends `1` while guiding
+and `0` otherwise (live evidence above; it contradicts reading status 1 as
+native-active, and the stock bench trace that showed `1` when idle). The names
 "success" for result 2 and "guiding" for status 0 are inferred from this
 control flow; the other result values are not recovered.
 

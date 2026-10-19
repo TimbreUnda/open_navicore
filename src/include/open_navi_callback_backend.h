@@ -12,15 +12,19 @@ enum { OPEN_NAVI_THREAD_NAME_LIMIT = 63 };
  * - result: replyRouteGuidanceStatus (0x080eb820) publishes only when
  *   result == 2, and replyGuidanceStop's GuidanceStopResponse (0x080eb29c)
  *   is a success only when result == 2.  Other values: not recovered.
- * - guidance_status in replyRouteGuidanceStatus: 0 is published as
- *   RouteGuidanceStatus 1 (guidance active in sa_vp4_sal_service), any
- *   other value as 2 (no guidance, SAL's default).  Stock replied 1 when
- *   idle (bench capture). */
+ * - guidance_status in replyRouteGuidanceStatus: see the values below
+ *   (0 = no native guidance; settled live 2026-10-19). */
 enum {
     OPEN_NAVI_VOICE_RESULT_OK = 2u,
     OPEN_NAVI_VOICE_RESULT_FAILED = 1u,
-    OPEN_NAVI_VOICE_GUIDANCE_STATUS_GUIDING = 0u,
-    OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE = 1u
+    /* replyRouteGuidanceStatus guidance_status (callback 25/23).  Live
+     * 2026-10-19: a constant 1 made SAL report native route guidance as
+     * active, and mm_gal answered every Android Auto NavFocusRequest with
+     * NavFocusNotification NATIVE (0x000e 08 01), so projected navigation
+     * dropped.  nv_navigation 0x080eb820 publishes 0 as RouteGuidanceStatus
+     * 1 (no native guidance), anything else as 2 (native guidance). */
+    OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE = 0u,
+    OPEN_NAVI_VOICE_GUIDANCE_STATUS_GUIDING = 1u
 };
 
 typedef enum {
