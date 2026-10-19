@@ -1,15 +1,18 @@
-"""Random start/end pairs on road nodes of a CHG1 graph, for route_bench compare.
+"""Random start/end pairs on car roads, for route_bench compare.
 
-    python3 gen_pairs.py <in.graph> <count> <min km> <max km> [seed] > pairs.txt
+    python3 gen_pairs.py <routing.xml> <count> <min km> <max km> <seed> <map.obf>... > pairs.txt
 
-Prints "lat1 lon1 lat2 lon2" per line.
+Each end is an interior shape point of a car-accessible road (never a point shared with
+another road), so it has one obvious nearest road, like a GPS position or a chosen
+address, and the reference router and CH start on the same road.  Prints
+"lat1 lon1 lat2 lon2" per line.
 """
 import math
 import random
-import struct
 import sys
 
-import numpy as np
+import obf_routing
+import routing_rules
 
 
 def to_lat_lon(x, y):
@@ -26,22 +29,35 @@ def km(a, b):
     return 2 * r * math.asin(math.sqrt(h))
 
 
-def main(path, count, low, high, seed):
-    with open(path, 'rb') as f:
-        magic, n, m = struct.unpack('<4sII', f.read(12))
-        assert magic == b'CHG1'
-        x = np.frombuffer(f.read(4 * n), dtype='<i4')
-        y = np.frombuffer(f.read(4 * n), dtype='<i4')
+def main(rules_path, count, low, high, seed, obf_paths):
+    profile = routing_rules.Profile(rules_path)
+    shared = {}                       # point -> number of roads through it
+    candidates = []                   # (x, y) interior points of car roads
+    for path in obf_paths:
+        index = obf_routing.RoutingIndex(path)
+        cache = {}
+        for road in index.roads.values():
+            ok = cache.get(road.types)
+            if ok is None:
+                tags = {index.rules[t][0]: index.rules[t][1] for t in road.types if t in index.rules}
+                ok = cache[road.types] = profile.road(tags)[0]
+            if not ok:
+                continue
+            for x, y in zip(road.xs, road.ys):
+                shared[(x, y)] = shared.get((x, y), 0) + 1
+            if len(road.xs) >= 4:
+                for k in range(1, len(road.xs) - 1):
+                    candidates.append((road.xs[k], road.ys[k]))
+    candidates = [p for p in candidates if shared[p] == 1]
     rng = random.Random(seed)
     out = 0
     while out < count:
-        i, j = rng.randrange(n), rng.randrange(n)
-        a, b = to_lat_lon(int(x[i]), int(y[i])), to_lat_lon(int(x[j]), int(y[j]))
-        if low <= km(a, b) <= high:
-            print('%.6f %.6f %.6f %.6f' % (a[0], a[1], b[0], b[1]))
+        a, b = rng.choice(candidates), rng.choice(candidates)
+        la, lb = to_lat_lon(*a), to_lat_lon(*b)
+        if low <= km(la, lb) <= high:
+            print('%.6f %.6f %.6f %.6f' % (la[0], la[1], lb[0], lb[1]))
             out += 1
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]),
-         int(sys.argv[5]) if len(sys.argv) > 5 else 1)
+    main(sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5]), sys.argv[6:])

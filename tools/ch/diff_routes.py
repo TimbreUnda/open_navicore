@@ -16,11 +16,11 @@ import routing_rules
 def parse(dump_path):
     routes = {}
     for line in open(dump_path):
-        fields = line.split()
-        if len(fields) < 2:
+        fields = line.replace('welcome to uconnect ;)', '').split()   # the unit's ssh banner
+        if len(fields) < 2 or fields[0] not in ('H', 'C') or not fields[1].isdigit():
             continue
         which, pair = fields[0], int(fields[1])
-        roads = [(int(f.split(':')[0]), float(f.split(':')[1])) for f in fields[2:]]
+        roads = [(int(f.split(':')[0]), float(f.split(':')[1])) for f in fields[2:] if ':' in f]
         routes.setdefault(pair, {})[which] = roads
     return routes
 
@@ -54,10 +54,34 @@ def summarize(index, profile, roads):
     return runs, cost, transitions
 
 
+def score_all(profile, index, routes):
+    """The profile's cost of both routes of every pair; how much costlier the
+    reference (H) route is than the CH (C) one under this model."""
+    ratios = []
+    for pair in sorted(routes):
+        both = routes[pair]
+        if 'H' not in both or 'C' not in both:
+            continue
+        _, road_h, trans_h = summarize(index, profile, both['H'])
+        _, road_c, trans_c = summarize(index, profile, both['C'])
+        if road_c + trans_c > 0:
+            ratios.append((pair, (road_h + trans_h) / (road_c + trans_c)))
+    values = sorted(r for _, r in ratios)
+    n = len(values)
+    print('reference cost / CH cost under the model, %d pairs: min %.3f  p25 %.3f  median %.3f  '
+          'p75 %.3f  p90 %.3f  max %.3f' % (n, values[0], values[n // 4], values[n // 2],
+                                          values[3 * n // 4], values[int(n * 0.9)], values[-1]))
+    worst = sorted(ratios, key=lambda x: -x[1])[:8]
+    print('largest gaps (pair: ratio): ' + ', '.join('%d: %.3f' % w for w in worst))
+
+
 def main(rules_path, dump_path, obf_path, pairs):
     profile = routing_rules.Profile(rules_path)
     index = obf_routing.RoutingIndex(obf_path)
     routes = parse(dump_path)
+    if not pairs:
+        score_all(profile, index, routes)
+        return
     for pair in pairs:
         both = routes.get(pair)
         if not both or 'H' not in both or 'C' not in both:

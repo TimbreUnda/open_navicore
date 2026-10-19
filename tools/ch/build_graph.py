@@ -92,20 +92,12 @@ def align_angle(diff):
     return np.pi - np.mod(np.pi - diff, 2.0 * np.pi)
 
 
-def expand_junctions(e_from, e_to, e_road, e_roadid, dir_in, dir_out, road_penalty, road_roundabout,
-                     profile, restrictions, node_count):
-    """Split every node where two or more roads meet.  Returns the new edge
-    endpoints, the transition edges (from, to, cost_ms), the original node of
-    every new node, and statistics."""
-    m = len(e_from)
-    # nodes where two or more distinct roads meet
-    road_count = int(e_road.max()) + 1
-    incident = np.unique(np.concatenate((e_to, e_from)).astype(np.int64) * road_count +
-                         np.concatenate((e_road, e_road)))
-    roads_per_node = np.bincount(incident // road_count, minlength=node_count)
-    is_split = roads_per_node >= 2
-    arriving = np.flatnonzero(is_split[e_to])
-    leaving = np.flatnonzero(is_split[e_from])
+def pair_table(select, e_from, e_to, node_count):
+    """All (arriving edge, leaving edge) pairs at the nodes where `select` is true.
+    Returns arriving, leaving (edge ids sorted by node), a, l (the pairs) and the
+    node of each pair."""
+    arriving = np.flatnonzero(select[e_to])
+    leaving = np.flatnonzero(select[e_from])
     arriving = arriving[np.argsort(e_to[arriving], kind='stable')]
     leaving = leaving[np.argsort(e_from[leaving], kind='stable')]
     a_count = np.bincount(e_to[arriving], minlength=node_count).astype(np.int64)
@@ -120,8 +112,12 @@ def expand_junctions(e_from, e_to, e_road, e_roadid, dir_in, dir_out, road_penal
     local = np.arange(total, dtype=np.int64) - np.repeat(offsets, pair_count[nodes])
     a = arriving[a_first[node_of] + local // l_count[node_of]]
     l = leaving[l_first[node_of] + local % l_count[node_of]]
+    return arriving, leaving, a, l, node_of
 
-    # turn cost of each pair, in seconds (GeneralRouter::calculateTurnTime)
+
+def turn_seconds(a, l, e_road, dir_in, dir_out, road_penalty, road_roundabout, profile):
+    """Turn cost of each (arriving, leaving) pair in seconds
+    (GeneralRouter::calculateTurnTime); staying on the same road is free."""
     ra, rl = e_road[a], e_road[l]
     different = ra != rl
     seconds = np.where(different, np.abs(road_penalty[rl] - road_penalty[ra]) / 2.0, 0.0)
@@ -133,34 +129,91 @@ def expand_junctions(e_from, e_to, e_road, e_roadid, dir_in, dir_out, road_penal
     if profile.sharp_turn <= 0 and profile.slight_turn <= 0:
         turn = np.zeros(len(a))
     entry = profile.roundabout_turn / 2.0
-    seconds += np.where(different, np.where(toggle, entry if entry > 0 else 0.0, turn), 0.0)
+    return seconds + np.where(different, np.where(toggle, entry if entry > 0 else 0.0, turn), 0.0)
 
-    # turn restrictions: remove the forbidden pairs
+
+def forbidden_pairs(junction, e_from, e_to, e_roadid, restrictions):
+    """(arriving edge * m + leaving edge) keys of the transitions the OBF
+    restrictions forbid, at the nodes where `junction` is true."""
+    m = len(e_from)
     forbidden = set()
-    restricted = np.isin(e_roadid, np.array(list(restrictions), dtype=np.int64)) if restrictions else np.zeros(m, bool)
-    cand = np.unique(e_to[restricted & is_split[e_to]])
-    if len(cand):
-        by_head, by_tail = defaultdict(list), defaultdict(list)
-        for e in np.flatnonzero(np.isin(e_to, cand)):
-            by_head[int(e_to[e])].append(int(e))
-        for e in np.flatnonzero(np.isin(e_from, cand)):
-            by_tail[int(e_from[e])].append(int(e))
-        for node in cand.tolist():
-            arrive, leave = by_head.get(node, []), by_tail.get(node, [])
-            roads_here = set(int(e_roadid[e]) for e in arrive) | set(int(e_roadid[e]) for e in leave)
-            for e_a in arrive:
-                before = int(e_roadid[e_a])
-                direct = [(to, kind) for to, via, kind in restrictions.get(before, []) if not via]
-                if not direct:
-                    continue
-                others = roads_here - {before}
-                for e_l in leave:
-                    after = int(e_roadid[e_l])
-                    if after != before and not allowed_exit(before, after, others, direct):
-                        forbidden.add(e_a * m + e_l)
+    if not restrictions:
+        return forbidden
+    restricted = np.isin(e_roadid, np.array(list(restrictions), dtype=np.int64))
+    cand = np.unique(e_to[restricted & junction[e_to]])
+    if len(cand) == 0:
+        return forbidden
+    by_head, by_tail = defaultdict(list), defaultdict(list)
+    for e in np.flatnonzero(np.isin(e_to, cand)):
+        by_head[int(e_to[e])].append(int(e))
+    for e in np.flatnonzero(np.isin(e_from, cand)):
+        by_tail[int(e_from[e])].append(int(e))
+    for node in cand.tolist():
+        arrive, leave = by_head.get(node, []), by_tail.get(node, [])
+        roads_here = set(int(e_roadid[e]) for e in arrive) | set(int(e_roadid[e]) for e in leave)
+        for e_a in arrive:
+            before = int(e_roadid[e_a])
+            direct = [(to, kind) for to, via, kind in restrictions.get(before, []) if not via]
+            if not direct:
+                continue
+            others = roads_here - {before}
+            for e_l in leave:
+                after = int(e_roadid[e_l])
+                if after != before and not allowed_exit(before, after, others, direct):
+                    forbidden.add(e_a * m + e_l)
+    return forbidden
+
+
+def expand_junctions(e_from, e_to, e_road, e_roadid, e_segment, dir_in, dir_out, road_penalty, road_roundabout,
+                     profile, restrictions, node_count, fold_two_road=True):
+    """Model the junctions.  Where three or more roads meet, or a restriction applies,
+    the node is split into one node per arriving edge and one per leaving edge with
+    transition edges for the allowed pairs.  Where exactly two roads meet and nothing
+    is forbidden, the cost of the turn is the same both ways, so half of it is added
+    to each edge meeting there and the node stays whole (exact except for U-turns).
+    Returns the new edge endpoints, the transition edges (from, to, cost_ms), the
+    extra cost of every edge in ms, the original node of every new node and stats."""
+    m = len(e_from)
+    road_count = int(e_road.max()) + 1
+    incident = np.unique(np.concatenate((e_to, e_from)).astype(np.int64) * road_count +
+                         np.concatenate((e_road, e_road)))
+    roads_per_node = np.bincount(incident // road_count, minlength=node_count)
+    junction = roads_per_node >= 2
+    # undirected road segments touching each node: a road that passes through the node
+    # has two, a road that ends there one
+    segment_count = int(e_segment.max()) + 1
+    touching = np.unique(np.concatenate((e_to, e_from)).astype(np.int64) * segment_count +
+                         np.concatenate((e_segment, e_segment)))
+    segments_per_node = np.bincount(touching // segment_count, minlength=node_count)
+
+    forbidden = forbidden_pairs(junction, e_from, e_to, e_roadid, restrictions)
+    forbidden_node = np.zeros(node_count, dtype=bool)
+    if forbidden:
+        keys = np.fromiter(forbidden, dtype=np.int64, count=len(forbidden))
+        forbidden_node[e_to[keys // m]] = True
+    # fold only where both roads end (exactly two segments meet): when one road passes
+    # through, its through traffic would wrongly pay the turn cost of the side road
+    fold = (junction & (roads_per_node == 2) & (segments_per_node == 2) & ~forbidden_node
+            if fold_two_road else np.zeros(node_count, bool))
+    split = junction & ~fold
+
+    # two-road junctions: half the turn cost onto each edge that meets there
+    extra_ms = np.zeros(m, dtype=np.int64)
+    if fold.any():
+        _, _, fa, fl, fnode = pair_table(fold, e_from, e_to, node_count)
+        fsec = turn_seconds(fa, fl, e_road, dir_in, dir_out, road_penalty, road_roundabout, profile)
+        diff = e_road[fa] != e_road[fl]
+        total_cost = np.bincount(fnode[diff], weights=fsec[diff], minlength=node_count)
+        cases = np.bincount(fnode[diff], minlength=node_count)
+        half_ms = np.rint(np.where(cases > 0, total_cost / np.maximum(cases, 1), 0.0) * 500.0).astype(np.int64)
+        extra_ms += np.where(fold[e_to], half_ms[e_to], 0) + np.where(fold[e_from], half_ms[e_from], 0)
+
+    # the other junctions: split, with one transition edge per allowed pair
+    arriving, leaving, a, l, node_of = pair_table(split, e_from, e_to, node_count)
+    seconds = turn_seconds(a, l, e_road, dir_in, dir_out, road_penalty, road_roundabout, profile)
     keep = np.ones(len(a), dtype=bool)
     if forbidden:
-        keep = ~np.isin(a.astype(np.int64) * m + l, np.fromiter(forbidden, dtype=np.int64, count=len(forbidden)))
+        keep = ~np.isin(a.astype(np.int64) * m + l, keys)
     a, l, seconds = a[keep], l[keep], seconds[keep]
 
     in_id = np.full(m, -1, dtype=np.int64)
@@ -171,9 +224,10 @@ def expand_junctions(e_from, e_to, e_road, e_roadid, dir_in, dir_out, road_penal
     new_to = np.where(in_id >= 0, in_id, e_to)
     origin = np.concatenate((e_to[arriving], e_from[leaving]))
     transitions = (in_id[a], out_id[l], np.rint(seconds * 1000.0).astype(np.uint32))
-    stats = {'split': int(is_split.sum()), 'pairs': total, 'forbidden': total - int(keep.sum()),
+    stats = {'junctions': int(junction.sum()), 'split': int(split.sum()), 'folded': int(fold.sum()),
+             'pairs': int(len(keep)), 'forbidden': int(len(keep) - keep.sum()),
              'turn_cost_pairs': int((seconds > 0).sum())}
-    return new_from, new_to, transitions, origin, stats
+    return new_from, new_to, transitions, extra_ms.astype(np.uint32), origin, stats
 
 
 def main(rules_path, out_path, obf_paths):
@@ -276,14 +330,17 @@ def main(rules_path, out_path, obf_paths):
     dir_in = directions(travel_end, ~positive, lo, hi, xs, ys, metres_per_unit)
     print('edges %d, directions computed (%.0fs)' % (len(e_from), time.time() - started), flush=True)
 
-    e_from, e_to, (t_from, t_to, t_cost), origin, stats = expand_junctions(
-        e_from, e_to, e_road, e_roadid, dir_in, dir_out, road_penalty, road_roundabout,
+    segment_key = e_first.astype(np.int64) * total + e_last   # one id per undirected segment
+    e_segment = np.unique(segment_key, return_inverse=True)[1].astype(np.int64)
+    e_from, e_to, (t_from, t_to, t_cost), extra_ms, origin, stats = expand_junctions(
+        e_from, e_to, e_road, e_roadid, e_segment, dir_in, dir_out, road_penalty, road_roundabout,
         profile, restrictions, node_count)
     node_origin = np.concatenate((np.arange(node_count, dtype=np.int64), origin))
+    cost_ms = cost_ms + extra_ms
     transitions = len(t_from)
-    print('junctions expanded: %d nodes, %d transition pairs (%d forbidden by restrictions, %d with a turn cost), '
-          '+%d nodes (%.0fs)' % (stats['split'], stats['pairs'], stats['forbidden'], stats['turn_cost_pairs'],
-                                 len(origin), time.time() - started), flush=True)
+    print('junctions: %d, of which %d split (%d transition pairs, %d forbidden by restrictions, %d with a turn cost, +%d nodes) and %d two-road junctions folded into edge costs (%.0fs)' % (
+        stats['junctions'], stats['split'], stats['pairs'], stats['forbidden'], stats['turn_cost_pairs'],
+        len(origin), stats['folded'], time.time() - started), flush=True)
     if transitions:
         zeros_u32 = np.zeros(transitions, dtype=np.uint32)
         e_from = np.concatenate((e_from, t_from))
