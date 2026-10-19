@@ -52,6 +52,40 @@ Only the Kyiv map open: 15 km route 300-325 ms against HH 2,973 ms.
 * One-time cost: loading the whole-country hierarchy, coordinates and edge table
   (417 MB) from flash took 17 s; a product build must memory-map it instead.
 
+## The product integration (M3, M4)
+
+`ch_tool build` contracts the graph, `ch_tool pack <graph> <hierarchy> <out.chr> <map.obf>...`
+writes the sidecar the radio reads: the hierarchy, the edge-to-road table, a snap grid with the
+node coordinates, and the names and sizes of the maps it was built from. The worker
+(`navigation_worker.cpp`, through `ch_planner.cpp`) uses `<map dir>/car.chr` when the open
+maps are exactly those, tries CH first and falls back to HH, then A*; the straight-leg check
+applies to CH routes too. `/datastore/navicore-backend/disable-ch` (or
+`OPEN_NAVICORE_OSMAND_CH_DISABLE=1`) turns it off.
+
+* The file is read through a 4 KB page cache (64 MB) over `pread`, not mapped: a 32-bit QNX
+  process on the radio cannot map more than about 512 MB (`mmap` of the 1.39 GB sidecar fails
+  with "Not enough memory", measured with a probe), and a route touches only a few thousand pages.
+* Nodes are numbered along a Hilbert curve over the snap grid, so a route's arcs are close in
+  the file: the 615 km Kyiv-Kherson route reads 2,048 pages (8 MB) cold; numbering by build order
+  needed about 4,800 (79 MB).
+* A route is refused (and the caller falls back) when a point is more than 1 km from every node,
+  when start and end snap to one node, when a road is missing from the loaded maps, or when the
+  sidecar was not built from exactly the loaded maps.
+* Host test: `tests/ch_test.cpp` (hierarchy against Dijkstra, sidecar round trip, snap lookup,
+  road-stretch merging, a three-page cache that evicts on every read, damaged files refused).
+
+Whole Ukraine on the radio (26 maps open in `/navi_map/osm`, sidecar `car.chr` 1.39 GB read
+from flash, beside the running navigation; ChPlanner through route_bench):
+
+| Route | HH | CH, first route | CH, warm | where the warm CH time goes |
+|---|---|---|---|---|
+| Kyiv -> Kherson, 615.0 km (HH 615,033 m, CH 615,004 m) | 13,836 ms | 3,683 ms | 2,645 ms | search 13, roads 2,089 (995 tiles), prepare 543 |
+| Maidan -> Troieshchyna, 12-15 km | 5,170-5,454 ms | 859 ms | 550 ms | search 6, roads 488, prepare 56 |
+
+Opening the sidecar takes 35 ms (HH needs 10 s to open the 26 maps, which CH also needs once).
+What is left of the CH time is loading the route's roads from the maps and the core's result
+preparation; the search is a few milliseconds even through the page cache.
+
 ## M2: fidelity against OsmAnd's own routers (radio, Kyiv city map, 2026-10-19)
 
 The graph models what the core's A* models: access, oneway, speed and priority of the `car`
