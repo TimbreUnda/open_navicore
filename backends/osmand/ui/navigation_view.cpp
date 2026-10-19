@@ -2310,6 +2310,13 @@ bool NavigationView::start_guidance(std::size_t route)
     rebuild();
     return true;
 }
+bool NavigationView::end_guidance()
+{
+    if (!model_.end_guidance())
+        return false;
+    rebuild();
+    return true;
+}
 void NavigationView::start_cb(lv_event_t* event)
 {
     auto* self = static_cast<NavigationView*>(lv_event_get_user_data(event));

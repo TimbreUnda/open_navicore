@@ -8,6 +8,21 @@
 
 enum { OPEN_NAVI_THREAD_NAME_LIMIT = 63 };
 
+/* SI_VoiceRecognition reply words (nv_navigation QR39.5, USA):
+ * - result: replyRouteGuidanceStatus (0x080eb820) publishes only when
+ *   result == 2, and replyGuidanceStop's GuidanceStopResponse (0x080eb29c)
+ *   is a success only when result == 2.  Other values: not recovered.
+ * - guidance_status in replyRouteGuidanceStatus: 0 is published as
+ *   RouteGuidanceStatus 1 (guidance active in sa_vp4_sal_service), any
+ *   other value as 2 (no guidance, SAL's default).  Stock replied 1 when
+ *   idle (bench capture). */
+enum {
+    OPEN_NAVI_VOICE_RESULT_OK = 2u,
+    OPEN_NAVI_VOICE_RESULT_FAILED = 1u,
+    OPEN_NAVI_VOICE_GUIDANCE_STATUS_GUIDING = 0u,
+    OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE = 1u
+};
+
 typedef enum {
     OPEN_NAVI_CALLBACK_OPTIONAL = 0,
     OPEN_NAVI_CALLBACK_CRITICAL = 1
@@ -27,6 +42,14 @@ void open_navi_callback_audio_complete(uint32_t state, uint32_t attempt,
                                   int delivered);
 void open_navi_callback_set_voice_state(uint32_t result, uint32_t guidance_status);
 void open_navi_callback_get_voice_state(uint32_t *result, uint32_t *guidance_status);
+/* Backend guidance publication (1 guiding, 0 idle).  Returns 0 when a
+ * "guiding" publication is ignored by the stop latch. */
+int open_navi_callback_publish_guidance(int active);
+/* A stop request was delivered to the backend: report idle from now on and
+ * latch out stale "guiding" publications (5 s, or until the backend reports
+ * idle).  Returns whether guidance was active. */
+int open_navi_callback_guidance_stop_requested(void);
+int open_navi_callback_guidance_active(void);
 void open_navi_callback_store_cluster(const void *record);
 void open_navi_callback_store_thread(uint32_t id, const char *name, uint32_t status);
 void open_navi_callback_backend_reset(void);
@@ -56,6 +79,8 @@ typedef struct {
     uint32_t thread_id;
     uint32_t thread_status;
     char thread_name[OPEN_NAVI_THREAD_NAME_LIMIT + 1];
+    uint32_t guidance_publications;
+    uint32_t guidance_latched_ignored;
 } OpenNaviCallbackTestState;
 #if defined(OPEN_NAVI_TESTING)
 void open_navi_callback_test_state(OpenNaviCallbackTestState *out);

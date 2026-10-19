@@ -29,11 +29,15 @@ typedef struct {
     OpenNaviBackendV3 plugin_v3;
     OpenNaviBackendV4 plugin_v4;
     OpenNaviBackendV5 plugin_v5;
+    OpenNaviBackendV6 plugin_v6;
     OpenNaviBackendV2 wrapper;
     OpenNaviBackendV3 wrapper_v3;
     OpenNaviBackendV4 wrapper_v4;
     OpenNaviBackendV5 wrapper_v5;
+    OpenNaviBackendV6 wrapper_v6;
     OpenNaviBackendServicesV2 upstream_services;
+    uint32_t (*upstream_publish_guidance_state)(
+        void *runtime_context, const OpenNaviBackendGuidanceStateV1 *guidance);
     uintptr_t next_plugin_service_token;
     uintptr_t active_plugin_service_token;
     uint32_t query_abi;
@@ -58,6 +62,8 @@ static const uint8_t g_v3_expected_build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
     OPEN_NAVI_PLUGIN_V3_EXPECTED_BUILD_ID_INITIALIZER;
 static const uint8_t g_v4_expected_build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
     OPEN_NAVI_PLUGIN_V4_EXPECTED_BUILD_ID_INITIALIZER;
+static const uint8_t g_v5_expected_build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
+    OPEN_NAVI_PLUGIN_V5_EXPECTED_BUILD_ID_INITIALIZER;
 
 static void set_diagnostic(char *output, size_t capacity,
                            const char *format, ...)
@@ -434,6 +440,72 @@ int open_navi_backend_plugin_validate_v4(const OpenNaviBackendPluginV4 *plugin,
 #undef REQUIRE_V4
 }
 
+/* Query V5: the complete query-V4 handshake of the prefix (with the V5
+ * query version, size, backend ABI V6 and build id), then the V6 tail. */
+int open_navi_backend_plugin_validate_v5(const OpenNaviBackendPluginV5 *plugin,
+                                    char *diagnostic,
+                                    size_t diagnostic_capacity)
+{
+#define REQUIRE_V5(field, expected)                                           \
+    do {                                                                      \
+        if ((field) != (uint32_t)(expected)) {                                \
+            set_diagnostic(diagnostic, diagnostic_capacity,                   \
+                           "plugin v5 %s mismatch got=%u expected=%u",       \
+                           #field, (unsigned int)(field),                      \
+                           (unsigned int)(expected));                          \
+            return -1;                                                        \
+        }                                                                     \
+    } while (0)
+    OpenNaviBackendPluginV4 prefix;
+    const OpenNaviBackendV6 *backend;
+    if (plugin == NULL) return -1;
+    REQUIRE_V5(plugin->v4.v3.v2.v1.query_abi_version,
+               OPEN_NAVI_PLUGIN_QUERY_ABI_V5);
+    REQUIRE_V5(plugin->v4.v3.v2.v1.struct_size, sizeof(*plugin));
+    REQUIRE_V5(plugin->v4.v3.v2.v1.backend_abi_version,
+               OPEN_NAVI_BACKEND_ABI_V6);
+    if (memcmp(plugin->v4.v3.v2.v1.build_id, g_v5_expected_build_id,
+               sizeof(g_v5_expected_build_id)) != 0) {
+        set_diagnostic(diagnostic, diagnostic_capacity,
+                       "plugin v5 build id mismatch");
+        return -1;
+    }
+    /* Every query-V4 size and capability rule applies to the prefix. */
+    prefix = plugin->v4;
+    prefix.v3.v2.v1.query_abi_version = OPEN_NAVI_PLUGIN_QUERY_ABI_V4;
+    prefix.v3.v2.v1.struct_size = sizeof(prefix);
+    prefix.v3.v2.v1.backend_abi_version = OPEN_NAVI_BACKEND_ABI_V5;
+    memcpy(prefix.v3.v2.v1.build_id, g_v4_expected_build_id,
+           sizeof(g_v4_expected_build_id));
+    prefix.backend_v5 = plugin->backend_v6.v5;
+    prefix.backend_v5.v4.v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V5;
+    prefix.backend_v5.v4.v3.v2.v1.struct_size = sizeof(OpenNaviBackendV5);
+    if (open_navi_backend_plugin_validate_v4(&prefix, diagnostic,
+                                             diagnostic_capacity) != 0)
+        return -1;
+    REQUIRE_V5(plugin->services_v3_size, sizeof(OpenNaviBackendServicesV3));
+    REQUIRE_V5(plugin->guidance_state_v1_size,
+               sizeof(OpenNaviBackendGuidanceStateV1));
+    REQUIRE_V5(plugin->guidance_stop_v1_size,
+               sizeof(OpenNaviBackendGuidanceStopV1));
+    REQUIRE_V5(plugin->backend_v6_size, sizeof(OpenNaviBackendV6));
+    REQUIRE_V5(plugin->capabilities_v5,
+               OPEN_NAVI_PLUGIN_V5_REQUIRED_CAPABILITIES);
+    backend = &plugin->backend_v6;
+    if (backend->v5.v4.v3.v2.v1.abi_version != OPEN_NAVI_BACKEND_ABI_V6 ||
+        backend->v5.v4.v3.v2.v1.struct_size != sizeof(OpenNaviBackendV6) ||
+        backend->start_v3 == NULL ||
+        backend->guidance_stop_requested == NULL) {
+        set_diagnostic(diagnostic, diagnostic_capacity,
+                       "plugin v5 descriptor missing required callback");
+        return -1;
+    }
+    set_diagnostic(diagnostic, diagnostic_capacity,
+                   "plugin v5 handshake valid");
+    return 0;
+#undef REQUIRE_V5
+}
+
 static int call_default_start(const OpenNaviBackendServicesV1 *services)
 {
     const OpenNaviBackendV1 *backend = open_navi_default_backend_v1();
@@ -555,17 +627,32 @@ static int wrapper_start(void *context,
     return call_default_start(services);
 }
 
-static int wrapper_start_v2(void *context,
-                            const OpenNaviBackendServicesV2 *services)
+static uint32_t wrapper_publish_guidance_state(
+    void *runtime_context, const OpenNaviBackendGuidanceStateV1 *guidance)
 {
-    OpenNaviBackendServicesV2 scoped;
+    OpenNaviBackendServicesV2 upstream;
+    uint32_t (*publish)(void *, const OpenNaviBackendGuidanceStateV1 *);
+    if (!acquire_upstream_services(runtime_context, &upstream))
+        return OPEN_NAVI_BACKEND_SERVICE_STALE;
+    (void)pthread_mutex_lock(&g_loader.lock);
+    publish = g_loader.upstream_publish_guidance_state;
+    (void)pthread_mutex_unlock(&g_loader.lock);
+    return publish != NULL
+        ? publish(upstream.v1.runtime_context, guidance)
+        : OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
+}
+
+/* Starts the plugin with scoped outbound services: through start_v2 (V3-V5
+ * backends) or, when services_v3 is given, through start_v3 (V6). */
+static int start_plugin_scoped(const OpenNaviBackendServicesV2 *services,
+                               const OpenNaviBackendServicesV3 *services_v3)
+{
+    OpenNaviBackendServicesV3 scoped;
     OpenNaviBackendServicesV1 fallback_services;
     uintptr_t token;
     int result;
-    (void)context;
 
     if (services == NULL ||
-        services->v1.abi_version != OPEN_NAVI_BACKEND_ABI_V2 ||
         services->v1.struct_size < sizeof(*services) ||
         services->publish_cluster == NULL ||
         services->publish_audio_availability == NULL ||
@@ -579,25 +666,35 @@ static int wrapper_start_v2(void *context,
     g_loader.default_started = 0;
     g_loader.default_surfaced = 0;
     g_loader.upstream_services = *services;
+    g_loader.upstream_publish_guidance_state =
+        services_v3 != NULL ? services_v3->publish_guidance_state : NULL;
     token = next_plugin_service_token_locked();
     g_loader.active_plugin_service_token = token;
     (void)pthread_mutex_unlock(&g_loader.lock);
     if (token == (uintptr_t)0u) return -1;
 
     memset(&scoped, 0, sizeof(scoped));
-    scoped.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
-    scoped.v1.struct_size = sizeof(scoped);
-    scoped.v1.runtime_context = (void *)token;
-    scoped.v1.request_frame = wrapper_request_frame;
-    scoped.publish_cluster = wrapper_publish_cluster;
-    scoped.publish_audio_availability =
+    scoped.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
+    scoped.v2.v1.struct_size = sizeof(scoped.v2);
+    scoped.v2.v1.runtime_context = (void *)token;
+    scoped.v2.v1.request_frame = wrapper_request_frame;
+    scoped.v2.publish_cluster = wrapper_publish_cluster;
+    scoped.v2.publish_audio_availability =
         wrapper_publish_audio_availability;
-    scoped.publish_thread_status = wrapper_publish_thread_status;
+    scoped.v2.publish_thread_status = wrapper_publish_thread_status;
 
     increment_counter(&g_loader.test.wrapper_starts);
     increment_counter(&g_loader.test.plugin_starts);
-    result = g_loader.plugin_v3.start_v2(
-        g_loader.plugin_v3.v2.v1.backend_context, &scoped);
+    if (services_v3 != NULL) {
+        scoped.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V3;
+        scoped.v2.v1.struct_size = sizeof(scoped);
+        scoped.publish_guidance_state = wrapper_publish_guidance_state;
+        result = g_loader.plugin_v6.start_v3(
+            g_loader.plugin_v6.v5.v4.v3.v2.v1.backend_context, &scoped);
+    } else {
+        result = g_loader.plugin_v3.start_v2(
+            g_loader.plugin_v3.v2.v1.backend_context, &scoped.v2);
+    }
     (void)pthread_mutex_lock(&g_loader.lock);
     if (result == 0) {
         g_loader.plugin_started = 1;
@@ -612,6 +709,28 @@ static int wrapper_start_v2(void *context,
     fallback_services.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
     fallback_services.struct_size = sizeof(fallback_services);
     return call_default_start(&fallback_services);
+}
+
+static int wrapper_start_v2(void *context,
+                            const OpenNaviBackendServicesV2 *services)
+{
+    (void)context;
+    if (services == NULL ||
+        services->v1.abi_version != OPEN_NAVI_BACKEND_ABI_V2)
+        return -1;
+    return start_plugin_scoped(services, NULL);
+}
+
+static int wrapper_start_v3(void *context,
+                            const OpenNaviBackendServicesV3 *services)
+{
+    (void)context;
+    if (services == NULL ||
+        services->v2.v1.abi_version != OPEN_NAVI_BACKEND_ABI_V3 ||
+        services->v2.v1.struct_size < sizeof(*services) ||
+        services->publish_guidance_state == NULL)
+        return -1;
+    return start_plugin_scoped(&services->v2, services);
 }
 
 static void wrapper_stop(void *context)
@@ -755,6 +874,15 @@ static int wrapper_driver_distraction_changed(
               g_loader.plugin_v5.v4.v3.v2.v1.backend_context, event) : 0;
 }
 
+static int wrapper_guidance_stop_requested(
+    void *context, const OpenNaviBackendGuidanceStopV1 *event)
+{
+    (void)context;
+    return g_loader.selection == WRAPPER_PLUGIN
+        ? g_loader.plugin_v6.guidance_stop_requested(
+              g_loader.plugin_v6.v5.v4.v3.v2.v1.backend_context, event) : 0;
+}
+
 static int wrapper_render_frame(void *context,
                                 const OpenNaviBackendRenderTargetV1 *target,
                                 const OpenNaviBackendFrameV1 *frame)
@@ -849,12 +977,26 @@ static void initialize_wrapper_v5(void)
         wrapper_driver_distraction_changed;
 }
 
+static void initialize_wrapper_v6(void)
+{
+    initialize_wrapper_v5();
+    memset(&g_loader.wrapper_v6, 0, sizeof(g_loader.wrapper_v6));
+    g_loader.wrapper_v6.v5 = g_loader.wrapper_v5;
+    g_loader.wrapper_v6.v5.v4.v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V6;
+    g_loader.wrapper_v6.v5.v4.v3.v2.v1.struct_size =
+        sizeof(g_loader.wrapper_v6);
+    g_loader.wrapper_v6.start_v3 = wrapper_start_v3;
+    g_loader.wrapper_v6.guidance_stop_requested =
+        wrapper_guidance_stop_requested;
+}
+
 static void bootstrap_once(void)
 {
     OpenNaviBackendPluginV1 query_result;
     OpenNaviBackendPluginV2 query_result_v2;
     OpenNaviBackendPluginV3 query_result_v3;
     OpenNaviBackendPluginV4 query_result_v4;
+    OpenNaviBackendPluginV5 query_result_v5;
     OpenNaviBackendPluginQueryV1 query;
     union {
         void *object;
@@ -881,93 +1023,118 @@ static void bootstrap_once(void)
         return;
     }
     query = conversion.function;
-    memset(&query_result_v4, 0, sizeof(query_result_v4));
+    memset(&query_result_v5, 0, sizeof(query_result_v5));
     increment_counter(&g_loader.test.query_calls);
-    status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V4,
-                   sizeof(query_result_v4),
-                   (OpenNaviBackendPluginV1 *)&query_result_v4);
+    status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V5,
+                   sizeof(query_result_v5),
+                   (OpenNaviBackendPluginV1 *)&query_result_v5);
     if (status == 0) {
         diagnostic[0] = '\0';
-        if (open_navi_backend_plugin_validate_v4(&query_result_v4, diagnostic,
+        if (open_navi_backend_plugin_validate_v5(&query_result_v5, diagnostic,
                                             sizeof(diagnostic)) != 0) {
             set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
             return;
         }
-        g_loader.plugin_v5 = query_result_v4.backend_v5;
-        g_loader.plugin_v4 = query_result_v4.backend_v5.v4;
-        g_loader.plugin_v3 = query_result_v4.backend_v5.v4.v3;
-        g_loader.plugin = query_result_v4.backend_v5.v4.v3.v2;
-        g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V4;
-        g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V4;
-        initialize_wrapper_v5();
-        apply_optional_capabilities(query_result_v4.v3.v2.v1.capabilities);
-        status = open_navi_backend_install_v5(&g_loader.wrapper_v5);
+        g_loader.plugin_v6 = query_result_v5.backend_v6;
+        g_loader.plugin_v5 = query_result_v5.backend_v6.v5;
+        g_loader.plugin_v4 = query_result_v5.backend_v6.v5.v4;
+        g_loader.plugin_v3 = query_result_v5.backend_v6.v5.v4.v3;
+        g_loader.plugin = query_result_v5.backend_v6.v5.v4.v3.v2;
+        g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V5;
+        g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V5;
+        initialize_wrapper_v6();
+        apply_optional_capabilities(
+            query_result_v5.v4.v3.v2.v1.capabilities);
+        status = open_navi_backend_install_v6(&g_loader.wrapper_v6);
     } else {
-        memset(&query_result_v3, 0, sizeof(query_result_v3));
+        memset(&query_result_v4, 0, sizeof(query_result_v4));
         increment_counter(&g_loader.test.query_calls);
-        status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V3,
-                       sizeof(query_result_v3),
-                       (OpenNaviBackendPluginV1 *)&query_result_v3);
+        status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V4,
+                       sizeof(query_result_v4),
+                       (OpenNaviBackendPluginV1 *)&query_result_v4);
         if (status == 0) {
             diagnostic[0] = '\0';
-            if (open_navi_backend_plugin_validate_v3(&query_result_v3, diagnostic,
+            if (open_navi_backend_plugin_validate_v4(&query_result_v4, diagnostic,
                                                 sizeof(diagnostic)) != 0) {
                 set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
                 return;
             }
-            g_loader.plugin_v4 = query_result_v3.backend_v4;
-            g_loader.plugin_v3 = query_result_v3.backend_v4.v3;
-            g_loader.plugin = query_result_v3.backend_v4.v3.v2;
-            g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V3;
-            g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V3;
-            initialize_wrapper_v4();
-            apply_optional_capabilities(query_result_v3.v2.v1.capabilities);
-            status = open_navi_backend_install_v4(&g_loader.wrapper_v4);
+            g_loader.plugin_v5 = query_result_v4.backend_v5;
+            g_loader.plugin_v4 = query_result_v4.backend_v5.v4;
+            g_loader.plugin_v3 = query_result_v4.backend_v5.v4.v3;
+            g_loader.plugin = query_result_v4.backend_v5.v4.v3.v2;
+            g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V4;
+            g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V4;
+            initialize_wrapper_v5();
+            apply_optional_capabilities(query_result_v4.v3.v2.v1.capabilities);
+            status = open_navi_backend_install_v5(&g_loader.wrapper_v5);
         } else {
-            memset(&query_result_v2, 0, sizeof(query_result_v2));
+            memset(&query_result_v3, 0, sizeof(query_result_v3));
             increment_counter(&g_loader.test.query_calls);
-            status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V2,
-                           sizeof(query_result_v2),
-                           (OpenNaviBackendPluginV1 *)&query_result_v2);
+            status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V3,
+                           sizeof(query_result_v3),
+                           (OpenNaviBackendPluginV1 *)&query_result_v3);
             if (status == 0) {
                 diagnostic[0] = '\0';
-                if (open_navi_backend_plugin_validate_v2(
-                        &query_result_v2, diagnostic,
-                        sizeof(diagnostic)) != 0) {
+                if (open_navi_backend_plugin_validate_v3(&query_result_v3, diagnostic,
+                                                    sizeof(diagnostic)) != 0) {
                     set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
                     return;
                 }
-                g_loader.plugin_v3 = query_result_v2.backend_v3;
-                g_loader.plugin = query_result_v2.backend_v3.v2;
-                g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V2;
-                g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V2;
-                initialize_wrapper_v3();
-                apply_optional_capabilities(query_result_v2.v1.capabilities);
-                status = open_navi_backend_install_v3(
-                    &g_loader.wrapper_v3);
+                g_loader.plugin_v4 = query_result_v3.backend_v4;
+                g_loader.plugin_v3 = query_result_v3.backend_v4.v3;
+                g_loader.plugin = query_result_v3.backend_v4.v3.v2;
+                g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V3;
+                g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V3;
+                initialize_wrapper_v4();
+                apply_optional_capabilities(query_result_v3.v2.v1.capabilities);
+                status = open_navi_backend_install_v4(&g_loader.wrapper_v4);
             } else {
-                memset(&query_result, 0, sizeof(query_result));
+                memset(&query_result_v2, 0, sizeof(query_result_v2));
                 increment_counter(&g_loader.test.query_calls);
-                status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V1,
-                               sizeof(query_result), &query_result);
-                if (status != 0) {
-                    set_fallback(OPEN_NAVI_BACKEND_FALLBACK_QUERY);
-                    return;
+                status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V2,
+                               sizeof(query_result_v2),
+                               (OpenNaviBackendPluginV1 *)&query_result_v2);
+                if (status == 0) {
+                    diagnostic[0] = '\0';
+                    if (open_navi_backend_plugin_validate_v2(
+                            &query_result_v2, diagnostic,
+                            sizeof(diagnostic)) != 0) {
+                        set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
+                        return;
+                    }
+                    g_loader.plugin_v3 = query_result_v2.backend_v3;
+                    g_loader.plugin = query_result_v2.backend_v3.v2;
+                    g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V2;
+                    g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V2;
+                    initialize_wrapper_v3();
+                    apply_optional_capabilities(query_result_v2.v1.capabilities);
+                    status = open_navi_backend_install_v3(
+                        &g_loader.wrapper_v3);
+                } else {
+                    memset(&query_result, 0, sizeof(query_result));
+                    increment_counter(&g_loader.test.query_calls);
+                    status = query(OPEN_NAVI_PLUGIN_QUERY_ABI_V1,
+                                   sizeof(query_result), &query_result);
+                    if (status != 0) {
+                        set_fallback(OPEN_NAVI_BACKEND_FALLBACK_QUERY);
+                        return;
+                    }
+                    diagnostic[0] = '\0';
+                    if (open_navi_backend_plugin_validate(
+                            &query_result, diagnostic,
+                            sizeof(diagnostic)) != 0) {
+                        set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
+                        return;
+                    }
+                    g_loader.plugin = query_result.backend;
+                    g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V1;
+                    g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V1;
+                    initialize_wrapper();
+                    apply_optional_capabilities(query_result.capabilities);
+                    status = open_navi_backend_install_v2(
+                        &g_loader.wrapper);
                 }
-                diagnostic[0] = '\0';
-                if (open_navi_backend_plugin_validate(
-                        &query_result, diagnostic,
-                        sizeof(diagnostic)) != 0) {
-                    set_fallback(OPEN_NAVI_BACKEND_FALLBACK_HANDSHAKE);
-                    return;
-                }
-                g_loader.plugin = query_result.backend;
-                g_loader.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V1;
-                g_loader.test.query_abi = OPEN_NAVI_PLUGIN_QUERY_ABI_V1;
-                initialize_wrapper();
-                apply_optional_capabilities(query_result.capabilities);
-                status = open_navi_backend_install_v2(
-                    &g_loader.wrapper);
             }
         }
     }

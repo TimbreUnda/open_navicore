@@ -20,6 +20,7 @@ enum {
     OPEN_NAVI_PLUGIN_QUERY_ABI_V2 = 2u,
     OPEN_NAVI_PLUGIN_QUERY_ABI_V3 = 3u,
     OPEN_NAVI_PLUGIN_QUERY_ABI_V4 = 4u,
+    OPEN_NAVI_PLUGIN_QUERY_ABI_V5 = 5u,
     OPEN_NAVI_PLUGIN_ENDIAN_TAG = 0x01020304u,
     OPEN_NAVI_PLUGIN_BUILD_ID_BYTES = 32u,
     OPEN_NAVI_PLUGIN_CAP_LIFECYCLE = 1u << 0,
@@ -39,6 +40,9 @@ enum {
     /* Optional in every query version: the plugin understands
      * OpenNaviBackendVisibilityV2 (the window area the HMI shows). */
     OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA = 1u << 12,
+    /* Query V5 (capabilities_v5 only): guidance state out, stop in. */
+    OPEN_NAVI_PLUGIN_CAP_OUTBOUND_GUIDANCE_STATE = 1u << 13,
+    OPEN_NAVI_PLUGIN_CAP_INPUT_GUIDANCE_STOP = 1u << 14,
     OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES =
         OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS | OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA,
     OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES =
@@ -78,6 +82,15 @@ enum {
         OPEN_NAVI_PLUGIN_V4_REQUIRED_CAPABILITIES
 };
 
+enum {
+    OPEN_NAVI_PLUGIN_V5_REQUIRED_CAPABILITIES =
+        OPEN_NAVI_PLUGIN_V4_REQUIRED_CAPABILITIES |
+        OPEN_NAVI_PLUGIN_CAP_OUTBOUND_GUIDANCE_STATE |
+        OPEN_NAVI_PLUGIN_CAP_INPUT_GUIDANCE_STOP,
+    OPEN_NAVI_PLUGIN_V5_KNOWN_CAPABILITIES =
+        OPEN_NAVI_PLUGIN_V5_REQUIRED_CAPABILITIES
+};
+
 #define OPEN_NAVI_PLUGIN_MAGIC0 UINT32_C(0x4d4e4250) /* MNBP */
 #define OPEN_NAVI_PLUGIN_MAGIC1 UINT32_C(0x514e5831) /* QNX1 */
 
@@ -113,6 +126,14 @@ enum {
         0x45, 0x4e, 0x44, 0x2d, 0x51, 0x4e, 0x58, 0x2d,                    \
         0x56, 0x34, 0x2d, 0x32, 0x30, 0x32, 0x36, 0x31,                    \
         0x30, 0x30, 0x39, 0x2d, 0x30, 0x30, 0x30, 0x31                     \
+    }
+
+#define OPEN_NAVI_PLUGIN_V5_EXPECTED_BUILD_ID_INITIALIZER                      \
+    {                                                                        \
+        0x52, 0x45, 0x46, 0x2d, 0x42, 0x41, 0x43, 0x4b,                    \
+        0x45, 0x4e, 0x44, 0x2d, 0x51, 0x4e, 0x58, 0x2d,                    \
+        0x56, 0x35, 0x2d, 0x32, 0x30, 0x32, 0x36, 0x31,                    \
+        0x30, 0x31, 0x39, 0x2d, 0x30, 0x30, 0x30, 0x31                     \
     }
 
 /* This is a copied, pointer-bearing in-process handshake. It is deliberately
@@ -175,6 +196,18 @@ typedef struct {
     uint32_t capabilities_v4;
     OpenNaviBackendV5 backend_v5;
 } OpenNaviBackendPluginV4;
+
+/* Query V5 retains the complete query-V4 prefix and selects a V6 backend
+ * (guidance state out, guidance stop in). */
+typedef struct {
+    OpenNaviBackendPluginV4 v4;
+    uint32_t services_v3_size;
+    uint32_t guidance_state_v1_size;
+    uint32_t guidance_stop_v1_size;
+    uint32_t backend_v6_size;
+    uint32_t capabilities_v5;
+    OpenNaviBackendV6 backend_v6;
+} OpenNaviBackendPluginV5;
 
 typedef int (*OpenNaviBackendPluginQueryV1)(
     uint32_t requested_query_abi,

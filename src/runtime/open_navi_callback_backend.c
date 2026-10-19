@@ -1,8 +1,11 @@
+#define _POSIX_C_SOURCE 200112L
+
 #include "open_navi_callback_backend.h"
 #include "open_navi_counter.h"
 
 #include <pthread.h>
 #include <string.h>
+#include <time.h>
 
 enum { OPEN_NAVI_PENDING_CAPACITY = 32 };
 
@@ -20,6 +23,29 @@ static uint32_t g_next_handle = 1u;
 static uint32_t g_audio_state;
 static uint32_t g_audio_latest_attempt;
 static int g_audio_valid;
+/* Route guidance as the backend last published it, and the stop latch: after
+ * a stop request reached the backend, "guiding" publications already in
+ * flight are ignored until the backend reports idle or the latch expires. */
+static int g_guidance_active;
+static int g_guidance_stop_latched;
+static uint64_t g_guidance_stop_deadline_ms;
+
+enum { OPEN_NAVI_GUIDANCE_STOP_LATCH_MS = 5000 };
+
+static uint64_t open_navi_callback_monotonic_ms(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0u;
+    return (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
+}
+
+static void open_navi_guidance_set_locked(int active)
+{
+    g_guidance_active = active != 0;
+    g_state.voice_guidance_status = active != 0
+        ? OPEN_NAVI_VOICE_GUIDANCE_STATUS_GUIDING
+        : OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE;
+}
 
 #if defined(__GNUC__)
 extern int open_navi_callback_telemetry_active(void)
@@ -191,6 +217,55 @@ void open_navi_callback_get_voice_state(uint32_t *result,
     (void)pthread_mutex_unlock(&g_lock);
 }
 
+int open_navi_callback_publish_guidance(int active)
+{
+    int applied = 1;
+
+    (void)pthread_mutex_lock(&g_lock);
+    if (active == 0) {
+        g_guidance_stop_latched = 0;
+    } else if (g_guidance_stop_latched != 0 &&
+               open_navi_callback_monotonic_ms() < g_guidance_stop_deadline_ms) {
+        applied = 0;
+    } else {
+        g_guidance_stop_latched = 0;
+    }
+    if (applied != 0) {
+        open_navi_guidance_set_locked(active);
+        open_navi_increment_saturating(&g_state.guidance_publications);
+    } else {
+        open_navi_increment_saturating(&g_state.guidance_latched_ignored);
+    }
+    (void)pthread_mutex_unlock(&g_lock);
+    return applied;
+}
+
+int open_navi_callback_guidance_stop_requested(void)
+{
+    int was_active;
+
+    (void)pthread_mutex_lock(&g_lock);
+    was_active = g_guidance_active;
+    if (was_active != 0) {
+        g_guidance_stop_latched = 1;
+        g_guidance_stop_deadline_ms = open_navi_callback_monotonic_ms() +
+                                      OPEN_NAVI_GUIDANCE_STOP_LATCH_MS;
+    }
+    open_navi_guidance_set_locked(0);
+    (void)pthread_mutex_unlock(&g_lock);
+    return was_active;
+}
+
+int open_navi_callback_guidance_active(void)
+{
+    int active;
+
+    (void)pthread_mutex_lock(&g_lock);
+    active = g_guidance_active;
+    (void)pthread_mutex_unlock(&g_lock);
+    return active;
+}
+
 void open_navi_callback_store_cluster(const void *record)
 {
     (void)pthread_mutex_lock(&g_lock);
@@ -227,8 +302,10 @@ void open_navi_callback_backend_reset(void)
     g_audio_valid = 0;
     g_audio_state = 0u;
     g_audio_latest_attempt = 0u;
-    g_state.voice_result = 2u;
-    g_state.voice_guidance_status = 1u;
+    g_state.voice_result = OPEN_NAVI_VOICE_RESULT_OK;
+    g_guidance_stop_latched = 0;
+    g_guidance_stop_deadline_ms = 0u;
+    open_navi_guidance_set_locked(0);
     (void)pthread_mutex_unlock(&g_lock);
 }
 

@@ -50,6 +50,11 @@ int open_navi_renderer_notify_cluster_display(uint32_t source_slot,
 int open_navi_renderer_notify_driver_distraction(uint32_t source_slot,
                                             uint32_t request_handle,
                                             uint32_t status_raw);
+/* Queues a guidance stop request for a V6 backend: 0 queued, 1 the
+ * installed/active backend has no guidance stop input (below V6), -1 not
+ * accepting (no lifecycle or stopping). */
+int open_navi_renderer_notify_guidance_stop(uint32_t source_slot,
+                                            uint32_t request_handle);
 
 /* The installed backend takes OpenNaviBackendPointerV2 contacts (every
  * touch contact, V2 payloads); otherwise only the first contact, as V1.

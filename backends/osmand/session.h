@@ -33,6 +33,8 @@ public:
     int start(const OpenNaviBackendServicesV1&, Config) noexcept;
     // V3+: the same start with the outbound services kept for the engine.
     int start_v2(const OpenNaviBackendServicesV2&, Config) noexcept;
+    // V6: start_v2 plus the guidance state service.
+    int start_v3(const OpenNaviBackendServicesV3&, Config) noexcept;
     // Platform inputs: the latest of each is kept and forwarded (replayed
     // after attach).
     int input(const OpenNaviBackendVisibilityV2&) noexcept;
@@ -41,6 +43,9 @@ public:
     int input(const OpenNaviBackendInternationalizationV1&) noexcept;
     int input(const OpenNaviBackendClusterDisplayV1&) noexcept;
     int input(const OpenNaviBackendDriverDistractionV1&) noexcept;
+    // A command, not state: forwarded while attached, never replayed (a
+    // new attachment starts outside guidance).
+    int guidance_stop(const OpenNaviBackendGuidanceStopV1&) noexcept;
     int attach(const OpenNaviBackendRenderTargetV1&) noexcept;
     FrameResult frame(const OpenNaviBackendRenderTargetV1&) noexcept;
     int gps(const OpenNaviBackendGpsV1&) noexcept;
@@ -71,6 +76,8 @@ private:
     bool has_gps_ = false;
     OpenNaviBackendServicesV2 services_v2_{};
     bool has_services_v2_ = false;
+    OpenNaviBackendServicesV3 services_v3_{};
+    bool has_services_v3_ = false;
     template <typename T> struct Latest { T value{}; bool has = false; };
     Latest<OpenNaviBackendVisibilityV2> visibility_;
     Latest<OpenNaviBackendScreenV1> screen_;

@@ -298,11 +298,12 @@ int main(int argc, char **argv)
     open_navi_backend_loader_test_state(&state);
     assert(state.bootstrap_calls == expected_lifecycles);
     assert(state.load_attempts == 1u);
+    /* The loader asks query V5 first; the reference backend declines it. */
     assert(state.query_calls == (expected_valid ?
-        (5u - expected_query_abi) :
+        (6u - expected_query_abi) :
         (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_LOAD ||
          expected_reason == OPEN_NAVI_BACKEND_FALLBACK_SYMBOL ? 0u :
-         expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ? 4u : 1u)));
+         expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ? 5u : 2u)));
     assert(state.plugin_valid == expected_valid);
     if (expected_valid) assert(state.query_abi == expected_query_abi);
     assert(state.fallback_reason == expected_reason);
@@ -343,7 +344,8 @@ int main(int argc, char **argv)
                (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ||
                 expected_valid ?
                     (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY
-                         ? 4u : 5u - expected_query_abi) : 1u));
+                         ? 5u : 6u - expected_query_abi) : 2u));
+        assert(count_line(trace, "query_v5") == 1u);
         assert(count_line(trace, "query_v4") == 1u);
         assert(count_line(trace, "query_v3") ==
                (expected_reason == OPEN_NAVI_BACKEND_FALLBACK_QUERY ||

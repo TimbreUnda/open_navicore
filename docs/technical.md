@@ -316,8 +316,11 @@ Additional backend-driven APIs expose only contracts supported by real state:
   and synchronously forwards it through InstrumentCluster slot 3. A rejected
   callback does not advance publication history.
 - A provider Voice slot-19 request is answered through callback slot 23 with
-  that exact incoming handle and the backend's current result/guidance state;
-  no timer or captured handle is replayed.
+  that exact incoming handle and the backend's current result/guidance state
+  (see "Route guidance and phone-projection navigation focus"); no timer or
+  captured handle is replayed.
+- Voice slot 13 (`requestGuidanceStop`) is answered asynchronously through
+  callback slot 16 (`replyGuidanceStop`) from the HMI reply FIFO.
 - `open_navi_callback_signal_thread_status()` forwards root slot 10 with a terminated
   wide name converted from at most 63 input bytes and stores an owned bounded
   diagnostic copy.
@@ -588,6 +591,20 @@ value `0` was observed and no enum dictionary is recovered. Delivery uses the
 same renderer-thread ordering/latest-state mailbox and lifecycle reset rules.
 V1 through V4 descriptors and query V1 through V3 remain unchanged.
 
+`OpenNaviBackendV6` preserves the complete V5 prefix (including `start_v2`)
+and appends `start_v3` and `guidance_stop_requested`. A V6 backend is started
+through `start_v3` with `OpenNaviBackendServicesV3`: the exact V2 services
+(`v2.v1.abi_version` `OPEN_NAVI_BACKEND_ABI_V3`) plus
+`publish_guidance_state`, which reports `OpenNaviBackendGuidanceStateV1`
+(`guiding` 1 in route guidance, 0 otherwise; publish on every change). The
+provider sends `OpenNaviBackendGuidanceStopV1` (source slot 13 and the
+request handle) when nv_navigation asks the native navigation to stop
+guidance; the backend ends guidance as its own Stop does and publishes the
+new state. The stop request uses a latest-state mailbox in the same renderer
+ordering domain and lifecycle reset rules as the other inputs; it is a
+command, so a backend does not replay it to a later attachment. V1 through
+V5 descriptors and query V1 through V4 remain unchanged.
+
 Connectivity adapter 20 intentionally remains bridge-owned typed telemetry.
 Its request and subscription shapes are recovered, but the only observed
 service ID is raw `6`, slot 8's first word is still unresolved, and observed
@@ -735,8 +752,12 @@ process exit, including a DSO whose query is rejected. Provider teardown never
 calls `dlclose`.
 
 The plugin exports exactly one C function, `open_navi_backend_query_v1`. The
-same symbol accepts query ABI V4 first and falls back through the byte-for-byte
-query-V3, query-V2 and query-V1 contracts for older reviewed plugins. Query V4
+same symbol accepts query ABI V5 first and falls back through the byte-for-byte
+query-V4, query-V3, query-V2 and query-V1 contracts for older reviewed plugins.
+Query V5 copies a `OpenNaviBackendPluginV5` handshake and V6 descriptor (its
+query-V4 prefix must pass every query-V4 rule; then the V3-services,
+guidance-state, guidance-stop and V6 sizes, the V5 capability set and its own
+build identifier); query V4
 copies a `OpenNaviBackendPluginV4` handshake and V5 descriptor; query V3 copies a
 `OpenNaviBackendPluginV3` handshake and V4 descriptor into provider-owned
 memory; query V2 continues to copy the prior
@@ -753,9 +774,13 @@ the documented explicit-registration API for standalone embedders and tests.
 The original query-V1 build identifier remains unchanged for compatibility;
 query V2 has a distinct reviewed identifier so it cannot be mistaken for the
 older contract, query V3 has another identifier for the V4 input tail, and
-query V4 has one for the V5 distraction tail.
+query V4 has one for the V5 distraction tail, and query V5 one for the V6
+guidance tail.
 
-For a valid query-V4 plugin, the provider installs its own copied V5 wrapper;
+For a valid query-V5 plugin, the provider installs its own copied V6 wrapper
+(started through `start_v3`; the plugin's guidance service is reached through
+the same never-reused service generation as the V2 services). For a valid
+query-V4 plugin, the provider installs its own copied V5 wrapper;
 query-V3 and query-V2 plugins retain the prior V4 and V3 wrappers. No path installs the plugin
 descriptor directly. The wrapper resets selection on
 every renderer lifecycle, gives the plugin a separate never-reused service
@@ -824,7 +849,8 @@ path. It is built and ELF-checked offline here, but still requires a QNX target
 to execute.
 
 The reference-plugin trace at `/tmp/open-navi-reference-plugin.log` records
-`query_v4`, `query_v3`, `query_v2`, or `query_v1` for every requested query contract and records
+`query_v5` (declined: the reference plugin stops at backend V5), `query_v4`,
+`query_v3`, `query_v2`, or `query_v1` for every requested query contract and records
 `start_v2` on entry to the service-enabled startup callback. A live V5 selection is
 therefore proven by `query_v4`, `start_v2`, and the normal surface/render
 records rather than inferred from the cyan frame alone.
@@ -839,6 +865,61 @@ be placed behind the stock provider lifecycle. Separately, PR #2's optional
 renderer-enabled OsmAnd binary set proved fixed Kyiv rendering in that UI.
 Live positioning, pan/zoom, routing and guidance remain unimplemented. Repeat
 lifecycle/context-loss tests for the foundation refactor remain a bench task.
+
+## Route guidance and phone-projection navigation focus
+
+Android Auto (and CarPlay) navigation needs the native navigation to give up
+navigation focus. The chain (static analysis, QR39.5: `mm_gal_service`,
+`sa_vp4_sal_service`, USA `nv_navigation`) ends in nv_navigation's
+SI_VoiceRecognition, which calls provider adapter 25 slot 13
+`requestGuidanceStop(handle)` from two places and waits for callback 25/16
+`replyGuidanceStop(handle, result)`:
+`OnCARPLAY_RouteGuidanceInstruction` (the projection route-guidance request,
+call at `0x080ec5de`) sets a pending flag, and the reply handler
+(`0x080eb29c`) answers it with GuidanceStopResponse (PAS `0x1618`), a success
+only when `result == 2`; `onGuidanceStopRequest` (call at `0x080ead12`) gets
+its answer through PAS `0x15e7` (result 2 becomes 0, 1 becomes 12, else 1).
+The handle word is not read. Which of the two the Android Auto focus change
+uses is not recovered; both need the reply. Without it the request hangs,
+SAL never reports the native navigation stopped, and the phone gives up on
+its projected navigation after about 10 s (live symptom).
+
+Open NaviCore therefore:
+
+- Implements slot 13 (`open_navi_25_13`): it records telemetry and a pending
+  request, sends the stop to a V6 backend (`guidance_stop_requested`), queues
+  the reply in the HMI reply FIFO and returns 0. The worker replies after the
+  FIFO's usual 50 ms, in order with HMI replies, under a lifecycle lease:
+  result `2` when the reported guidance state is idle (the stop was delivered,
+  or there was no guidance), else `1`. A missing callback-16 proxy drops that
+  reply but keeps the FIFO running. A full FIFO returns 1 (no reply).
+- Reports the real guidance state in the slot-19 reply. The OsmAnd backend
+  publishes `guiding` when it enters and leaves `ui::Screen::Guidance` (Start,
+  End, arrival auto-end, the stop request, engine release); the provider maps
+  it to the reply's `guidance_status`.
+- After a stop reaches the backend the provider reports idle at once and
+  ignores "guiding" publications already in flight for up to 5 s, or until the
+  backend reports idle.
+
+Encodings recovered from nv_navigation (`replyRouteGuidanceStatus`,
+`0x080eb820`): only `result == 2` is accepted (other results are logged as
+errors and nothing is published); `guidance_status == 0` is published to SAL
+as RouteGuidanceStatus 1 and any other value as 2. In `sa_vp4_sal_service`
+(`0x082c4db6`) status 1 sets the native-guidance-active flags and 2 (its
+default) clears them, so the provider sends `0` while guiding and `1`
+otherwise; stock also replied `1` when idle on the bench. The names
+"success" for result 2 and "guiding" for status 0 are inferred from this
+control flow; the other result values are not recovered.
+
+nv_navigation polls slot 19 from `SI_VoiceRecognition::OnRouteGuidanceRepeatTimer`:
+a 1000 ms timer (created at `0x080f30f2`) started in `adapterReady`
+(`0x080e8c20`) and re-armed after every poll, unless the navigation core is
+stopping (`coreState == 4`, eNavStopping) or NaviCore is not ready; it
+publishes RouteGuidanceStatusChange only when the value changes. So a state
+change reaches SAL within about a second and no push is needed. An
+unsolicited `replyGuidanceStop` is not a status push: without a pending SAL
+request it answers the VR request (PAS `0x15e7`), so the provider never sends
+one.
 
 ## Observable startup trace
 

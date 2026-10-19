@@ -210,6 +210,47 @@ typedef struct {
 
 static TestReadyProxy adapter_ready_proxies[TEST_ADAPTER_COUNT];
 
+/* Adapter 25 callback 16 replyGuidanceStop(handle, result). */
+static volatile uint32_t guidance_stop_reply_count;
+static uint32_t guidance_stop_reply_handle;
+static uint32_t guidance_stop_reply_result;
+static volatile uint32_t inside_guidance_stop_request;
+static uint32_t test_adapter_slot16(void *self, uint32_t handle, uint32_t result)
+{
+    if (((TestReadyProxy *)self)->adapter_id == 25u) {
+        assert(inside_guidance_stop_request == 0u);
+        guidance_stop_reply_handle = handle;
+        guidance_stop_reply_result = result;
+        ++guidance_stop_reply_count;
+    }
+    return 0u;
+}
+
+extern uint32_t open_navi_service_publish_guidance_state(
+    const OpenNaviBackendGuidanceStateV1 *guidance);
+typedef uint32_t (*TestVoiceWord)(void *, uintptr_t);
+
+static uint32_t test_guidance_stop(void *voice, uint32_t handle)
+{
+    uint32_t status;
+    inside_guidance_stop_request = 1u;
+    status = ((TestVoiceWord)(*(const PanaGenericVirtual **)voice)[13])(
+        voice, (uintptr_t)handle);
+    inside_guidance_stop_request = 0u;
+    return status;
+}
+
+static void wait_guidance_stop_replies(uint32_t count)
+{
+    unsigned int waited;
+    for (waited = 0u; waited < 2000u && guidance_stop_reply_count < count;
+         ++waited) {
+        struct timespec delay = {0, 1000000L};
+        (void)nanosleep(&delay, NULL);
+    }
+    assert(guidance_stop_reply_count == count);
+}
+
 typedef struct {
     uint32_t adapter;
     uint32_t slot;
@@ -1138,6 +1179,7 @@ int main(void)
     adapter_ready_vtable[10] = (PanaGenericVirtual)test_adapter_slot10;
     adapter_ready_vtable[11] = (PanaGenericVirtual)test_adapter_slot11;
     adapter_ready_vtable[19] = (PanaGenericVirtual)test_adapter_slot19;
+    adapter_ready_vtable[16] = (PanaGenericVirtual)test_adapter_slot16;
     adapter_ready_vtable[23] = (PanaGenericVirtual)test_adapter_slot23;
     si_vtable[12] = test_si_ready;
     si_vtable[10] = (PanaGenericVirtual)test_thread_status;
@@ -1344,6 +1386,81 @@ int main(void)
     assert(hmi_ready_count == 1u);
     assert(transition_reply_count == 4u);
     assert(get_adapter(root, 0u, 0) != 0u);
+
+    /* Route guidance.  The slot-19 reply carries the backend's published
+     * state (0 guiding, 1 idle); requestGuidanceStop (slot 13) returns at
+     * once and replyGuidanceStop (callback 16) follows from the worker. */
+    {
+        OpenNaviBackendGuidanceStateV1 guidance;
+        uint32_t replies = voice_reply_count;
+        uint32_t pending_before;
+        uint32_t correlated_before;
+
+        memset(&guidance, 0, sizeof(guidance));
+        guidance.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+        guidance.struct_size = sizeof(guidance);
+        guidance.guiding = OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE;
+        assert(open_navi_service_publish_guidance_state(&guidance) ==
+               OPEN_NAVI_BACKEND_SERVICE_OK);
+        assert((*(const PanaGenericVirtual **)first_interfaces[25])[19](
+                   first_interfaces[25], 0x2519au) == 0u);
+        assert(voice_reply_count == replies + 1u);
+        assert(voice_reply_handle == 0x2519au);
+        assert(voice_reply_result == OPEN_NAVI_VOICE_RESULT_OK);
+        assert(voice_reply_status == OPEN_NAVI_VOICE_GUIDANCE_STATUS_GUIDING);
+        guidance.guiding = 7u;
+        assert(open_navi_service_publish_guidance_state(&guidance) ==
+               OPEN_NAVI_BACKEND_SERVICE_BAD_VALUE);
+        guidance.guiding = OPEN_NAVI_BACKEND_GUIDANCE_IDLE;
+        guidance.abi_version = 9u;
+        assert(open_navi_service_publish_guidance_state(&guidance) ==
+               OPEN_NAVI_BACKEND_SERVICE_BAD_ABI);
+        guidance.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+        assert(open_navi_callback_guidance_active() == 1);
+
+        /* This backend (no plugin: below V6) cannot be asked to stop, so
+         * guidance it reported stays and the stop reply fails. */
+        open_navi_callback_test_state(&callback_state);
+        pending_before = callback_state.pending_count;
+        correlated_before = callback_state.correlation_successes;
+        guidance_stop_reply_count = 0u;
+        assert(test_guidance_stop(first_interfaces[25], 0x2513au) == 0u);
+        wait_guidance_stop_replies(1u);
+        assert(guidance_stop_reply_handle == 0x2513au);
+        assert(guidance_stop_reply_result == OPEN_NAVI_VOICE_RESULT_FAILED);
+        assert_telemetry(25u, 13u, 1u, 1u, 0x2513au, 0u, 0u, 0u);
+
+        /* Outside guidance the stop is done: result 2, also for a burst. */
+        assert(open_navi_service_publish_guidance_state(&guidance) ==
+               OPEN_NAVI_BACKEND_SERVICE_OK);
+        assert(test_guidance_stop(first_interfaces[25], 0x2513bu) == 0u);
+        assert(test_guidance_stop(first_interfaces[25], 0x2513cu) == 0u);
+        wait_guidance_stop_replies(3u);
+        assert(guidance_stop_reply_handle == 0x2513cu);
+        assert(guidance_stop_reply_result == OPEN_NAVI_VOICE_RESULT_OK);
+        assert((*(const PanaGenericVirtual **)first_interfaces[25])[19](
+                   first_interfaces[25], 0x2519bu) == 0u);
+        assert(voice_reply_status == OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE);
+        /* Every reply completed its own pending request (three stop
+         * replies and one status reply). */
+        open_navi_callback_test_state(&callback_state);
+        assert(callback_state.pending_count == pending_before);
+        assert(callback_state.correlation_successes == correlated_before + 4u);
+
+        /* A stop delivered to the backend reports idle at once and ignores
+         * stale "guiding" publications until the backend reports idle. */
+        assert(open_navi_callback_publish_guidance(1) == 1);
+        assert(open_navi_callback_guidance_stop_requested() == 1);
+        assert(open_navi_callback_guidance_active() == 0);
+        assert(open_navi_callback_publish_guidance(1) == 0);
+        assert(open_navi_callback_guidance_active() == 0);
+        assert(open_navi_callback_publish_guidance(0) == 1);
+        assert(open_navi_callback_publish_guidance(1) == 1);
+        assert(open_navi_callback_guidance_active() == 1);
+        assert(open_navi_callback_guidance_stop_requested() == 1);
+        assert(open_navi_callback_guidance_stop_requested() == 0);
+        assert(open_navi_callback_publish_guidance(0) == 1);
+    }
     /* A callback-side teardown waits for the foreign callback, returns
      * without waiting on itself, then performs all reset/clear work from the
      * final outer release. */

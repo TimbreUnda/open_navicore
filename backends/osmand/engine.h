@@ -41,6 +41,11 @@ public:
     // Outbound services (cluster, audio, thread status) from start until
     // stop; null when the runtime gave none. Call on the renderer thread.
     virtual void set_outbound(const OpenNaviBackendServicesV2*) {}
+    // Backend V6: the guidance state service (null below V6) and the
+    // platform's request to end route guidance (Stop, e.g. for a phone
+    // projection's navigation). Renderer thread.
+    virtual void set_guidance_outbound(const OpenNaviBackendServicesV3*) {}
+    virtual void guidance_stop(const OpenNaviBackendGuidanceStopV1&) {}
 };
 
 using EngineFactory = std::unique_ptr<Engine> (*)();

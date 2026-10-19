@@ -63,6 +63,8 @@ public:
                       std::vector<RouteAlternative> routes);
     bool apply_guidance(GuidanceState guidance);
     bool start_guidance(std::size_t route);
+    // Ends guidance as the End button does (also a platform stop request).
+    bool end_guidance();
     std::uint64_t select_recent(std::size_t index);
     // Routes to a place picked on the map (e.g. a POI).
     std::uint64_t select_place(Destination place);
