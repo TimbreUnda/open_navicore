@@ -115,6 +115,7 @@ static uint32_t open_navi_20_3(void *, uint32_t, uint32_t, uint8_t, uint32_t);
 static uint32_t open_navi_20_4(void *, uint32_t, uint8_t, uint32_t);
 static uint32_t open_navi_20_7(void *, uint32_t, uint32_t, uint8_t);
 static uint32_t open_navi_20_8(void *, uint32_t, uint32_t, uint8_t);
+static uint32_t open_navi_25_11(void *, uintptr_t);
 static uint32_t open_navi_25_13(void *, uintptr_t);
 static uint32_t open_navi_25_19(void *, uint32_t);
 static uint32_t open_navi_26_5(void *, uint32_t, uint8_t);
@@ -458,7 +459,7 @@ static const PanaGenericVirtual g_vr_vtable[OPEN_NAVI_DUMMY_VTABLE_SLOTS] = {
     (PanaGenericVirtual)open_navi_static_25_8,
     (PanaGenericVirtual)open_navi_static_25_9,
     (PanaGenericVirtual)open_navi_static_25_10,
-    (PanaGenericVirtual)open_navi_static_25_11,
+    (PanaGenericVirtual)open_navi_25_11,
     (PanaGenericVirtual)open_navi_static_25_12,
     (PanaGenericVirtual)open_navi_25_13,
     (PanaGenericVirtual)open_navi_static_25_14,
@@ -590,7 +591,9 @@ typedef enum {
     OPEN_NAVI_HMI_EVENT_THEME_CHANGE = 3,
     /* SI_VoiceRecognition requestGuidanceStop: replied (adapter 25 callback
      * 16) from the same FIFO so it stays asynchronous and ordered. */
-    OPEN_NAVI_HMI_EVENT_GUIDANCE_STOP = 4
+    OPEN_NAVI_HMI_EVENT_GUIDANCE_STOP = 4,
+    /* requestGuidanceInstructionsRepeat: replied with callback 25/15. */
+    OPEN_NAVI_HMI_EVENT_GUIDANCE_REPEAT = 5
 } OpenNaviHMIEventType;
 
 typedef struct {
@@ -1420,6 +1423,48 @@ void open_navi_test_reload_guidance_status_marker(const char *path)
 }
 #endif
 
+/* requestGuidanceInstructionsRepeat(handle), adapter 25 slot 11 (vtable
+ * +0x2c, nv_navigation caller 0x080eae3e).  Live 2026-10-19 nv_navigation
+ * called it right after each projection requestGuidanceStop; it was a
+ * static accept-only slot and never answered.  Stock answers with
+ * replyGuidanceInstructionsRepeat (callback 25/15); answer the same way,
+ * asynchronously from the HMI reply FIFO, with result 2.  Nothing is
+ * repeated: the backend has no prompt to repeat. */
+static uint32_t open_navi_25_11(void *self, uintptr_t handle_word)
+{
+    OpenNaviLifecycleLease lease;
+    const uint32_t handle = (uint32_t)handle_word;
+    unsigned int queue_depth;
+    int accepted = 0;
+
+    (void)self;
+    if (!open_navi_lifecycle_acquire(&lease)) return 1u;
+    open_navi_api_telemetry_record(25u, 11u, 1u, handle, 0u, 0u, 0u);
+    open_navi_callback_pending_add(25u, 11u, handle);
+    (void)pthread_mutex_lock(&g_worker_lock);
+    if (g_worker_stop == 0 &&
+        g_hmi_event_queue_count < OPEN_NAVI_HMI_EVENT_QUEUE_CAPACITY) {
+        unsigned int tail = (g_hmi_event_queue_head +
+                             g_hmi_event_queue_count) %
+                            OPEN_NAVI_HMI_EVENT_QUEUE_CAPACITY;
+        g_hmi_event_queue[tail].type = OPEN_NAVI_HMI_EVENT_GUIDANCE_REPEAT;
+        g_hmi_event_queue[tail].request.guidance_stop.handle = handle;
+        ++g_hmi_event_queue_count;
+        accepted = 1;
+        (void)pthread_cond_signal(&g_worker_condition);
+    }
+    queue_depth = g_hmi_event_queue_count;
+    (void)pthread_mutex_unlock(&g_worker_lock);
+    if (accepted == 0)
+        open_navi_callback_pending_cancel(25u, 11u, handle);
+    open_navi_log(LOG_NOTICE,
+             "VR requestGuidanceInstructionsRepeat slot=11 handle=%u "
+             "accepted=%d queue_depth=%u",
+             handle, accepted, queue_depth);
+    open_navi_lifecycle_release(&lease);
+    return accepted != 0 ? 0u : 1u;
+}
+
 /* requestGuidanceStop(handle), adapter 25 slot 13: nv_navigation calls it
  * from onGuidanceStopRequest (0x080ead12) and from the projection path
  * OnCARPLAY_RouteGuidanceInstruction (0x080ec5de, answered to SAL as
@@ -2224,6 +2269,41 @@ static int open_navi_reply_guidance_stop(uint32_t handle)
     return 1;
 }
 
+/* replyGuidanceInstructionsRepeat(handle, result), adapter 25 callback 15:
+ * the answer to slot 11, result 2 like every stock VR reply. */
+static int open_navi_reply_guidance_repeat(uint32_t handle)
+{
+    OpenNaviLifecycleLease lease;
+    void *proxy;
+    uint32_t result;
+
+    if (!open_navi_lifecycle_acquire_proxy(25u, 15u, &lease, &proxy)) {
+        int active = open_navi_lifecycle_acquire(&lease);
+        if (active) {
+            open_navi_callback_pending_cancel(25u, 11u, handle);
+            open_navi_log(LOG_ERR,
+                     "VR replyGuidanceInstructionsRepeat handle=%u dropped: "
+                     "no proxy", handle);
+            open_navi_lifecycle_release(&lease);
+        }
+        return active;
+    }
+    result = nc_host_voice_reply_guidance_instructions_repeat(
+        proxy, handle, OPEN_NAVI_VOICE_RESULT_OK);
+    if (open_navi_lifecycle_is_current(&lease)) {
+        if (result == 0u)
+            (void)open_navi_callback_pending_complete(25u, 11u, handle);
+        else
+            open_navi_callback_pending_cancel(25u, 11u, handle);
+    }
+    open_navi_log(LOG_NOTICE,
+             "VR replyGuidanceInstructionsRepeat proxy=%p slot=15 handle=%u "
+             "result=%u status=%u",
+             proxy, handle, (uint32_t)OPEN_NAVI_VOICE_RESULT_OK, result);
+    open_navi_lifecycle_release(&lease);
+    return 1;
+}
+
 static int open_navi_reply_hmi_event(const OpenNaviHMIEvent *event)
 {
     OpenNaviLifecycleLease lease;
@@ -2238,6 +2318,9 @@ static int open_navi_reply_hmi_event(const OpenNaviHMIEvent *event)
     }
     if (event->type == OPEN_NAVI_HMI_EVENT_GUIDANCE_STOP) {
         return open_navi_reply_guidance_stop(event->request.guidance_stop.handle);
+    }
+    if (event->type == OPEN_NAVI_HMI_EVENT_GUIDANCE_REPEAT) {
+        return open_navi_reply_guidance_repeat(event->request.guidance_stop.handle);
     }
     slot = event->type == OPEN_NAVI_HMI_EVENT_TRANSITION ? 9u :
            event->type == OPEN_NAVI_HMI_EVENT_SCREEN_CHANGE ? 10u : 12u;

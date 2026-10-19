@@ -33,7 +33,7 @@ WORDS = {
 }
 
 FAIL_CLOSED = set()
-EMITTED = {("25", "17")}
+EMITTED = {("25", "15"), ("25", "17")}
 
 
 def validate(rows, header_text, source_text, provider_text=""):
