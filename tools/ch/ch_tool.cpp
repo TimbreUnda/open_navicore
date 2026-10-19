@@ -227,8 +227,9 @@ static int sidecar_main(int argc, char** argv) {
     const double ms = (now() - r0) * 1e3 / repeats;
     if (status != Router::Status::Ok) { std::printf("no route (%d)\n", (int)status); return 1; }
     std::printf("cost %.1fs, %zu road stretches from %zu original edges, %zu nodes settled; snap + query + unpack "
-                "+ merge %.3f ms (avg of %u)\n", cost / 1000.0, runs.size(), router.edges().size(),
-                router.settled(), ms, repeats);
+                "+ merge %.3f ms (avg of %u); page cache: %llu pages read, %llu hits\n", cost / 1000.0,
+                runs.size(), router.edges().size(), router.settled(), ms, repeats,
+                (unsigned long long)sidecar->file().page_reads(), (unsigned long long)sidecar->file().page_hits());
     return 0;
 }
 

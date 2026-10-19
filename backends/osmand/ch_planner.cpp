@@ -61,7 +61,8 @@ std::unique_ptr<ChPlanner> ChPlanner::open(const std::string& sidecar_path,
     }
     std::map<std::string, std::uint64_t> built;
     for (std::size_t i = 0; i < impl->sidecar->map_count(); ++i) {
-        const onc_ch::SidecarMap& entry = impl->sidecar->map(i);
+        onc_ch::SidecarMap entry;
+        if (!impl->sidecar->map(i, entry)) { error = "cannot read the sidecar's map list"; return nullptr; }
         built[std::string(entry.name, strnlen(entry.name, sizeof(entry.name)))] = entry.size;
     }
     if (built != expected) {

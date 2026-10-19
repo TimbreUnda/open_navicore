@@ -1,16 +1,21 @@
 // The routing sidecar: everything the radio needs to route with a contraction
-// hierarchy, in one memory-mapped file built offline from the OBF maps
-// (tools/ch, `ch_tool pack`).  Header only, standard library and POSIX mmap.
+// hierarchy, in one file built offline from the OBF maps (tools/ch,
+// `ch_tool pack`).  Header only, standard library and POSIX.
+//
+// The file is read through a small page cache (PageFile: 4 KB pages, 64 MB), not
+// mapped: the radio's 32-bit processes cannot map a country-sized file, and a route
+// only touches a few thousand pages of it.  Nodes are numbered along a Hilbert curve
+// (see ch_pack.h), so the nodes of a route are close together in the file.
 //
 // File layout (little-endian, every section 8-byte aligned, offsets from the
 // start of the file):
 //   SidecarHeader
-//   SidecarPoint nodes[nodes]          coordinates (31-bit tile numbers)
 //   u32 out_first[nodes + 1], in_first[nodes + 1]     hierarchy CSR
 //   QArc out_arcs[], in_arcs[]
 //   SidecarEdge edges[real_edges]      original edge -> stretch of a road
 //   SidecarRoad roads[roads]           road id and a point to load it by
-//   u32 grid_first[grid_w * grid_h + 1], grid_nodes[nodes]     snap grid
+//   u32 grid_first[grid_w * grid_h + 1]                snap grid: first entry of each cell
+//   SidecarGridEntry grid[nodes]       every node with its coordinates, in cell order
 //   SidecarMap maps[maps]              the OBF files this was built from
 //
 // Original edge ids >= real_edges are junction transitions (turn costs and
@@ -18,16 +23,17 @@
 #pragma once
 
 #include <fcntl.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -35,13 +41,13 @@
 
 namespace onc_ch {
 
-struct SidecarPoint { int32_t x, y; };
 struct SidecarEdge { u32 road, start, end; };            // start/end: point indexes in travel order
 struct SidecarRoad { int64_t id; int32_t x, y; };        // x, y: a vertex of the road
+struct SidecarGridEntry { u32 node; int32_t x, y; };     // a node and its coordinates (31-bit tile numbers)
 struct SidecarMap { char name[64]; uint64_t size; };     // basename and byte size of an OBF
 
-constexpr char kSidecarMagic[8] = {'O', 'N', 'C', 'H', 'S', 'D', 'C', '1'};
-constexpr u32 kSidecarVersion = 1;
+constexpr char kSidecarMagic[8] = {'O', 'N', 'C', 'H', 'S', 'D', 'C', '2'};
+constexpr u32 kSidecarVersion = 2;
 
 struct SidecarHeader {
     char magic[8];
@@ -50,8 +56,8 @@ struct SidecarHeader {
     u32 out_arcs, in_arcs;
     int32_t grid_min_x, grid_min_y;
     u32 grid_shift, grid_w, grid_h, reserved;
-    uint64_t off_nodes, off_out_first, off_in_first, off_out_arcs, off_in_arcs;
-    uint64_t off_edges, off_roads, off_grid_first, off_grid_nodes, off_maps;
+    uint64_t off_out_first, off_in_first, off_out_arcs, off_in_arcs;
+    uint64_t off_edges, off_roads, off_grid_first, off_grid, off_maps;
     uint64_t file_bytes;
 };
 
@@ -69,58 +75,154 @@ inline double metres_per_unit(double y31)
     return 40075016.686 / 2147483648.0 * std::cos(lat);
 }
 
-class Sidecar {
+// A read-only file behind a page cache with clock eviction.  Not thread-safe: one
+// owner thread (the navigation worker).  Pages are read with pread, so the file can
+// be any size.
+class PageFile {
 public:
-    struct Candidate { u32 node; double metres; };
-
-    // Maps the file and checks it is a sidecar of this version and size.
-    static std::unique_ptr<Sidecar> open(const char* path, std::string& error)
+    static std::unique_ptr<PageFile> open(const char* path, std::string& error,
+                                          size_t page_bytes = 4096, size_t cache_pages = 16384)
     {
         const int fd = ::open(path, O_RDONLY);
         if (fd < 0) { error = std::string("cannot open ") + path; return nullptr; }
         struct stat info {};
-        if (::fstat(fd, &info) != 0 || (size_t)info.st_size < sizeof(SidecarHeader)) {
-            ::close(fd); error = "too small to be a sidecar"; return nullptr;
+        if (::fstat(fd, &info) != 0) { ::close(fd); error = std::string("cannot stat ") + path; return nullptr; }
+        return std::unique_ptr<PageFile>(new PageFile(fd, (uint64_t)info.st_size, page_bytes, cache_pages));
+    }
+
+    ~PageFile() { ::close(fd_); }
+    PageFile(const PageFile&) = delete;
+    PageFile& operator=(const PageFile&) = delete;
+
+    uint64_t size() const { return size_; }
+    uint64_t page_reads() const { return page_reads_; }   // pages fetched from the file
+    uint64_t page_hits() const { return page_hits_; }     // lookups answered from the cache
+
+    // Copies `bytes` bytes at `offset` to dst; false when the range is outside the file or a
+    // read fails.
+    bool read(uint64_t offset, void* dst, size_t bytes)
+    {
+        if (offset > size_ || bytes > size_ - offset) return false;
+        uint8_t* out = static_cast<uint8_t*>(dst);
+        while (bytes) {
+            const uint64_t page = offset / page_bytes_;
+            const size_t inside = (size_t)(offset % page_bytes_);
+            const size_t take = std::min(bytes, page_bytes_ - inside);
+            const uint8_t* data = load(page);
+            if (!data) return false;
+            std::memcpy(out, data + inside, take);
+            out += take; offset += take; bytes -= take;
         }
-        void* map = ::mmap(nullptr, (size_t)info.st_size, PROT_READ, MAP_SHARED, fd, 0);
-        ::close(fd);
-        if (map == MAP_FAILED) { error = "mmap failed"; return nullptr; }
-        std::unique_ptr<Sidecar> sidecar(new Sidecar((const uint8_t*)map, (size_t)info.st_size));
+        return true;
+    }
+
+private:
+    struct Slot { uint64_t page = 0; bool used = false; bool referenced = false; };
+
+    PageFile(int fd, uint64_t size, size_t page_bytes, size_t cache_pages)
+        : fd_(fd), size_(size), page_bytes_(page_bytes), slots_(std::max<size_t>(cache_pages, 2)),
+          data_(new uint8_t[slots_.size() * page_bytes]) {}
+
+    const uint8_t* load(uint64_t page)
+    {
+        const auto hit = where_.find(page);
+        if (hit != where_.end()) {
+            slots_[hit->second].referenced = true;
+            ++page_hits_;
+            return data_.get() + (size_t)hit->second * page_bytes_;
+        }
+        // clock: take an unused slot, or the first unreferenced one, clearing reference bits
+        for (;;) {
+            Slot& slot = slots_[hand_];
+            const size_t index = hand_;
+            hand_ = (hand_ + 1) % slots_.size();
+            if (slot.used && slot.referenced) { slot.referenced = false; continue; }
+            if (slot.used) where_.erase(slot.page);
+            uint8_t* target = data_.get() + index * page_bytes_;
+            const uint64_t start = page * page_bytes_;
+            const size_t want = (size_t)std::min<uint64_t>(page_bytes_, size_ - start);
+            size_t got = 0;
+            while (got < want) {
+                const ssize_t n = ::pread(fd_, target + got, want - got, (off_t)(start + got));
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) { slot.used = false; return nullptr; }
+                got += (size_t)n;
+            }
+            slot = {page, true, true};
+            where_[page] = (u32)index;
+            ++page_reads_;
+            return target;
+        }
+    }
+
+    int fd_;
+    uint64_t size_;
+    size_t page_bytes_;
+    std::vector<Slot> slots_;
+    std::unique_ptr<uint8_t[]> data_;
+    std::unordered_map<uint64_t, u32> where_;
+    size_t hand_ = 0;
+    uint64_t page_reads_ = 0, page_hits_ = 0;
+};
+
+class Sidecar;
+
+// The hierarchy of a sidecar as a Store for BasicQuery.
+class SidecarStore {
+public:
+    explicit SidecarStore(Sidecar& sidecar) : sidecar_(&sidecar) {}
+    const QArc* arcs(bool forward, u32 node, u32& count, std::vector<QArc>& scratch) const;
+private:
+    Sidecar* sidecar_;
+};
+
+class Sidecar {
+public:
+    struct Candidate { u32 node; double metres; };
+
+    // Opens the file and checks it is a sidecar of this version and size.
+    static std::unique_ptr<Sidecar> open(const char* path, std::string& error,
+                                         size_t page_bytes = 4096, size_t cache_pages = 16384)
+    {
+        auto file = PageFile::open(path, error, page_bytes, cache_pages);
+        if (!file) return nullptr;
+        std::unique_ptr<Sidecar> sidecar(new Sidecar(std::move(file)));
         if (!sidecar->validate(error)) return nullptr;
         return sidecar;
     }
 
-    ~Sidecar() { if (base_) ::munmap((void*)base_, bytes_); }
-    Sidecar(const Sidecar&) = delete;
-    Sidecar& operator=(const Sidecar&) = delete;
+    const SidecarHeader& header() const { return header_; }
+    u32 nodes() const { return header_.nodes; }
+    u32 real_edges() const { return header_.real_edges; }
+    PageFile& file() { return *file_; }
+    SidecarStore store() { return SidecarStore(*this); }
 
-    const SidecarHeader& header() const { return *header_; }
-    u32 nodes() const { return header_->nodes; }
-    u32 real_edges() const { return header_->real_edges; }
-    HierarchyView hierarchy() const { return view_; }
-    const SidecarPoint& point(u32 node) const { return points_[node]; }
-    const SidecarEdge& edge(u32 id) const { return edges_[id]; }
-    const SidecarRoad& road(u32 index) const { return roads_[index]; }
-    size_t map_count() const { return header_->maps; }
-    const SidecarMap& map(size_t i) const { return maps_[i]; }
+    bool edge(u32 id, SidecarEdge& out) { return file_->read(header_.off_edges + (uint64_t)id * sizeof(SidecarEdge), &out, sizeof out); }
+    bool road(u32 index, SidecarRoad& out) { return file_->read(header_.off_roads + (uint64_t)index * sizeof(SidecarRoad), &out, sizeof out); }
+    size_t map_count() const { return header_.maps; }
+    bool map(size_t i, SidecarMap& out) { return file_->read(header_.off_maps + i * sizeof(SidecarMap), &out, sizeof out); }
 
     // The k nodes nearest to a point, nearest first, with their distance in metres.
-    void nearest_nodes(int x31, int y31, size_t k, std::vector<Candidate>& out) const
+    void nearest_nodes(int x31, int y31, size_t k, std::vector<Candidate>& out)
     {
         out.clear();
-        const int64_t cx = ((int64_t)x31 - header_->grid_min_x) >> header_->grid_shift;
-        const int64_t cy = ((int64_t)y31 - header_->grid_min_y) >> header_->grid_shift;
-        const int64_t cell = (int64_t)1 << header_->grid_shift;
+        const int64_t cx = ((int64_t)x31 - header_.grid_min_x) >> header_.grid_shift;
+        const int64_t cy = ((int64_t)y31 - header_.grid_min_y) >> header_.grid_shift;
+        const int64_t cell = (int64_t)1 << header_.grid_shift;
         std::vector<std::pair<int64_t, u32>> best;   // max-heap on squared distance, <= k entries
         auto scan = [&](int64_t gx, int64_t gy) {
-            if (gx < 0 || gy < 0 || gx >= (int64_t)header_->grid_w || gy >= (int64_t)header_->grid_h) return;
-            const u32 c = (u32)(gy * header_->grid_w + gx);
-            for (u32 i = grid_first_[c]; i < grid_first_[c + 1]; ++i) {
-                const u32 node = grid_nodes_[i];
-                const int64_t dx = (int64_t)points_[node].x - x31, dy = (int64_t)points_[node].y - y31;
+            if (gx < 0 || gy < 0 || gx >= (int64_t)header_.grid_w || gy >= (int64_t)header_.grid_h) return;
+            const u32 c = (u32)(gy * header_.grid_w + gx);
+            u32 bounds[2];
+            if (!file_->read(header_.off_grid_first + (uint64_t)c * 4, bounds, sizeof bounds) || bounds[1] <= bounds[0]) return;
+            entries_.resize(bounds[1] - bounds[0]);
+            if (!file_->read(header_.off_grid + (uint64_t)bounds[0] * sizeof(SidecarGridEntry), entries_.data(),
+                             entries_.size() * sizeof(SidecarGridEntry))) return;
+            for (const SidecarGridEntry& e : entries_) {
+                const int64_t dx = (int64_t)e.x - x31, dy = (int64_t)e.y - y31;
                 const int64_t d = dx * dx + dy * dy;
                 if (best.size() == k && d >= best.front().first) continue;
-                best.push_back({d, node});
+                best.push_back({d, e.node});
                 std::push_heap(best.begin(), best.end());
                 if (best.size() > k) { std::pop_heap(best.begin(), best.end()); best.pop_back(); }
             }
@@ -142,64 +244,71 @@ public:
     }
 
 private:
-    Sidecar(const uint8_t* base, size_t bytes) : base_(base), bytes_(bytes) {}
-
-    template <class T> const T* at(uint64_t offset) const { return (const T*)(base_ + offset); }
+    explicit Sidecar(std::unique_ptr<PageFile> file) : file_(std::move(file)) {}
 
     bool validate(std::string& error)
     {
-        header_ = at<SidecarHeader>(0);
-        const SidecarHeader& h = *header_;
+        if (file_->size() < sizeof(SidecarHeader) || !file_->read(0, &header_, sizeof header_)) {
+            error = "too small to be a sidecar"; return false;
+        }
+        const SidecarHeader& h = header_;
         if (std::memcmp(h.magic, kSidecarMagic, 8) != 0) { error = "not a routing sidecar"; return false; }
         if (h.version != kSidecarVersion || h.header_bytes != sizeof(SidecarHeader)) {
             error = "unsupported sidecar version"; return false;
         }
-        if (h.file_bytes != bytes_) { error = "sidecar size does not match its header (truncated copy?)"; return false; }
+        const uint64_t bytes = file_->size();
+        if (h.file_bytes != bytes) { error = "sidecar size does not match its header (truncated copy?)"; return false; }
         auto fits = [&](uint64_t offset, uint64_t count, uint64_t each) {
-            return offset % 8 == 0 && offset <= bytes_ && count <= (bytes_ - offset) / (each ? each : 1);
+            return offset % 8 == 0 && offset <= bytes && count <= (bytes - offset) / (each ? each : 1);
         };
         const uint64_t cells = (uint64_t)h.grid_w * h.grid_h;
-        if (!fits(h.off_nodes, h.nodes, sizeof(SidecarPoint)) ||
-            !fits(h.off_out_first, (uint64_t)h.nodes + 1, 4) || !fits(h.off_in_first, (uint64_t)h.nodes + 1, 4) ||
+        if (!fits(h.off_out_first, (uint64_t)h.nodes + 1, 4) || !fits(h.off_in_first, (uint64_t)h.nodes + 1, 4) ||
             !fits(h.off_out_arcs, h.out_arcs, sizeof(QArc)) || !fits(h.off_in_arcs, h.in_arcs, sizeof(QArc)) ||
             !fits(h.off_edges, h.real_edges, sizeof(SidecarEdge)) || !fits(h.off_roads, h.roads, sizeof(SidecarRoad)) ||
-            !fits(h.off_grid_first, cells + 1, 4) || !fits(h.off_grid_nodes, h.nodes, 4) ||
+            !fits(h.off_grid_first, cells + 1, 4) || !fits(h.off_grid, h.nodes, sizeof(SidecarGridEntry)) ||
             !fits(h.off_maps, h.maps, sizeof(SidecarMap))) {
             error = "sidecar section outside the file"; return false;
         }
-        points_ = at<SidecarPoint>(h.off_nodes);
-        view_ = {h.nodes, at<u32>(h.off_out_first), at<u32>(h.off_in_first),
-                 at<QArc>(h.off_out_arcs), at<QArc>(h.off_in_arcs)};
-        edges_ = at<SidecarEdge>(h.off_edges);
-        roads_ = at<SidecarRoad>(h.off_roads);
-        grid_first_ = at<u32>(h.off_grid_first);
-        grid_nodes_ = at<u32>(h.off_grid_nodes);
-        maps_ = at<SidecarMap>(h.off_maps);
-        if (view_.out_first[h.nodes] != h.out_arcs || view_.in_first[h.nodes] != h.in_arcs) {
+        u32 out_end = 0, in_end = 0;
+        if (!file_->read(h.off_out_first + (uint64_t)h.nodes * 4, &out_end, 4) ||
+            !file_->read(h.off_in_first + (uint64_t)h.nodes * 4, &in_end, 4) ||
+            out_end != h.out_arcs || in_end != h.in_arcs) {
             error = "sidecar hierarchy offsets are inconsistent"; return false;
         }
         return true;
     }
 
-    const uint8_t* base_;
-    size_t bytes_;
-    const SidecarHeader* header_ = nullptr;
-    const SidecarPoint* points_ = nullptr;
-    HierarchyView view_;
-    const SidecarEdge* edges_ = nullptr;
-    const SidecarRoad* roads_ = nullptr;
-    const u32* grid_first_ = nullptr;
-    const u32* grid_nodes_ = nullptr;
-    const SidecarMap* maps_ = nullptr;
+    friend class SidecarStore;
+    std::unique_ptr<PageFile> file_;
+    SidecarHeader header_ {};
+    std::vector<SidecarGridEntry> entries_;   // scratch for one grid cell
 };
 
-// Routes between two points over a sidecar.  One Router per thread (it owns the
-// query state); the Sidecar itself is shared and read-only.
+// The arcs of `node`: two offsets and the arcs between them, through the page cache.
+inline const QArc* SidecarStore::arcs(bool forward, u32 node, u32& count, std::vector<QArc>& scratch) const
+{
+    const SidecarHeader& h = sidecar_->header_;
+    u32 bounds[2];
+    count = 0;
+    if (!sidecar_->file_->read((forward ? h.off_out_first : h.off_in_first) + (uint64_t)node * 4, bounds, sizeof bounds) ||
+        bounds[1] < bounds[0])
+        return nullptr;
+    const u32 n = bounds[1] - bounds[0];
+    scratch.resize(n);
+    if (n && !sidecar_->file_->read((forward ? h.off_out_arcs : h.off_in_arcs) + (uint64_t)bounds[0] * sizeof(QArc),
+                                    scratch.data(), (size_t)n * sizeof(QArc)))
+        return nullptr;
+    count = n;
+    return scratch.data();
+}
+
+// Routes between two points over a sidecar.  One Router per sidecar and thread (the
+// sidecar's page cache and the query state are not shared).
 class Router {
 public:
     enum class Status { Ok, NoRoute, Inconsistent };
 
-    explicit Router(const Sidecar& sidecar) : sidecar_(sidecar), query_(sidecar.hierarchy()) {}
+    explicit Router(Sidecar& sidecar) : sidecar_(sidecar), query_(sidecar.store()) {}
 
     // Start and end are snapped to the nearest few nodes within kMaxSnapMetres (a point
     // farther from every road has no route); the snap distance counts as a slow walk
@@ -231,8 +340,7 @@ public:
         query_.run(best_from, best_to, meet);   // path_edges reads the last run
         if (!query_.path_edges(best_from, best_to, meet, edges_)) return Status::Inconsistent;
         cost = best_cost;
-        merge(runs);
-        return Status::Ok;
+        return merge(runs) ? Status::Ok : Status::Inconsistent;
     }
 
     size_t settled() const { return query_.settled; }
@@ -245,12 +353,13 @@ private:
 
     // Consecutive original edges of one road become one stretch; junction
     // transitions (ids beyond the real edges) have no road and are skipped.
-    void merge(std::vector<RoadRun>& runs) const
+    bool merge(std::vector<RoadRun>& runs)
     {
         for (u32 id : edges_) {
             if (id >= sidecar_.real_edges()) continue;
-            const SidecarEdge& e = sidecar_.edge(id);
-            const SidecarRoad& road = sidecar_.road(e.road);
+            SidecarEdge e;
+            SidecarRoad road;
+            if (!sidecar_.edge(id, e) || !sidecar_.road(e.road, road)) return false;
             const int start = (int)e.start, end = (int)e.end;
             if (!runs.empty() && runs.back().road == road.id && runs.back().end == start &&
                 ((runs.back().end > runs.back().start) == (end > start))) {
@@ -259,10 +368,11 @@ private:
                 runs.push_back({road.id, start, end, road.x, road.y});
             }
         }
+        return true;
     }
 
-    const Sidecar& sidecar_;
-    Query query_;
+    Sidecar& sidecar_;
+    BasicQuery<SidecarStore> query_;
     std::vector<Sidecar::Candidate> from_, to_;
     std::vector<u32> edges_;
 };

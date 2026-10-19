@@ -2,6 +2,7 @@
 
 
 #include "ch_planner.h"
+#include "config.h"
 #include "diagnostics.h"
 #include "route_check.h"
 #include "session.h"
@@ -499,7 +500,7 @@ private:
             const auto map = initBinaryMapFile(path, false, true);
             if (map && !map->routingIndexes.empty()) {
                 ++routable;
-                routable_maps.push_back(path);
+                if (!is_basemap(path)) routable_maps.push_back(path);   // a world basemap is never routed on
                 const bool car_hh = std::any_of(map->hhIndexes.begin(), map->hhIndexes.end(),
                     [](const SHARED_PTR<HHRouteIndex>& index) { return index->profile == "car"; });
                 if (car_hh) ++with_hh;

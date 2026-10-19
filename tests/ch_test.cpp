@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <queue>
@@ -123,9 +124,10 @@ int main()
         auto sidecar = Sidecar::open(path.c_str(), error);
         assert(sidecar);
         assert(sidecar->nodes() == g.n && sidecar->real_edges() == g.m);
-        assert(sidecar->map_count() == 1 && std::strcmp(sidecar->map(0).name, "Test_region.obf") == 0);
-        assert(sidecar->map(0).size == 123456);
-        assert(sidecar->hierarchy().out_first[g.n] == h.out_arcs.size());
+        SidecarMap listed;
+        assert(sidecar->map_count() == 1 && sidecar->map(0, listed));
+        assert(std::strcmp(listed.name, "Test_region.obf") == 0 && listed.size == 123456);
+        assert(sidecar->header().out_arcs == h.out_arcs.size() && sidecar->header().in_arcs == h.in_arcs.size());
 
         // nearest nodes: the grid search finds what a scan of every node finds
         std::mt19937 rng(11);
@@ -140,7 +142,10 @@ int main()
             }
             std::sort(all.begin(), all.end());
             assert(found.size() == 4);
-            for (size_t k = 0; k < 4; ++k) assert(found[k].node == all[k].second);
+            // nodes are numbered along a curve in the sidecar, so compare by distance
+            const double scale = metres_per_unit((double)y);
+            for (size_t k = 0; k < 4; ++k)
+                assert(std::fabs(found[k].metres - std::sqrt((double)all[k].first) * scale) < 1e-6);
             assert(found[0].metres <= found[3].metres);
         }
         // a point far outside the map has no nearby node
@@ -160,6 +165,25 @@ int main()
             assert(cost <= dijkstra(g, s, t));
             if (s != t) assert(!runs.empty());
         }
+
+        // the same routes through a cache of three 64-byte pages (every read evicts)
+        auto tiny = Sidecar::open(path.c_str(), error, 64, 3);
+        assert(tiny);
+        Router small(*tiny);
+        std::vector<RoadRun> small_runs;
+        for (int i = 0; i < 60; ++i) {
+            const u32 s = rng() % g.n, t = rng() % g.n;
+            u32 cost = 0, small_cost = 0;
+            const auto status = router.route(g.x[s], g.y[s], g.x[t], g.y[t], runs, cost);
+            const auto small_status = small.route(g.x[s], g.y[s], g.x[t], g.y[t], small_runs, small_cost);
+            assert(status == small_status);
+            if (status != Router::Status::Ok) continue;
+            assert(cost == small_cost && runs.size() == small_runs.size());
+            for (size_t k = 0; k < runs.size(); ++k)
+                assert(runs[k].road == small_runs[k].road && runs[k].start == small_runs[k].start &&
+                       runs[k].end == small_runs[k].end);
+        }
+        assert(tiny->file().page_reads() > tiny->file().page_hits() / 100);   // it really did page
         unlink(path.c_str());
     }
 

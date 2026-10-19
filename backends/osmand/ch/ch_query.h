@@ -4,13 +4,15 @@
 //
 // The hierarchy is the result of contracting the directed road graph in
 // importance order.  Every node keeps only its *upward* arcs (to nodes
-// contracted later): out_arcs for the forward search, in_arcs (arcs that point
+// contracted later): out arcs for the forward search, in arcs (arcs that point
 // at the node from higher nodes) for the backward search.  A shortcut arc
 // stores its middle node in `via`; an original edge stores BASE | edge id.
 //
-// Queries read the hierarchy through a HierarchyView, so it can live in a
-// memory-mapped file; per-query state is a small hash table (a query settles a
-// few hundred nodes, however large the graph is).
+// The query reads arcs through a Store: HierarchyView (plain arrays, used by
+// the tools and the tests) or the sidecar's paged file store (the radio, where
+// the hierarchy is far larger than a 32-bit process can map).  Per-query state
+// is a small hash table (a query settles a few hundred nodes, however large the
+// graph is).
 #pragma once
 
 #include <algorithm>
@@ -35,13 +37,22 @@ struct QArc {
     u32 via;   // middle node of a shortcut, or BASE | original edge id
 };
 
-// Read-only view of a hierarchy: n nodes, CSR offsets (n + 1 entries each) and arcs.
+// A hierarchy held in plain arrays: n nodes, CSR offsets (n + 1 entries each) and arcs.
+// Also the simplest Store.
 struct HierarchyView {
     u32 n = 0;
     const u32* out_first = nullptr;
     const u32* in_first = nullptr;
     const QArc* out_arcs = nullptr;
     const QArc* in_arcs = nullptr;
+
+    // The upward arcs of `node` for the forward (out) or backward (in) search.
+    const QArc* arcs(bool forward, u32 node, u32& count, std::vector<QArc>& /*scratch*/) const
+    {
+        const u32* first = forward ? out_first : in_first;
+        count = first[node + 1] - first[node];
+        return (forward ? out_arcs : in_arcs) + first[node];
+    }
 };
 
 struct Hierarchy {
@@ -88,9 +99,12 @@ inline bool load_hierarchy(const char* path, Hierarchy& h, std::string& error, b
     return ok;
 }
 
-class Query {
+// Store must provide: const QArc* arcs(bool forward, u32 node, u32& count, std::vector<QArc>& scratch) const.
+// The returned pointer is valid until the next call with the same scratch.
+template <class Store>
+class BasicQuery {
 public:
-    explicit Query(const HierarchyView& hierarchy) : h_(hierarchy) {}
+    explicit BasicQuery(Store store) : store_(std::move(store)) {}
 
     // Cheapest cost from source to target, INF when unreachable.  `meet` is
     // the node where the two upward searches met.
@@ -118,21 +132,21 @@ public:
                 best = d + opposite->dist; meet = u;
             }
             // stall on demand: a higher node already reaches u more cheaply
-            const u32* stall_first = forward ? h_.in_first : h_.out_first;
-            const QArc* stall_arcs = forward ? h_.in_arcs : h_.out_arcs;
+            u32 count = 0;
+            const QArc* stall = store_.arcs(!forward, u, count, scratch_);
             bool stalled = false;
-            for (u32 i = stall_first[u]; i < stall_first[u + 1]; ++i) {
-                const QArc& a = stall_arcs[i];
-                if (const Entry* reached = mine.find(a.to); reached && reached->dist + a.w < d) { stalled = true; break; }
+            for (u32 i = 0; i < count; ++i) {
+                if (const Entry* reached = mine.find(stall[i].to); reached && reached->dist + stall[i].w < d) {
+                    stalled = true;
+                    break;
+                }
             }
             if (stalled) continue;
-            const u32* first = forward ? h_.out_first : h_.in_first;
-            const QArc* arcs = forward ? h_.out_arcs : h_.in_arcs;
-            for (u32 i = first[u]; i < first[u + 1]; ++i) {
-                const QArc& a = arcs[i];
-                const u32 nd = d + a.w;
-                const Entry* known = mine.find(a.to);
-                if (!known || nd < known->dist) { mine.set(a.to, nd, u); q.push({nd, a.to}); }
+            const QArc* arcs = store_.arcs(forward, u, count, scratch_);
+            for (u32 i = 0; i < count; ++i) {
+                const u32 nd = d + arcs[i].w;
+                const Entry* known = mine.find(arcs[i].to);
+                if (!known || nd < known->dist) { mine.set(arcs[i].to, nd, u); q.push({nd, arcs[i].to}); }
             }
         }
         return best;
@@ -140,7 +154,7 @@ public:
 
     // Original edge ids of the cheapest path found by the last run().
     // False when the hierarchy is inconsistent (a shortcut without its halves).
-    bool path_edges(u32 source, u32 target, u32 meet, std::vector<u32>& edges) const
+    bool path_edges(u32 source, u32 target, u32 meet, std::vector<u32>& edges)
     {
         edges.clear();
         std::vector<u32> up;                       // source ... meet
@@ -148,13 +162,13 @@ public:
         std::reverse(up.begin(), up.end());
         std::vector<u32> down;                     // meet ... target
         for (u32 v = meet;; v = b_.find(v)->parent) { down.push_back(v); if (v == target) break; }
+        QArc arc {0, 0, 0};
         for (size_t i = 0; i + 1 < up.size(); ++i) {
-            const QArc* a = find(h_.out_first, h_.out_arcs, up[i], up[i + 1]);
-            if (!a || !unpack(up[i], up[i + 1], a->via, edges)) return false;
+            if (!find(true, up[i], up[i + 1], arc) || !unpack(up[i], up[i + 1], arc.via, edges)) return false;
         }
         for (size_t i = 0; i + 1 < down.size(); ++i) {
-            const QArc* a = find(h_.in_first, h_.in_arcs, down[i + 1], down[i]);   // down[i] -> down[i + 1]
-            if (!a || !unpack(down[i], down[i + 1], a->via, edges)) return false;
+            // down[i] -> down[i + 1] is stored at the lower end, down[i + 1], as an in arc
+            if (!find(false, down[i + 1], down[i], arc) || !unpack(down[i], down[i + 1], arc.via, edges)) return false;
         }
         return true;
     }
@@ -208,25 +222,34 @@ private:
         u32 used_ = 0;
     };
 
-    static const QArc* find(const u32* first, const QArc* arcs, u32 at, u32 to)
+    // The cheapest arc at -> to in the upward out (forward) or in arcs of `at`.
+    bool find(bool forward, u32 at, u32 to, QArc& result)
     {
-        const QArc* hit = nullptr;
-        for (u32 i = first[at]; i < first[at + 1]; ++i)
-            if (arcs[i].to == to && (!hit || arcs[i].w < hit->w)) hit = &arcs[i];
+        u32 count = 0;
+        const QArc* arcs = store_.arcs(forward, at, count, find_scratch_);
+        bool hit = false;
+        for (u32 i = 0; i < count; ++i)
+            if (arcs[i].to == to && (!hit || arcs[i].w < result.w)) { result = arcs[i]; hit = true; }
         return hit;
     }
 
     // a -> b is stored at its lower end; a shortcut is its two halves through `via`.
-    bool unpack(u32 a, u32 b, u32 via, std::vector<u32>& edges) const
+    bool unpack(u32 a, u32 b, u32 via, std::vector<u32>& edges)
     {
         if (via & BASE) { edges.push_back(via & ~BASE); return true; }
-        const QArc* left = find(h_.in_first, h_.in_arcs, via, a);     // a -> via, via lower
-        const QArc* right = find(h_.out_first, h_.out_arcs, via, b);  // via -> b
-        return left && right && unpack(a, via, left->via, edges) && unpack(via, b, right->via, edges);
+        QArc left {0, 0, 0}, right {0, 0, 0};
+        if (!find(false, via, a, left) ||     // a -> via, via lower: an in arc of via
+            !find(true, via, b, right))       // via -> b: an out arc of via
+            return false;
+        const u32 left_via = left.via, right_via = right.via;
+        return unpack(a, via, left_via, edges) && unpack(via, b, right_via, edges);
     }
 
-    HierarchyView h_;
-    Table f_, b_;   // forward and backward search state
+    Store store_;
+    Table f_, b_;                                // forward and backward search state
+    std::vector<QArc> scratch_, find_scratch_;   // arcs fetched from a file-backed store
 };
+
+using Query = BasicQuery<HierarchyView>;
 
 }  // namespace onc_ch
