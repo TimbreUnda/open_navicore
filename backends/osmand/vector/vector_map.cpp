@@ -3069,6 +3069,10 @@ void VectorMap::Impl::draw(const MapView& view, double dt, bool clear, bool& wan
         glEnableVertexAttribArray(6);
     }
     // Route above the roads, then the turn arrow, both below the labels.
+    // Roads thin out when zoomed out (wscale < 1), but the route overlay must
+    // stay legible at overview zoom, so floor its width at the design size and
+    // let it grow only when zoomed in.
+    glUniform1f(line_wscale, std::max(wscale, 1.0f));
     for (const GpuMesh* group : {&route_static, &arrow_lines}) {
         for (int pass = 0; pass < 2; ++pass) {
             glUniform1f(line_casing, pass == 0 ? 1.0f : 0.0f);
