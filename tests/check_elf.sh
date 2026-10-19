@@ -24,7 +24,7 @@ done
 for symbol in panaVersionCheck panaInitialize panaGetSoftwareInfrastructure panaDeinitialize \
     open_navi_backend_install_v1 open_navi_backend_install_v2 \
 	    open_navi_backend_install_v3 open_navi_backend_install_v4 \
-        open_navi_backend_install_v5 \
+        open_navi_backend_install_v5 open_navi_backend_install_v6 \
     open_navi_cluster_backend_serialize open_navi_cluster_backend_publish \
     open_navi_cluster_backend_reset; do
     count=$(printf '%s\n' "$symbols" | awk -v wanted="$symbol" '$4 == "FUNC" && $5 == "GLOBAL" && $8 == wanted { n++ } END { print n+0 }')
@@ -61,6 +61,7 @@ expected_exports=$(printf '%s\n' \
 	    open_navi_backend_install_v3 \
     open_navi_backend_install_v4 \
     open_navi_backend_install_v5 \
+    open_navi_backend_install_v6 \
     panaDeinitialize \
     panaGetSoftwareInfrastructure \
     panaInitialize \

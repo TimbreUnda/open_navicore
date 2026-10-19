@@ -60,13 +60,20 @@ public:
                     std::shared_ptr<Wakeup>) override;
     FrameResult frame(const OpenNaviBackendRenderTargetV1&) override;
     int gps(const OpenNaviBackendGpsV1&) override;
-    void visibility(const OpenNaviBackendVisibilityV1& event) override;
+    void visibility(const OpenNaviBackendVisibilityV2& event) override;
+    // HMI split screen (Media screen block) from the latest visibility.
+    void apply_split();
     void screen(const OpenNaviBackendScreenV1& event) override;
     void vehicle(const OpenNaviBackendVehicleV2& event) override;
     void internationalization(const OpenNaviBackendInternationalizationV1& event) override;
     void cluster_display(const OpenNaviBackendClusterDisplayV1& event) override;
     void driver_distraction(const OpenNaviBackendDriverDistractionV1& event) override;
     void set_outbound(const OpenNaviBackendServicesV2* services) override { outbound_ = services; }
+    void set_guidance_outbound(const OpenNaviBackendServicesV3* services) override
+    {
+        guidance_outbound_ = services;
+    }
+    void guidance_stop(const OpenNaviBackendGuidanceStopV1& event) override;
     int pointer(const OpenNaviBackendPointerV2&) override;
     ReleaseResult release(ReleaseMode) override;
 
@@ -134,12 +141,18 @@ private:
     // Platform inputs, raw (meanings not qualified): kept for the
     // developer menu and traced when they change; nothing acts on them.
     template <typename T> struct Raw { T value{}; bool has = false; };
-    Raw<OpenNaviBackendVisibilityV1> visibility_in_;
+    Raw<OpenNaviBackendVisibilityV2> visibility_in_;
     Raw<OpenNaviBackendScreenV1> screen_in_;
     Raw<OpenNaviBackendVehicleV2> vehicle_in_;
     Raw<OpenNaviBackendInternationalizationV1> language_in_;
     Raw<OpenNaviBackendClusterDisplayV1> cluster_display_in_;
     Raw<OpenNaviBackendDriverDistractionV1> distraction_in_;
+    // Route guidance on/off for the platform (backend V6), published when
+    // it changes; nv_navigation polls it about once a second.
+    const OpenNaviBackendServicesV3* guidance_outbound_ = nullptr;
+    void publish_guidance_state();
+    bool guidance_state_published_ = false;
+    bool guidance_state_last_ = false;
     // Instrument cluster: the guidance state in the recovered cluster
     // fields, published on change (at most twice a second).
     const OpenNaviBackendServicesV2* outbound_ = nullptr;
@@ -449,6 +462,7 @@ bool OsmAndEngine::initialize(const Config& config,
     view_ = std::unique_ptr<ui::NavigationView>(
         new ui::NavigationView(*navigation_, target.width, target.height));
     trace("init=view");
+    apply_split();
     const QByteArray routing_xml = resources_->getResource(
         QStringLiteral("routing/routing.xml"), &resource_ok);
     if (!resource_ok || routing_xml.isEmpty())
@@ -883,10 +897,31 @@ std::string printf_string(const char* format, ...)
 }
 } // namespace
 
-void OsmAndEngine::visibility(const OpenNaviBackendVisibilityV1& event)
+void OsmAndEngine::visibility(const OpenNaviBackendVisibilityV2& event)
 {
     visibility_in_ = {event, true};
     trace_result("input=visibility", event.visibility, event.interactivity);
+    trace_result("input=visibility_area",
+                 static_cast<std::uint64_t>(static_cast<std::uint32_t>(event.area_x)) << 32 |
+                     static_cast<std::uint32_t>(event.area_y),
+                 static_cast<std::size_t>(event.area_width) << 16 | event.area_height);
+    apply_split();
+}
+
+void OsmAndEngine::apply_split()
+{
+    if (!view_ || !visibility_in_.has)
+        return;
+    const auto& event = visibility_in_.value;
+    const bool split = event.visibility == OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN &&
+                       event.area_width > 0 && event.area_height > 0;
+    ui::NavigationView::MapArea area;
+    area.x = event.area_x;
+    area.y = event.area_y;
+    area.width = static_cast<int>(std::min<std::uint32_t>(event.area_width, INT32_MAX));
+    area.height = static_cast<int>(std::min<std::uint32_t>(event.area_height, INT32_MAX));
+    if (view_->set_split_area(split, area))
+        trace_result("ui=split_layout", view_->split() ? 1u : 0u, 0u);
 }
 
 void OsmAndEngine::screen(const OpenNaviBackendScreenV1& event)
@@ -926,6 +961,34 @@ void OsmAndEngine::driver_distraction(const OpenNaviBackendDriverDistractionV1& 
         trace_result("input=driver_distraction", event.distraction_status_raw, 0u);
 }
 
+// The platform asks to end guidance (nv_navigation requestGuidanceStop, e.g.
+// when a phone projection takes navigation focus): the same transition as
+// the End button, published at once.
+void OsmAndEngine::guidance_stop(const OpenNaviBackendGuidanceStopV1& event)
+{
+    const bool ended = view_ && view_->end_guidance();
+    trace_result("input=guidance_stop", event.request_handle, ended ? 1u : 0u);
+    publish_guidance_state();
+}
+
+void OsmAndEngine::publish_guidance_state()
+{
+    if (!guidance_outbound_ || !guidance_outbound_->publish_guidance_state)
+        return;
+    const bool guiding = navigation_ && navigation_->screen() == ui::Screen::Guidance;
+    if (guidance_state_published_ && guiding == guidance_state_last_)
+        return;
+    OpenNaviBackendGuidanceStateV1 state{};
+    state.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+    state.struct_size = sizeof(state);
+    state.guiding = guiding ? OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE : OPEN_NAVI_BACKEND_GUIDANCE_IDLE;
+    const uint32_t status = guidance_outbound_->publish_guidance_state(
+        guidance_outbound_->v2.v1.runtime_context, &state);
+    guidance_state_published_ = true;
+    guidance_state_last_ = guiding;
+    trace_result("guidance=publish_state", state.guiding, status);
+}
+
 // Instrument cluster: published on change, at most twice a second
 // (payload rules in cluster_payload.cpp).
 void OsmAndEngine::publish_cluster()
@@ -947,6 +1010,12 @@ void OsmAndEngine::publish_cluster()
     ClusterPayload payload = build_cluster_payload(inputs);
     if (cluster_published_ && payload.same_as(cluster_last_))
         return;
+    // A new road text alone does not redraw the cluster: send it once with
+    // a neighbouring symbol; the next publication (500 ms on) restores the
+    // real symbol, which redraws again with the new text.
+    if (cluster_published_ && apply_text_redraw(payload, cluster_last_))
+        trace_result("cluster=text_redraw", payload.cluster.route_guidance_symbol,
+                     cluster_last_.cluster.route_guidance_symbol);
     const uint32_t status =
         outbound_->publish_cluster(outbound_->v1.runtime_context, &payload.cluster);
     cluster_last_ = std::move(payload);
@@ -1661,6 +1730,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         }
     }
     advance_benchmark_autostart();
+    publish_guidance_state();
     publish_cluster();
     update_dev_menu();
     // Recents change only on guidance start; save outside the hot path.
@@ -1875,6 +1945,19 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         return ReleaseResult::Quarantined;
     }
     if (phase_ == Phase::Ready) {
+        // Guidance ends with this engine: tell the platform while the
+        // services are still current (stale after stop: ignored).
+        if (guidance_state_published_ && guidance_state_last_ && guidance_outbound_ &&
+            guidance_outbound_->publish_guidance_state) {
+            OpenNaviBackendGuidanceStateV1 state{};
+            state.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+            state.struct_size = sizeof(state);
+            state.guiding = OPEN_NAVI_BACKEND_GUIDANCE_IDLE;
+            (void)guidance_outbound_->publish_guidance_state(
+                guidance_outbound_->v2.v1.runtime_context, &state);
+        }
+        guidance_state_published_ = false;
+        guidance_state_last_ = false;
         // Set the failure state BEFORE invoking dependency code that may throw
         // or fail after tearing down only part of the resource graph.
         phase_ = Phase::Quarantined;

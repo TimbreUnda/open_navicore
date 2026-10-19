@@ -6,7 +6,13 @@ the stock UI on an unlocked stationary bench unit. It now includes an LVGL
 search/route/guidance flow, asynchronous offline routing, route geometry and
 coordinate-based map following. The new guidance slice has host and cross-build
 verification and still needs the bench qualification below. Pan/zoom controls,
-rerouting, audio and cluster output are not implemented.
+rerouting and audio are not implemented. The instrument cluster gets the
+turn view (arrow symbol, maneuver distance, road text) through
+`cluster_payload.cpp`; where OsmAnd's attached roads give the junction
+shape, the picture shows it (4-way crossing, T, side road, diagonal crossing,
+exit, three-way split, lane change; `junction_shape.cpp`), otherwise the
+turn-type arrow. The symbol mapping is in `docs/technical.md`
+("Instrument-cluster backend and OsmAnd mapping").
 
 ## Components and ownership
 
@@ -16,6 +22,8 @@ rerouting, audio and cluster output are not implemented.
 | `config.*` | Owned environment snapshot at start |
 | `session.*` | Lifecycle, attachment generations, worker wakeups, frame policy and rollback decisions |
 | `engine.h` | Small injectable engine interface; no Qt/OsmAnd types |
+| `cluster_payload.*` | Instrument-cluster record: maneuver symbol, distances, road text, bar; text-only redraw |
+| `junction_shape.*` | Pure junction description (`ui::JunctionShape`) and its classification into cluster junction pictures, with fallback to the turn type |
 | `osmand_engine.cpp` | Core, resource bundle, map pipeline and renderer ownership |
 | `navigation_worker.*` | Off-thread offline search and legacy OsmAnd route calculation |
 | `guidance_tracker.*` | Route projection, monotonic progress and maneuver selection |

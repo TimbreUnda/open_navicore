@@ -1,7 +1,9 @@
 #include "navigation_worker.h"
 
 
+#include "cluster_payload.h"
 #include "diagnostics.h"
+#include "junction_shape.h"
 #include "route_check.h"
 #include "session.h"
 #include "ui/localization.h"
@@ -249,6 +251,75 @@ void place_worker_thread()
 }
 
 using Segments = std::vector<SHARED_PTR<RouteSegmentResult>>;
+
+// Bearings over the first 10 m of each road, as OsmAnd's own turn decision
+// (getTurnInfo, DIST_BEARING_DETECT).
+constexpr float kJunctionBearingMetres = 10.0f;
+
+// The junction at the start of segments[index] (where OsmAnd puts the
+// turn): the route's and every other road's direction, relative to the
+// incoming direction (positive clockwise). Other roads: the segment's
+// attached roads at its start point (prepareResult /
+// attachRoadSegments: the incoming road's continuation and each road the
+// router could leave the node by; one-way roads that only enter the node
+// are not attached), plus the route's own road behind the node, which
+// OsmAnd does not attach (same way id).
+ui::JunctionShape junction_of(Segments& segments, std::size_t index)
+{
+    if (index == 0 || index >= segments.size()) return {};
+    const auto& previous = segments[index - 1];
+    const auto& current = segments[index];
+    if (!previous || !current || !previous->object || !current->object) return {};
+    const double incoming =
+        previous->getBearingEnd(previous->getEndPointIndex(), kJunctionBearingMetres);
+    const int start = current->getStartPointIndex();
+    const double route = current->getBearingBegin(start, kJunctionBearingMetres);
+    std::vector<double> arms;
+    for (const auto& attached : current->getAttachedRoutes(start)) {
+        if (!attached || !attached->object) continue;
+        arms.push_back(degreesDiff(attached->getBearingBegin(), incoming));
+    }
+    const bool forward = current->getEndPointIndex() > start;
+    const int points = static_cast<int>(current->object->getPointsLength());
+    if (current->object->getId() != previous->object->getId() &&
+        (forward ? start > 0 : start < points - 1)) {
+        const double behind =
+            current->object->directionRoute(start, !forward, kJunctionBearingMetres) / M_PI *
+            180.0;
+        arms.push_back(degreesDiff(behind, incoming));
+    }
+    return make_junction_shape(degreesDiff(route, incoming), arms);
+}
+
+// One trace line per manoeuvre of the main route (bounded), so that a live
+// drive can be checked against the cluster picture: the junction
+// description, the junction picture (0: none) and the symbol sent.
+constexpr std::size_t kJunctionTraceMax = 40;
+
+void trace_junction(std::size_t number, const ui::Maneuver& maneuver)
+{
+    const auto& j = maneuver.junction;
+    char arms[64] = "";
+    std::size_t used = 0;
+    for (std::size_t i = 0; i < j.branch_count && used < sizeof(arms); ++i) {
+        const int n = std::snprintf(arms + used, sizeof(arms) - used, "%s%.0f", i ? "," : "",
+                                    static_cast<double>(j.branches[i]));
+        if (n < 0) break;
+        used += static_cast<std::size_t>(n);
+    }
+    char line[200];
+    std::snprintf(line, sizeof(line),
+                  "worker=junction n=%zu kind=%d osmand_angle=%.0f valid=%d route=%.0f "
+                  "arms=%s%s through=%d lanes=%u rec=0x%x change=%d shape=%u symbol=%u",
+                  number, static_cast<int>(maneuver.kind), maneuver.turn_angle_degrees,
+                  j.valid ? 1 : 0, static_cast<double>(j.route_angle), arms,
+                  j.truncated ? "+" : "", j.through_road ? 1 : 0,
+                  static_cast<unsigned>(j.lane_count), static_cast<unsigned>(j.recommended_lanes),
+                  static_cast<int>(j.lane_change),
+                  static_cast<unsigned>(junction_symbol(maneuver)),
+                  static_cast<unsigned>(maneuver_symbol(maneuver)));
+    trace(line);
+}
 
 // What the router returned, as plain legs for the geometry check.
 RouteCheck check_segments(const Segments& segments)
@@ -684,6 +755,14 @@ private:
                 maneuver.geometry_index = geometry_at_start;
                 maneuver.roundabout_exit = segment->turnType->getExitOut();
                 maneuver.lanes = lanes_of(segment->turnType);
+                maneuver.left_side = segment->turnType->isLeftSide();
+                maneuver.turn_angle_degrees = segment->turnType->getTurnAngle();
+                if (!segment->turnType->isRoundAbout()) {
+                    maneuver.junction = junction_of(segments, segment_index);
+                    summarize_lanes(maneuver.lanes, maneuver.junction);
+                }
+                if (route_index == 0 && alternative.maneuvers.size() < kJunctionTraceMax)
+                    trace_junction(alternative.maneuvers.size(), maneuver);
                 alternative.maneuvers.push_back(std::move(maneuver));
             }
             alternative.distance_metres += segment->distance;
@@ -703,9 +782,12 @@ private:
         alternative.duration = duration_label(alternative.duration_seconds);
         alternative.distance = distance_label(alternative.distance_metres);
         if (alternative.geometry.size() < 2) return alternative;
-        alternative.maneuvers.push_back({
-            ui::ManeuverKind::Arrive, request.destination.title,
-            alternative.distance_metres, alternative.geometry.size() - 1u, 0, {}});
+        ui::Maneuver arrive;
+        arrive.kind = ui::ManeuverKind::Arrive;
+        arrive.road = request.destination.title;
+        arrive.distance_from_start_metres = alternative.distance_metres;
+        arrive.geometry_index = alternative.geometry.size() - 1u;
+        alternative.maneuvers.push_back(std::move(arrive));
         return alternative;
     }
 

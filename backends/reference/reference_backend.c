@@ -518,7 +518,11 @@ int open_navi_backend_query_v1(uint32_t requested_query_abi,
     static const uint8_t build_id_v4[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
         OPEN_NAVI_PLUGIN_V4_EXPECTED_BUILD_ID_INITIALIZER;
     trace_line("query");
-    if (requested_query_abi == OPEN_NAVI_PLUGIN_QUERY_ABI_V4)
+    /* The reference backend stops at backend V5 (query V4): query V5
+     * (backend V6, guidance) is declined and the loader asks query V4. */
+    if (requested_query_abi == OPEN_NAVI_PLUGIN_QUERY_ABI_V5)
+        trace_line("query_v5");
+    else if (requested_query_abi == OPEN_NAVI_PLUGIN_QUERY_ABI_V4)
         trace_line("query_v4");
     else if (requested_query_abi == OPEN_NAVI_PLUGIN_QUERY_ABI_V3)
         trace_line("query_v3");

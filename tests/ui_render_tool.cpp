@@ -9,6 +9,7 @@
 #include "ui/navigation_view.h"
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -423,6 +424,37 @@ int main(int argc, char** argv)
         (void)view.set_dev_info(sections, toggles);
         settle(view);
         ok = write(view, out + "/dev.argb") && ok;
+    }
+    // HMI split screen (Media screen block): the area the stock HMI sends on
+    // the bench (display 129,160 765x323), in NAV_main window pixels.
+    for (const char* name : {"split", "split_recalc", "split_free", "split_nogps"}) {
+        NavigationModel model;
+        NavigationView view(model, 1024, 574);
+        NavigationView::MapArea area;
+        area.x = 129;
+        area.y = 88;
+        area.width = 765;
+        area.height = 323;
+        (void)view.set_split_area(true, area);
+        if (std::strcmp(name, "split_free") != 0) {
+            to_preview(view);
+            (void)view.start_guidance(0);
+            GuidanceState state;
+            state.position_available = std::strcmp(name, "split_nogps") != 0;
+            state.recalculating = std::strcmp(name, "split_recalc") == 0;
+            state.distance_to_maneuver_metres = 300.0;
+            state.remaining_metres = 9400.0;
+            state.remaining_seconds = 14 * 60.0;
+            state.maneuver.kind = ManeuverKind::Right;
+            state.maneuver.road = "бульвар Тараса Шевченка";
+            state.has_following_maneuver = true;
+            state.following_maneuver.kind = ManeuverKind::Left;
+            state.following_maneuver.road = "вулиця Антоновича";
+            state.speed_limit_kmh = 50;
+            (void)view.apply_guidance(state);
+        }
+        settle(view);
+        ok = write(view, out + "/" + name + ".argb") && ok;
     }
     std::puts(ok ? "ui-render-tool: ok" : "ui-render-tool: write failed");
     return ok ? 0 : 1;

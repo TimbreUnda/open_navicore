@@ -636,7 +636,15 @@ static void test_provider_v3_outbound_bridge(void)
     cluster.struct_size = sizeof(cluster);
     cluster.valid_attributes = OPEN_NAVI_CLUSTER_ROUTE_SYMBOL;
     assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
-           OPEN_NAVI_CLUSTER_UNSUPPORTED_FIELD);
+           OPEN_NAVI_CLUSTER_INVALID_VALUE);  /* symbol 0 */
+    cluster.route_guidance_symbol = 62u;
+    assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
+           OPEN_NAVI_CLUSTER_INVALID_VALUE);
+    cluster.route_guidance_symbol = 0u;
+    cluster.reserved0[0] = 1u;
+    assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
+           OPEN_NAVI_BACKEND_SERVICE_BAD_VALUE);
+    cluster.reserved0[0] = 0u;
     cluster.valid_attributes = OPEN_NAVI_CLUSTER_LANE;
     assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
            OPEN_NAVI_CLUSTER_UNSUPPORTED_FIELD);
@@ -649,7 +657,9 @@ static void test_provider_v3_outbound_bridge(void)
     cluster.valid_attributes =
         OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE |
         OPEN_NAVI_CLUSTER_NAVIGATION_STATUS |
+        OPEN_NAVI_CLUSTER_ROUTE_SYMBOL |
         OPEN_NAVI_CLUSTER_CURRENT_ROAD;
+    cluster.route_guidance_symbol = OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_3;
     cluster.route_guidance_state = OPEN_NAVI_CLUSTER_ROUTE_FOLLOW_STREET;
     cluster.navigation_status = OPEN_NAVI_CLUSTER_NAV_NO_ROUTE;
     cluster.current_road.bytes = current_road;
@@ -660,6 +670,7 @@ static void test_provider_v3_outbound_bridge(void)
     open_navi_callback_test_state(&callback);
     assert(callback.cluster_generation == 1u);
     assert(callback.cluster_record[0x150] == 'R');
+    assert(callback.cluster_record[0x003] == 21u);
     g_adapter_proxies[17].callback_status = 9u;
     cluster.navigation_status = OPEN_NAVI_CLUSTER_NAV_ROUTE_CALCULATION;
     assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
@@ -828,6 +839,157 @@ static void test_provider_v4_recovered_inputs(void)
     assert_backend_state_zero();
 }
 
+static uint32_t g_v6_start_calls;
+static OpenNaviBackendServicesV3 g_v6_services;
+static uint32_t g_v6_guidance_stop_calls;
+static OpenNaviBackendGuidanceStopV1 g_v6_guidance_stop;
+
+static int v6_start_callback(void *context,
+                             const OpenNaviBackendServicesV3 *services)
+{
+    OpenNaviBackendGuidanceStateV1 state;
+    (void)context;
+    assert(services != NULL);
+    assert(services->v2.v1.abi_version == OPEN_NAVI_BACKEND_ABI_V3);
+    assert(services->v2.v1.struct_size == sizeof(*services));
+    assert(services->v2.publish_cluster != NULL);
+    assert(services->publish_guidance_state != NULL);
+    memset(&state, 0, sizeof(state));
+    state.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+    state.struct_size = sizeof(state);
+    /* Outbound calls are accepted only once start has succeeded. */
+    assert(services->publish_guidance_state(
+               services->v2.v1.runtime_context, &state) ==
+           OPEN_NAVI_BACKEND_SERVICE_STALE);
+    (void)pthread_mutex_lock(&g_hook_lock);
+    g_v6_services = *services;
+    ++g_v6_start_calls;
+    (void)pthread_cond_broadcast(&g_hook_condition);
+    (void)pthread_mutex_unlock(&g_hook_lock);
+    return 0;
+}
+
+static int v6_guidance_stop_callback(
+    void *context, const OpenNaviBackendGuidanceStopV1 *event)
+{
+    (void)context;
+    (void)pthread_mutex_lock(&g_hook_lock);
+    g_v6_guidance_stop = *event;
+    ++g_v6_guidance_stop_calls;
+    (void)pthread_cond_broadcast(&g_hook_condition);
+    (void)pthread_mutex_unlock(&g_hook_lock);
+    return 0;
+}
+
+/* Backend V6: start_v3 with the guidance state service; requestGuidanceStop
+ * (adapter 25 slot 13) reaches the backend on the renderer thread. */
+static void test_provider_v6_guidance(void)
+{
+    OpenNaviBackendV6 backend;
+    OpenNaviBackendServicesV3 services;
+    OpenNaviBackendGuidanceStateV1 state;
+    OpenNaviBackendGuidanceStopV1 stop;
+    uint32_t result;
+    uint32_t status;
+    char diagnostic[257];
+
+    memset(&backend, 0, sizeof(backend));
+    backend.v5.v4.v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V6;
+    backend.v5.v4.v3.v2.v1.struct_size = sizeof(backend);
+    backend.v5.v4.v3.start_v2 = v3_start_callback;
+    backend.start_v3 = v6_start_callback;
+    backend.guidance_stop_requested = v6_guidance_stop_callback;
+    (void)pthread_mutex_lock(&g_hook_lock);
+    g_v3_start_calls = 0u;
+    g_v6_start_calls = 0u;
+    g_v6_guidance_stop_calls = 0u;
+    memset(&g_v6_guidance_stop, 0, sizeof(g_v6_guidance_stop));
+    (void)pthread_mutex_unlock(&g_hook_lock);
+
+    backend.start_v3 = NULL;
+    assert(open_navi_backend_install_v6(&backend) == -2);
+    backend.start_v3 = v6_start_callback;
+    assert(open_navi_backend_install_v6(&backend) == 0);
+    begin_lifecycle();
+    open_navi_callback_get_voice_state(&result, &status);
+    assert(result == OPEN_NAVI_VOICE_RESULT_OK);
+    assert(status == OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE);
+    assert(open_navi_renderer_create(diagnostic, sizeof(diagnostic)) == 0);
+    wait_for_count(&g_v6_start_calls, 1u);
+    (void)pthread_mutex_lock(&g_hook_lock);
+    assert(g_v3_start_calls == 0u);
+    services = g_v6_services;
+    (void)pthread_mutex_unlock(&g_hook_lock);
+
+    memset(&state, 0, sizeof(state));
+    state.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+    state.struct_size = sizeof(state);
+    state.guiding = OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE;
+    assert(services.publish_guidance_state(
+               services.v2.v1.runtime_context, &state) ==
+           OPEN_NAVI_BACKEND_SERVICE_OK);
+    open_navi_callback_get_voice_state(&result, &status);
+    assert(status == OPEN_NAVI_VOICE_GUIDANCE_STATUS_GUIDING);
+    state.guiding = 2u;
+    assert(services.publish_guidance_state(
+               services.v2.v1.runtime_context, &state) ==
+           OPEN_NAVI_BACKEND_SERVICE_BAD_VALUE);
+
+    /* The stop reaches the backend; idle is reported at once and a stale
+     * "guiding" publication is ignored until the backend reports idle. */
+    assert(((uint32_t (*)(void *, uintptr_t))
+               (*(const PanaGenericVirtual **)g_interfaces[25])[13])(
+               g_interfaces[25], (uintptr_t)0x2513u) == 0u);
+    open_navi_callback_get_voice_state(&result, &status);
+    assert(status == OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE);
+    wait_for_count(&g_v6_guidance_stop_calls, 1u);
+    (void)pthread_mutex_lock(&g_hook_lock);
+    stop = g_v6_guidance_stop;
+    (void)pthread_mutex_unlock(&g_hook_lock);
+    assert(stop.abi_version == OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1);
+    assert(stop.struct_size == sizeof(stop));
+    assert(stop.source_slot == 13u);
+    assert(stop.request_handle == 0x2513u);
+    state.guiding = OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE;
+    assert(services.publish_guidance_state(
+               services.v2.v1.runtime_context, &state) ==
+           OPEN_NAVI_BACKEND_SERVICE_OK);
+    assert(open_navi_callback_guidance_active() == 0);
+    state.guiding = OPEN_NAVI_BACKEND_GUIDANCE_IDLE;
+    assert(services.publish_guidance_state(
+               services.v2.v1.runtime_context, &state) ==
+           OPEN_NAVI_BACKEND_SERVICE_OK);
+    state.guiding = OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE;
+    assert(services.publish_guidance_state(
+               services.v2.v1.runtime_context, &state) ==
+           OPEN_NAVI_BACKEND_SERVICE_OK);
+    assert(open_navi_callback_guidance_active() == 1);
+
+    /* A new lifecycle starts idle; the copied service is stale; a stop
+     * accepted while no renderer runs does not reach the next one. */
+    panaDeinitialize();
+    open_navi_callback_get_voice_state(&result, &status);
+    assert(status == OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE);
+    assert(services.publish_guidance_state(
+               services.v2.v1.runtime_context, &state) ==
+           OPEN_NAVI_BACKEND_SERVICE_STALE);
+    begin_lifecycle();
+    assert(((uint32_t (*)(void *, uintptr_t))
+               (*(const PanaGenericVirtual **)g_interfaces[25])[13])(
+               g_interfaces[25], (uintptr_t)0x2514u) == 0u);
+    panaDeinitialize();
+    begin_lifecycle();
+    assert(open_navi_renderer_create(diagnostic, sizeof(diagnostic)) == 0);
+    wait_for_count(&g_v6_start_calls, 2u);
+    delay_ms(20u);
+    (void)pthread_mutex_lock(&g_hook_lock);
+    assert(g_v6_guidance_stop_calls == 1u);
+    (void)pthread_mutex_unlock(&g_hook_lock);
+    panaDeinitialize();
+    assert(open_navi_backend_install_v6(NULL) == 0);
+    assert_backend_state_zero();
+}
+
 static void test_provider_v5_driver_distraction(void)
 {
     OpenNaviBackendV5 backend;
@@ -918,6 +1080,7 @@ int main(void)
     test_provider_v3_outbound_bridge();
     test_provider_v4_recovered_inputs();
     test_provider_v5_driver_distraction();
+    test_provider_v6_guidance();
     open_navi_renderer_stub_reset();
 
     /* Reentrant initialization is rejected without disturbing the active

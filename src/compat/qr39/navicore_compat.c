@@ -115,6 +115,8 @@ static uint32_t open_navi_20_3(void *, uint32_t, uint32_t, uint8_t, uint32_t);
 static uint32_t open_navi_20_4(void *, uint32_t, uint8_t, uint32_t);
 static uint32_t open_navi_20_7(void *, uint32_t, uint32_t, uint8_t);
 static uint32_t open_navi_20_8(void *, uint32_t, uint32_t, uint8_t);
+static uint32_t open_navi_25_11(void *, uintptr_t);
+static uint32_t open_navi_25_13(void *, uintptr_t);
 static uint32_t open_navi_25_19(void *, uint32_t);
 static uint32_t open_navi_26_5(void *, uint32_t, uint8_t);
 static uint32_t open_navi_29_3(void *, uint32_t);
@@ -268,6 +270,10 @@ OPEN_NAVI_PROVIDER_TYPECHECK(31, 5, open_navi_31_5, OpenNaviProviderSelfU8);
 #include "provider_slots.def"
 #undef OPEN_NAVI_STATIC_SLOT
 #undef OPEN_NAVI_STATIC_TYPECHECK
+/* requestGuidanceStop keeps the exact one-word static ABI it had. */
+typedef char open_navi_guidance_stop_typecheck_25_13[
+    __builtin_types_compatible_p(__typeof__(&open_navi_25_13),
+                                 OpenNaviProviderWord1) ? 1 : -1];
 
 #define V1  open_navi_generic_virtual
 #define V2  V1, V1
@@ -453,9 +459,9 @@ static const PanaGenericVirtual g_vr_vtable[OPEN_NAVI_DUMMY_VTABLE_SLOTS] = {
     (PanaGenericVirtual)open_navi_static_25_8,
     (PanaGenericVirtual)open_navi_static_25_9,
     (PanaGenericVirtual)open_navi_static_25_10,
-    (PanaGenericVirtual)open_navi_static_25_11,
+    (PanaGenericVirtual)open_navi_25_11,
     (PanaGenericVirtual)open_navi_static_25_12,
-    (PanaGenericVirtual)open_navi_static_25_13,
+    (PanaGenericVirtual)open_navi_25_13,
     (PanaGenericVirtual)open_navi_static_25_14,
     (PanaGenericVirtual)open_navi_static_25_15,
     (PanaGenericVirtual)open_navi_static_25_16,
@@ -582,7 +588,12 @@ typedef struct {
 typedef enum {
     OPEN_NAVI_HMI_EVENT_TRANSITION = 1,
     OPEN_NAVI_HMI_EVENT_SCREEN_CHANGE = 2,
-    OPEN_NAVI_HMI_EVENT_THEME_CHANGE = 3
+    OPEN_NAVI_HMI_EVENT_THEME_CHANGE = 3,
+    /* SI_VoiceRecognition requestGuidanceStop: replied (adapter 25 callback
+     * 16) from the same FIFO so it stays asynchronous and ordered. */
+    OPEN_NAVI_HMI_EVENT_GUIDANCE_STOP = 4,
+    /* requestGuidanceInstructionsRepeat: replied with callback 25/15. */
+    OPEN_NAVI_HMI_EVENT_GUIDANCE_REPEAT = 5
 } OpenNaviHMIEventType;
 
 typedef struct {
@@ -599,6 +610,9 @@ typedef struct {
         struct {
             uint32_t handle;
         } theme_change;
+        struct {
+            uint32_t handle;
+        } guidance_stop;
     } request;
 } OpenNaviHMIEvent;
 
@@ -1378,6 +1392,136 @@ static uint32_t open_navi_20_8(void *self,
     return 0u;
 }
 
+/* Bench marker: report the backend's guidance state in replyRouteGuidance
+ * Status instead of the constant stock idle value.  Read at panaInitialize
+ * (before the lifecycle turns ACTIVE; slot 19 reads it under a lease). */
+#ifndef OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER
+#define OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER \
+    "/datastore/navicore-backend/report-guidance-status"
+#endif
+static const char *g_report_guidance_status_marker =
+    OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER;
+static int g_report_guidance_status;
+
+static void open_navi_read_guidance_status_marker(void)
+{
+    g_report_guidance_status =
+        access(g_report_guidance_status_marker, F_OK) == 0;
+    open_navi_log(LOG_NOTICE,
+             "replyRouteGuidanceStatus guidance_status=%s (marker %s %s)",
+             g_report_guidance_status != 0 ? "backend-state" : "constant-idle-0",
+             g_report_guidance_status_marker,
+             g_report_guidance_status != 0 ? "present" : "absent");
+}
+
+#if defined(OPEN_NAVI_TESTING)
+void open_navi_test_reload_guidance_status_marker(const char *path)
+{
+    g_report_guidance_status_marker =
+        path != NULL ? path : OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER;
+    open_navi_read_guidance_status_marker();
+}
+#endif
+
+/* requestGuidanceInstructionsRepeat(handle), adapter 25 slot 11 (vtable
+ * +0x2c, nv_navigation caller 0x080eae3e).  Live 2026-10-19 nv_navigation
+ * called it right after each projection requestGuidanceStop; it was a
+ * static accept-only slot and never answered.  Stock answers with
+ * replyGuidanceInstructionsRepeat (callback 25/15); answer the same way,
+ * asynchronously from the HMI reply FIFO, with result 2.  Nothing is
+ * repeated: the backend has no prompt to repeat. */
+static uint32_t open_navi_25_11(void *self, uintptr_t handle_word)
+{
+    OpenNaviLifecycleLease lease;
+    const uint32_t handle = (uint32_t)handle_word;
+    unsigned int queue_depth;
+    int accepted = 0;
+
+    (void)self;
+    if (!open_navi_lifecycle_acquire(&lease)) return 1u;
+    open_navi_api_telemetry_record(25u, 11u, 1u, handle, 0u, 0u, 0u);
+    open_navi_callback_pending_add(25u, 11u, handle);
+    (void)pthread_mutex_lock(&g_worker_lock);
+    if (g_worker_stop == 0 &&
+        g_hmi_event_queue_count < OPEN_NAVI_HMI_EVENT_QUEUE_CAPACITY) {
+        unsigned int tail = (g_hmi_event_queue_head +
+                             g_hmi_event_queue_count) %
+                            OPEN_NAVI_HMI_EVENT_QUEUE_CAPACITY;
+        g_hmi_event_queue[tail].type = OPEN_NAVI_HMI_EVENT_GUIDANCE_REPEAT;
+        g_hmi_event_queue[tail].request.guidance_stop.handle = handle;
+        ++g_hmi_event_queue_count;
+        accepted = 1;
+        (void)pthread_cond_signal(&g_worker_condition);
+    }
+    queue_depth = g_hmi_event_queue_count;
+    (void)pthread_mutex_unlock(&g_worker_lock);
+    if (accepted == 0)
+        open_navi_callback_pending_cancel(25u, 11u, handle);
+    open_navi_log(LOG_NOTICE,
+             "VR requestGuidanceInstructionsRepeat slot=11 handle=%u "
+             "accepted=%d queue_depth=%u",
+             handle, accepted, queue_depth);
+    open_navi_lifecycle_release(&lease);
+    return accepted != 0 ? 0u : 1u;
+}
+
+/* requestGuidanceStop(handle), adapter 25 slot 13: nv_navigation calls it
+ * from onGuidanceStopRequest (0x080ead12) and from the projection path
+ * OnCARPLAY_RouteGuidanceInstruction (0x080ec5de, answered to SAL as
+ * GuidanceStopResponse) and waits for replyGuidanceStop.  The stop goes to
+ * a V6 backend now; replyGuidanceStop (callback 25/17, result 2) follows
+ * asynchronously from the HMI reply FIFO, whether or not anything was
+ * guiding (stock always answers). */
+static uint32_t open_navi_25_13(void *self, uintptr_t handle_word)
+{
+    OpenNaviLifecycleLease lease;
+    const uint32_t handle = (uint32_t)handle_word;
+    unsigned int queue_depth;
+    int delivery;
+    int was_guiding = 0;
+    int accepted = 0;
+
+    (void)self;
+    if (!open_navi_lifecycle_acquire(&lease)) return 1u;
+    open_navi_api_telemetry_record(25u, 13u, 1u, handle, 0u, 0u, 0u);
+    delivery = open_navi_renderer_notify_guidance_stop(13u, handle);
+    if (delivery == 0)
+        was_guiding = open_navi_callback_guidance_stop_requested();
+    open_navi_callback_pending_add(25u, 13u, handle);
+    (void)pthread_mutex_lock(&g_worker_lock);
+    if (g_worker_stop == 0 &&
+        g_hmi_event_queue_count < OPEN_NAVI_HMI_EVENT_QUEUE_CAPACITY) {
+        unsigned int tail = (g_hmi_event_queue_head +
+                             g_hmi_event_queue_count) %
+                            OPEN_NAVI_HMI_EVENT_QUEUE_CAPACITY;
+        g_hmi_event_queue[tail].type = OPEN_NAVI_HMI_EVENT_GUIDANCE_STOP;
+        g_hmi_event_queue[tail].request.guidance_stop.handle = handle;
+        ++g_hmi_event_queue_count;
+        accepted = 1;
+        (void)pthread_cond_signal(&g_worker_condition);
+    }
+    queue_depth = g_hmi_event_queue_count;
+    (void)pthread_mutex_unlock(&g_worker_lock);
+    if (accepted == 0)
+        open_navi_callback_pending_cancel(25u, 13u, handle);
+    open_navi_log(LOG_NOTICE,
+             "VR requestGuidanceStop slot=13 handle=%u backend_delivery=%d "
+             "was_guiding=%d accepted=%d queue_depth=%u",
+             handle, delivery, was_guiding, accepted, queue_depth);
+    open_navi_lifecycle_release(&lease);
+    return accepted != 0 ? 0u : 1u;
+}
+
+/* requestRouteGuidanceStatus(handle), polled by nv_navigation's
+ * OnRouteGuidanceRepeatTimer (1000 ms, re-armed after every poll from
+ * adapterReady on), answered with replyRouteGuidanceStatus (callback 25/23:
+ * handle, result 2, guidance_status).  The meaning of guidance_status is not
+ * settled live (2026-10-19): 0 = no native guidance (SAL event status 1,
+ * projection navigation allowed), 1 = native guidance (status 2; mm_gal
+ * then gives Android Auto NATIVE focus).  Default: always idle (0).  With
+ * the bench marker OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER present at
+ * provider start, the backend's published state is reported instead:
+ * 1 while guiding, 0 otherwise. */
 static uint32_t open_navi_25_19(void *self, uint32_t handle)
 {
     OpenNaviLifecycleLease inbound;
@@ -1389,6 +1533,8 @@ static uint32_t open_navi_25_19(void *self, uint32_t handle)
     if (!open_navi_lifecycle_acquire(&inbound)) return 1u;
     open_navi_api_telemetry_record(25u,19u,1u,handle,0u,0u,0u);
     open_navi_callback_get_voice_state(&reply_result,&guidance);
+    if (g_report_guidance_status == 0)
+        guidance = OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE;
     open_navi_callback_pending_add(25u,19u,handle);
     if (open_navi_lifecycle_acquire_proxy(25u, 23u, &outbound, &proxy)) {
         status = nc_host_voice_reply_route_guidance_status(proxy,handle,reply_result,guidance);
@@ -1910,7 +2056,7 @@ uint32_t open_navi_service_publish_cluster(
         cluster->struct_size < sizeof(*cluster)) {
         return OPEN_NAVI_BACKEND_SERVICE_BAD_ABI;
     }
-    if (cluster->reserved0[0] != 0u || cluster->reserved0[1] != 0u ||
+    if (cluster->reserved0[0] != 0u ||
         (cluster->current_road.byte_count != 0u &&
          cluster->current_road.bytes == NULL) ||
         (cluster->next_road.byte_count != 0u &&
@@ -1943,7 +2089,31 @@ uint32_t open_navi_service_publish_cluster(
     state.speed_unit = cluster->speed_unit;
     state.legal_speed_limit = cluster->legal_speed_limit;
     state.legal_speed_unit = cluster->legal_speed_unit;
+    state.route_guidance_symbol = cluster->route_guidance_symbol;
     return open_navi_cluster_backend_publish(&state);
+}
+
+/* Backend V6 guidance state: kept for the route-guidance status replies
+ * (slot 19, polled about once a second by nv_navigation). */
+uint32_t open_navi_service_publish_guidance_state(
+    const OpenNaviBackendGuidanceStateV1 *guidance)
+{
+    int applied;
+
+    if (guidance == NULL ||
+        guidance->abi_version != OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1 ||
+        guidance->struct_size < sizeof(*guidance)) {
+        return OPEN_NAVI_BACKEND_SERVICE_BAD_ABI;
+    }
+    if (guidance->guiding != OPEN_NAVI_BACKEND_GUIDANCE_IDLE &&
+        guidance->guiding != OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE) {
+        return OPEN_NAVI_BACKEND_SERVICE_BAD_VALUE;
+    }
+    applied = open_navi_callback_publish_guidance(
+        guidance->guiding == OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE);
+    open_navi_log(LOG_NOTICE, "backend guidance state guiding=%u applied=%d",
+             guidance->guiding, applied);
+    return OPEN_NAVI_BACKEND_SERVICE_OK;
 }
 
 uint32_t open_navi_service_publish_audio_availability(
@@ -2052,6 +2222,89 @@ static int open_navi_take_hmi_event(OpenNaviHMIEvent *event)
     return available;
 }
 
+/* replyGuidanceStop(handle, result), adapter 25 callback 17 (nv_navigation
+ * callback vtable 0x081ef688 entry 0x081ef6cc -> 0x080eb29c; stock
+ * libNaviCore's poster 0x2a1e0c calls vtable +0x44).  nv_navigation answers
+ * a pending projection stop with GuidanceStopResponse (PAS 0x1618), a
+ * success only when result == 2, otherwise the VR request through PAS
+ * 0x15e7; the handle word is not read there.  The stop was delivered to the
+ * backend when the request arrived; like stock, the provider always answers
+ * and always with result 2, also when nothing was guiding.  A failed host
+ * call is logged and the worker continues (unlike the HMI replies, it does
+ * not end it). */
+static int open_navi_reply_guidance_stop(uint32_t handle)
+{
+    OpenNaviLifecycleLease lease;
+    void *proxy;
+    uint32_t reply_result;
+    uint32_t guidance;
+    uint32_t result;
+
+    if (!open_navi_lifecycle_acquire_proxy(25u, 17u, &lease, &proxy)) {
+        /* No reply proxy: drop this reply but keep serving the HMI FIFO
+         * while the lifecycle is still active. */
+        int active = open_navi_lifecycle_acquire(&lease);
+        if (active) {
+            open_navi_callback_pending_cancel(25u, 13u, handle);
+            open_navi_log(LOG_ERR,
+                     "VR replyGuidanceStop handle=%u dropped: no proxy",
+                     handle);
+            open_navi_lifecycle_release(&lease);
+        }
+        return active;
+    }
+    open_navi_callback_get_voice_state(&reply_result, &guidance);
+    reply_result = OPEN_NAVI_VOICE_RESULT_OK;
+    result = nc_host_voice_reply_guidance_stop(proxy, handle, reply_result);
+    if (open_navi_lifecycle_is_current(&lease)) {
+        if (result == 0u)
+            (void)open_navi_callback_pending_complete(25u, 13u, handle);
+        else
+            open_navi_callback_pending_cancel(25u, 13u, handle);
+    }
+    open_navi_log(LOG_NOTICE,
+             "VR replyGuidanceStop proxy=%p slot=17 handle=%u result=%u "
+             "guidance_status=%u status=%u",
+             proxy, handle, reply_result, guidance, result);
+    open_navi_lifecycle_release(&lease);
+    return 1;
+}
+
+/* replyGuidanceInstructionsRepeat(handle, result), adapter 25 callback 15:
+ * the answer to slot 11, result 2 like every stock VR reply. */
+static int open_navi_reply_guidance_repeat(uint32_t handle)
+{
+    OpenNaviLifecycleLease lease;
+    void *proxy;
+    uint32_t result;
+
+    if (!open_navi_lifecycle_acquire_proxy(25u, 15u, &lease, &proxy)) {
+        int active = open_navi_lifecycle_acquire(&lease);
+        if (active) {
+            open_navi_callback_pending_cancel(25u, 11u, handle);
+            open_navi_log(LOG_ERR,
+                     "VR replyGuidanceInstructionsRepeat handle=%u dropped: "
+                     "no proxy", handle);
+            open_navi_lifecycle_release(&lease);
+        }
+        return active;
+    }
+    result = nc_host_voice_reply_guidance_instructions_repeat(
+        proxy, handle, OPEN_NAVI_VOICE_RESULT_OK);
+    if (open_navi_lifecycle_is_current(&lease)) {
+        if (result == 0u)
+            (void)open_navi_callback_pending_complete(25u, 11u, handle);
+        else
+            open_navi_callback_pending_cancel(25u, 11u, handle);
+    }
+    open_navi_log(LOG_NOTICE,
+             "VR replyGuidanceInstructionsRepeat proxy=%p slot=15 handle=%u "
+             "result=%u status=%u",
+             proxy, handle, (uint32_t)OPEN_NAVI_VOICE_RESULT_OK, result);
+    open_navi_lifecycle_release(&lease);
+    return 1;
+}
+
 static int open_navi_reply_hmi_event(const OpenNaviHMIEvent *event)
 {
     OpenNaviLifecycleLease lease;
@@ -2063,6 +2316,12 @@ static int open_navi_reply_hmi_event(const OpenNaviHMIEvent *event)
      * corresponding reply observably asynchronous and preserve FIFO order. */
     if (!open_navi_worker_delay(50u)) {
         return 0;
+    }
+    if (event->type == OPEN_NAVI_HMI_EVENT_GUIDANCE_STOP) {
+        return open_navi_reply_guidance_stop(event->request.guidance_stop.handle);
+    }
+    if (event->type == OPEN_NAVI_HMI_EVENT_GUIDANCE_REPEAT) {
+        return open_navi_reply_guidance_repeat(event->request.guidance_stop.handle);
     }
     slot = event->type == OPEN_NAVI_HMI_EVENT_TRANSITION ? 9u :
            event->type == OPEN_NAVI_HMI_EVENT_SCREEN_CHANGE ? 10u : 12u;
@@ -2310,8 +2569,16 @@ static uint32_t open_navi_hmi_state_transition(void *self,
     OpenNaviLifecycleLease lease;
     unsigned int queue_depth = 0u;
     int accepted = 0;
+    /* 32-byte native attribute: four float (x, y) points, NAV host +0x4c.
+     * Only the split screen's area is used: read synchronously for
+     * VISIBLE_SPLIT_SCREEN, never retained; other states leave it opaque. */
+    const int split = visibility == OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN &&
+                      window_attribute != NULL;
+    float points[8] = {0.0f};
 
     if (!open_navi_lifecycle_acquire(&lease)) return 1u;
+    if (split)
+        memcpy(points, window_attribute, sizeof(points));
     (void)pthread_mutex_lock(&g_worker_lock);
     if (g_worker_stop == 0 &&
         g_transition_queue_count < OPEN_NAVI_TRANSITION_QUEUE_CAPACITY &&
@@ -2327,8 +2594,9 @@ static uint32_t open_navi_hmi_state_transition(void *self,
             interactivity;
         ++g_hmi_event_queue_count;
         ++g_transition_queue_count;
-        if (open_navi_renderer_notify_visibility(display, visibility,
-                                            interactivity) == 0) {
+        if (open_navi_renderer_notify_visibility_area(
+                display, visibility, interactivity,
+                split ? points : NULL) == 0) {
             queue_depth = g_transition_queue_count;
             accepted = 1;
             (void)pthread_cond_signal(&g_worker_condition);
@@ -2347,11 +2615,15 @@ static uint32_t open_navi_hmi_state_transition(void *self,
     open_navi_log(LOG_NOTICE,
              "HMI requestHMIStateTransition slot=5 self=%p adapter=%u "
              "handle=%u display=%u visibility=%u interactivity=%u "
-             "window_attribute=%p accepted=%d queue_depth=%u",
+             "window_attribute=%p points=%.0f,%.0f %.0f,%.0f %.0f,%.0f "
+             "%.0f,%.0f accepted=%d queue_depth=%u",
              self,
              adapter != NULL ? adapter->adapter_id : UINT32_MAX,
              handle, display, visibility, interactivity,
-             window_attribute, accepted, queue_depth);
+             window_attribute, (double)points[0], (double)points[1],
+             (double)points[2], (double)points[3], (double)points[4],
+             (double)points[5], (double)points[6], (double)points[7],
+             accepted, queue_depth);
     open_navi_lifecycle_release(&lease);
     return accepted != 0 ? 0u : 1u;
 }
@@ -2558,6 +2830,7 @@ uint32_t panaInitialize(const void *init_record)
     open_navi_pointer_backend_reset();
     open_navi_callback_backend_reset();
     open_navi_cluster_backend_reset();
+    open_navi_read_guidance_status_marker();
     /* The backend choice is process-lifetime and must be finalized while the
      * renderer is still COLD. Failure is deliberately non-fatal: bootstrap
      * leaves the built-in magenta backend selected. */

@@ -109,6 +109,10 @@ const Row kStrings[] = {
     /* UnitKilometre */ {"km", "км", "km", "km"},
     /* UnitMinute */ {"min", "хв", "min", "min"},
     /* UnitHour */ {"h", "год", "h", "h"},
+    /* Then */ {"Then", "Потім", "Ensuite", "Luego"},
+    /* OpenNavigation */ {"Open navigation to proceed", "Відкрийте навігацію, щоб продовжити",
+                          "Ouvrez la navigation pour continuer",
+                          "Abra la navegación para continuar"},
 };
 static_assert(sizeof(kStrings) / sizeof(kStrings[0]) == static_cast<std::size_t>(Str::Count_),
               "one row per Str");

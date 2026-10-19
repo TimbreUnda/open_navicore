@@ -243,3 +243,9 @@ void open_navi_renderer_stub_input_stats(OpenNaviRendererStubInputStats *stats_o
     stats_out->duplicate_class = g_input_state.duplicate_class;
     (void)pthread_mutex_unlock(&g_input_lock);
 }
+
+void open_navi_renderer_platform_window_origin(int32_t *x, int32_t *y)
+{
+    if (x != NULL) *x = 0;
+    if (y != NULL) *y = 0;
+}

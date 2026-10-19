@@ -15,7 +15,7 @@ endif()
 
 # Navigation UI and guidance logic without OsmAnd (host-testable).
 add_library(navigation_ui STATIC
-  diagnostics.cpp guidance_tracker.cpp cluster_payload.cpp camera_controller.cpp
+  diagnostics.cpp guidance_tracker.cpp cluster_payload.cpp junction_shape.cpp camera_controller.cpp
   route_check.cpp label_geometry.cpp ui/compact_text.cpp ui/localization.cpp ui/navigation_model.cpp
   ui/navigation_view.cpp ui/overlay_occupancy.cpp ui/recents_store.cpp)
 target_include_directories(navigation_ui PUBLIC ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR})

@@ -132,6 +132,7 @@ static OpenNaviClusterNavigationState full_state(void)
     state.speed_unit = OPEN_NAVI_CLUSTER_SPEED_KMH;
     state.legal_speed_limit = 45u;
     state.legal_speed_unit = OPEN_NAVI_CLUSTER_SPEED_MPH;
+    state.route_guidance_symbol = OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_RIGHT;
     return state;
 }
 
@@ -164,7 +165,7 @@ static void test_layout_and_serialization(void)
     assert(open_navi_cluster_backend_serialize(&state, 0x8041u, record) == 0u);
     assert(record[0x000] == OPEN_NAVI_CLUSTER_ROUTE_MANOEUVRE);
     assert(record[0x001] == OPEN_NAVI_CLUSTER_NAV_ROUTE_CALCULATION);
-    assert(record[0x002] == 0u && record[0x003] == 0u);
+    assert(record[0x002] == 0u && record[0x003] == 28u);
     assert_zero_range(record, 0x004, 0x100);
     assert(read_le32(record + 0x104) == '1');
     assert(read_le32(record + 0x108) == '2');
@@ -222,9 +223,6 @@ static void test_validation_and_bounds(void)
     assert(open_navi_cluster_backend_serialize(&state, 0u, NULL) ==
            OPEN_NAVI_CLUSTER_INVALID_ARGUMENT);
 
-    state.valid_attributes = OPEN_NAVI_CLUSTER_ROUTE_SYMBOL;
-    assert(open_navi_cluster_backend_serialize(&state, 0u, record) ==
-           OPEN_NAVI_CLUSTER_UNSUPPORTED_FIELD);
     state.valid_attributes = OPEN_NAVI_CLUSTER_LANE;
     assert(open_navi_cluster_backend_serialize(&state, 0u, record) ==
            OPEN_NAVI_CLUSTER_UNSUPPORTED_FIELD);
@@ -247,6 +245,13 @@ static void test_validation_and_bounds(void)
     INVALID_FIELD(OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE, route_guidance_state, 8u);
     INVALID_FIELD(OPEN_NAVI_CLUSTER_NAVIGATION_STATUS, navigation_status, 0u);
     INVALID_FIELD(OPEN_NAVI_CLUSTER_NAVIGATION_STATUS, navigation_status, 9u);
+    /* Symbol: 1..61 only; 0 leaves the cluster's navigation page, 62/63
+     * are empty and 64+ alias n & 0x3f on the cluster. */
+    INVALID_FIELD(OPEN_NAVI_CLUSTER_ROUTE_SYMBOL, route_guidance_symbol, 0u);
+    INVALID_FIELD(OPEN_NAVI_CLUSTER_ROUTE_SYMBOL, route_guidance_symbol, 62u);
+    INVALID_FIELD(OPEN_NAVI_CLUSTER_ROUTE_SYMBOL, route_guidance_symbol, 63u);
+    INVALID_FIELD(OPEN_NAVI_CLUSTER_ROUTE_SYMBOL, route_guidance_symbol, 65u);
+    INVALID_FIELD(OPEN_NAVI_CLUSTER_ROUTE_SYMBOL, route_guidance_symbol, 255u);
     INVALID_FIELD(OPEN_NAVI_CLUSTER_BAR_PERCENT, bar_percent, 101u);
     INVALID_FIELD(OPEN_NAVI_CLUSTER_COMPASS, compass, 0u);
     INVALID_FIELD(OPEN_NAVI_CLUSTER_COMPASS, compass, 9u);
@@ -255,6 +260,20 @@ static void test_validation_and_bounds(void)
     INVALID_FIELD(OPEN_NAVI_CLUSTER_LEGAL_LIMIT, legal_speed_unit, 0u);
     INVALID_FIELD(OPEN_NAVI_CLUSTER_LEGAL_LIMIT, legal_speed_unit, 3u);
 #undef INVALID_FIELD
+
+    memset(&state, 0, sizeof(state));
+    state.valid_attributes = OPEN_NAVI_CLUSTER_ROUTE_SYMBOL;
+    state.route_guidance_symbol = OPEN_NAVI_CLUSTER_SYMBOL_MIN;
+    assert(open_navi_cluster_backend_serialize(&state, 0u, record) == 0u);
+    assert(record[0x003] == 1u);
+    state.route_guidance_symbol = OPEN_NAVI_CLUSTER_SYMBOL_MAX;
+    assert(open_navi_cluster_backend_serialize(&state, 0u, record) == 0u);
+    assert(record[0x003] == 61u);
+    assert(read_le16(record + 0xa58) == OPEN_NAVI_CLUSTER_ROUTE_SYMBOL);
+    /* Without its valid bit the symbol is not written. */
+    state.valid_attributes = 0u;
+    assert(open_navi_cluster_backend_serialize(&state, 0u, record) == 0u);
+    assert(record[0x003] == 0u);
 
     memset(&state, 0, sizeof(state));
     state.valid_attributes = OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION;
@@ -373,6 +392,9 @@ static void test_change_masks_status_and_ownership(void)
     publish_ok(&state, OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE);
     state.navigation_status = OPEN_NAVI_CLUSTER_NAV_NO_DATA;
     publish_ok(&state, OPEN_NAVI_CLUSTER_NAVIGATION_STATUS);
+    state.route_guidance_symbol = OPEN_NAVI_CLUSTER_SYMBOL_LEFT;
+    publish_ok(&state, OPEN_NAVI_CLUSTER_ROUTE_SYMBOL);
+    assert(g_sent[0x003] == 1u);
     ++state.distance_destination;
     publish_ok(&state, OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION);
     ++state.eta_minute;

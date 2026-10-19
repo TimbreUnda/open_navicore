@@ -174,9 +174,11 @@ uint32_t nc_host_voice_reply_file_get(void *proxy, uint32_t handle,
                                     uint32_t result, const char *filename);
 uint32_t nc_host_voice_reply_guidance_instructions_repeat(
     void *proxy, uint32_t handle, uint32_t result);
-uint32_t nc_host_voice_reply_guidance_stop(
-    void *proxy, uint32_t handle, uint32_t result);
+/* Adapter 25 callback 16. */
 uint32_t nc_host_voice_reply_guidance_start(
+    void *proxy, uint32_t handle, uint32_t result);
+/* Adapter 25 callback 17 (vtable +0x44). */
+uint32_t nc_host_voice_reply_guidance_stop(
     void *proxy, uint32_t handle, uint32_t result);
 uint32_t nc_host_voice_reply_location_check(
     void *proxy, uint32_t handle, uint32_t result, uint32_t status);

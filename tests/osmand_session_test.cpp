@@ -31,7 +31,11 @@ struct Probe {
     unsigned gps_events = 0;
     const OpenNaviBackendServicesV2* outbound = nullptr;
     unsigned outbound_calls = 0;
+    const OpenNaviBackendServicesV3* guidance_outbound = nullptr;
+    unsigned guidance_outbound_calls = 0, guidance_stops = 0;
+    uint32_t guidance_stop_handle = 0;
     OpenNaviBackendVehicleV2 vehicle{};
+    OpenNaviBackendVisibilityV2 visibility{};
     unsigned vehicle_events = 0, visibility_events = 0, distraction_events = 0,
              language_events = 0, cluster_display_events = 0;
 };
@@ -69,7 +73,11 @@ public:
         return 0;
     }
     int pointer(const OpenNaviBackendPointerV2&) override { return 0; }
-    void visibility(const OpenNaviBackendVisibilityV1&) override { ++p_->visibility_events; }
+    void visibility(const OpenNaviBackendVisibilityV2& event) override
+    {
+        ++p_->visibility_events;
+        p_->visibility = event;
+    }
     void vehicle(const OpenNaviBackendVehicleV2& event) override
     {
         p_->vehicle = event;
@@ -91,6 +99,16 @@ public:
     {
         p_->outbound = services;
         ++p_->outbound_calls;
+    }
+    void set_guidance_outbound(const OpenNaviBackendServicesV3* services) override
+    {
+        p_->guidance_outbound = services;
+        ++p_->guidance_outbound_calls;
+    }
+    void guidance_stop(const OpenNaviBackendGuidanceStopV1& event) override
+    {
+        ++p_->guidance_stops;
+        p_->guidance_stop_handle = event.request_handle;
     }
     ReleaseResult release(ReleaseMode mode) override
     {
@@ -406,6 +424,7 @@ void backend_v5()
     assert((v1.capabilities & ~uint32_t(OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES)) ==
            OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
     assert(v1.capabilities & OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS);
+    assert(v1.capabilities & OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA);
     assert(plugin.v3.v2.capabilities_v2 == OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
     assert(plugin.v3.capabilities_v3 == OPEN_NAVI_PLUGIN_V3_REQUIRED_CAPABILITIES);
     assert(plugin.capabilities_v4 == OPEN_NAVI_PLUGIN_V4_REQUIRED_CAPABILITIES);
@@ -459,6 +478,19 @@ void backend_v5()
     OpenNaviBackendVisibilityV1 visible{OPEN_NAVI_BACKEND_ABI_V1, sizeof(visible), 0, 1, 1};
     assert(api.visibility_changed(context, &visible) == 0);
     assert(probe->visibility_events == 1);
+    assert(probe->visibility.area_width == 0 && probe->visibility.area_height == 0);
+    // Window area capability: a V2 payload keeps the split-screen area.
+    OpenNaviBackendVisibilityV2 split{OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2, sizeof(split), 0,
+                                      OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN, 2,
+                                      129, 160, 765, 323};
+    assert(api.visibility_changed(context,
+        reinterpret_cast<const OpenNaviBackendVisibilityV1*>(&split)) == 0);
+    assert(probe->visibility_events == 2);
+    assert(probe->visibility.visibility == OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN);
+    assert(probe->visibility.area_x == 129 && probe->visibility.area_width == 765);
+    split.struct_size = sizeof(OpenNaviBackendVisibilityV1);  // V2 tag, V1 size
+    assert(api.visibility_changed(context,
+        reinterpret_cast<const OpenNaviBackendVisibilityV1*>(&split)) != 0);
     api.surface_destroyed(context);
     api.stop(context);
 
@@ -471,6 +503,90 @@ void backend_v5()
     assert(api.surface_created(context, &surface) == 0);
     assert(probe->outbound_calls == 1 && probe->outbound == nullptr);
     assert(probe->vehicle_events == 0 && probe->distraction_events == 0);
+    api.surface_destroyed(context);
+    api.stop(context);
+}
+
+uint32_t publish_guidance(void*, const OpenNaviBackendGuidanceStateV1*) { return 0; }
+
+// Query V5 selects backend V6: the complete V5 descriptor, started through
+// start_v3 with the guidance state service; guidance stop requests are
+// forwarded only while attached and never replayed.
+void backend_v6()
+{
+    probe = std::make_shared<Probe>();
+    current = 7;
+    OpenNaviBackendPluginV5 plugin{};
+    assert(open_navi_backend_query_v1(OPEN_NAVI_PLUGIN_QUERY_ABI_V5, sizeof(plugin) - 1,
+                                     reinterpret_cast<OpenNaviBackendPluginV1*>(&plugin)) != 0);
+    assert(open_navi_backend_query_v1(OPEN_NAVI_PLUGIN_QUERY_ABI_V5, sizeof(plugin),
+                                     reinterpret_cast<OpenNaviBackendPluginV1*>(&plugin)) == 0);
+    const auto& v1 = plugin.v4.v3.v2.v1;
+    static const uint8_t build_id[] = OPEN_NAVI_PLUGIN_V5_EXPECTED_BUILD_ID_INITIALIZER;
+    assert(v1.query_abi_version == OPEN_NAVI_PLUGIN_QUERY_ABI_V5);
+    assert(v1.struct_size == sizeof(plugin));
+    assert(v1.backend_abi_version == OPEN_NAVI_BACKEND_ABI_V6);
+    assert(std::equal(std::begin(build_id), std::end(build_id), v1.build_id));
+    assert(plugin.v4.capabilities_v4 == OPEN_NAVI_PLUGIN_V4_REQUIRED_CAPABILITIES);
+    assert(plugin.v4.backend_v5_size == sizeof(OpenNaviBackendV5));
+    assert(plugin.capabilities_v5 == OPEN_NAVI_PLUGIN_V5_REQUIRED_CAPABILITIES);
+    assert(plugin.services_v3_size == sizeof(OpenNaviBackendServicesV3));
+    assert(plugin.guidance_state_v1_size == sizeof(OpenNaviBackendGuidanceStateV1));
+    assert(plugin.guidance_stop_v1_size == sizeof(OpenNaviBackendGuidanceStopV1));
+    assert(plugin.backend_v6_size == sizeof(OpenNaviBackendV6));
+    const auto& backend = plugin.backend_v6;
+    const auto& api = backend.v5.v4.v3.v2.v1;
+    assert(api.abi_version == OPEN_NAVI_BACKEND_ABI_V6 && api.struct_size == sizeof(backend));
+    assert(backend.start_v3 && backend.guidance_stop_requested &&
+           backend.v5.v4.v3.start_v2 && backend.v5.driver_distraction_changed);
+    void* context = api.backend_context;
+
+    unsigned requests = 0;
+    OpenNaviBackendServicesV3 services{};
+    services.v2.v1 = {OPEN_NAVI_BACKEND_ABI_V3, sizeof(services), &requests, request};
+    services.v2.publish_cluster = publish_cluster;
+    services.publish_guidance_state = publish_guidance;
+    OpenNaviBackendServicesV3 wrong = services;
+    wrong.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
+    assert(backend.start_v3(context, &wrong) != 0);
+    wrong = services;
+    wrong.publish_guidance_state = nullptr;
+    assert(backend.start_v3(context, &wrong) != 0);
+    assert(backend.start_v3(context, &services) == 0);
+
+    OpenNaviBackendGuidanceStopV1 stop{};
+    stop.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+    stop.struct_size = sizeof(stop);
+    stop.source_slot = 13;
+    stop.request_handle = 0x2513;
+    // Started, not attached: accepted, nothing to stop, not replayed.
+    assert(backend.guidance_stop_requested(context, &stop) == 0);
+    auto surface = target();
+    assert(api.surface_created(context, &surface) == 0);
+    assert(probe->guidance_stops == 0);
+    assert(probe->outbound && probe->outbound->publish_cluster == publish_cluster);
+    assert(probe->outbound->v1.abi_version == OPEN_NAVI_BACKEND_ABI_V2);
+    assert(probe->guidance_outbound_calls == 1 && probe->guidance_outbound &&
+           probe->guidance_outbound->publish_guidance_state == publish_guidance);
+    // Attached: forwarded at once.
+    assert(backend.guidance_stop_requested(context, &stop) == 0);
+    assert(probe->guidance_stops == 1 && probe->guidance_stop_handle == 0x2513);
+    stop.struct_size = 8;
+    assert(backend.guidance_stop_requested(context, &stop) != 0);
+    assert(probe->guidance_stops == 1);
+    api.surface_destroyed(context);
+    api.stop(context);
+    stop.struct_size = sizeof(stop);
+    assert(backend.guidance_stop_requested(context, &stop) != 0);
+
+    // A V5 start (start_v2) gives no guidance service.
+    OpenNaviBackendServicesV2 v2 = services.v2;
+    v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
+    v2.v1.struct_size = sizeof(v2);
+    assert(backend.v5.v4.v3.start_v2(context, &v2) == 0);
+    probe = std::make_shared<Probe>();
+    assert(api.surface_created(context, &surface) == 0);
+    assert(probe->guidance_outbound_calls == 1 && probe->guidance_outbound == nullptr);
     api.surface_destroyed(context);
     api.stop(context);
 }
@@ -507,5 +623,6 @@ int main()
     frames_and_contexts();
     c_boundary();
     backend_v5();
+    backend_v6();
     std::cout << "OsmAnd session and C boundary tests passed\n";
 }

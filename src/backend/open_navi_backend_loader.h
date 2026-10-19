@@ -33,6 +33,9 @@ int open_navi_backend_plugin_validate_v3(const OpenNaviBackendPluginV3 *plugin,
 int open_navi_backend_plugin_validate_v4(const OpenNaviBackendPluginV4 *plugin,
                                     char *diagnostic,
                                     size_t diagnostic_capacity);
+int open_navi_backend_plugin_validate_v5(const OpenNaviBackendPluginV5 *plugin,
+                                    char *diagnostic,
+                                    size_t diagnostic_capacity);
 
 typedef struct {
     uint32_t bootstrap_calls;
