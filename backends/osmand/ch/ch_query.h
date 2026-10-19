@@ -7,6 +7,10 @@
 // contracted later): out_arcs for the forward search, in_arcs (arcs that point
 // at the node from higher nodes) for the backward search.  A shortcut arc
 // stores its middle node in `via`; an original edge stores BASE | edge id.
+//
+// Queries read the hierarchy through a HierarchyView, so it can live in a
+// memory-mapped file; per-query state is a small hash table (a query settles a
+// few hundred nodes, however large the graph is).
 #pragma once
 
 #include <algorithm>
@@ -31,11 +35,25 @@ struct QArc {
     u32 via;   // middle node of a shortcut, or BASE | original edge id
 };
 
+// Read-only view of a hierarchy: n nodes, CSR offsets (n + 1 entries each) and arcs.
+struct HierarchyView {
+    u32 n = 0;
+    const u32* out_first = nullptr;
+    const u32* in_first = nullptr;
+    const QArc* out_arcs = nullptr;
+    const QArc* in_arcs = nullptr;
+};
+
 struct Hierarchy {
     u32 n = 0;
     std::vector<u32> rank;                  // contraction order; empty when loaded for queries only
     std::vector<u32> out_first, in_first;   // CSR offsets, n + 1 entries
     std::vector<QArc> out_arcs, in_arcs;
+
+    HierarchyView view() const
+    {
+        return {n, out_first.data(), in_first.data(), out_arcs.data(), in_arcs.data()};
+    }
 };
 
 namespace detail {
@@ -72,47 +90,49 @@ inline bool load_hierarchy(const char* path, Hierarchy& h, std::string& error, b
 
 class Query {
 public:
-    explicit Query(const Hierarchy& hierarchy)
-        : h_(hierarchy), df_(h_.n), db_(h_.n), sf_(h_.n, 0), sb_(h_.n, 0), pf_(h_.n), pb_(h_.n) {}
+    explicit Query(const HierarchyView& hierarchy) : h_(hierarchy) {}
 
     // Cheapest cost from source to target, INF when unreachable.  `meet` is
     // the node where the two upward searches met.
     u32 run(u32 source, u32 target, u32& meet)
     {
-        ++clock_; settled = 0;
+        settled = 0;
+        f_.reset(); b_.reset();
         using Item = std::pair<u32, u32>;
         std::priority_queue<Item, std::vector<Item>, std::greater<Item>> qf, qb;
-        df_[source] = 0; sf_[source] = clock_; pf_[source] = source; qf.push({0, source});
-        db_[target] = 0; sb_[target] = clock_; pb_[target] = target; qb.push({0, target});
+        f_.set(source, 0, source); qf.push({0, source});
+        b_.set(target, 0, target); qb.push({0, target});
         u32 best = INF; meet = INF;
         while (!qf.empty() || !qb.empty()) {
             const u32 top = std::min(qf.empty() ? INF : qf.top().first, qb.empty() ? INF : qb.top().first);
             if (top >= best) break;
             const bool forward = !qf.empty() && (qb.empty() || qf.top().first <= qb.top().first);
             auto& q = forward ? qf : qb;
-            auto& dist = forward ? df_ : db_; auto& stamp = forward ? sf_ : sb_; auto& parent = forward ? pf_ : pb_;
-            auto& other_dist = forward ? db_ : df_; auto& other_stamp = forward ? sb_ : sf_;
+            Table& mine = forward ? f_ : b_;
+            Table& other = forward ? b_ : f_;
             const auto [d, u] = q.top(); q.pop();
-            if (stamp[u] != clock_ || d != dist[u]) continue;
+            const Entry* here = mine.find(u);
+            if (!here || here->dist != d) continue;
             ++settled;
-            if (other_stamp[u] == clock_ && d + other_dist[u] < best) { best = d + other_dist[u]; meet = u; }
+            if (const Entry* opposite = other.find(u); opposite && d + opposite->dist < best) {
+                best = d + opposite->dist; meet = u;
+            }
             // stall on demand: a higher node already reaches u more cheaply
-            const auto& stall_first = forward ? h_.in_first : h_.out_first;
-            const auto& stall_arcs = forward ? h_.in_arcs : h_.out_arcs;
+            const u32* stall_first = forward ? h_.in_first : h_.out_first;
+            const QArc* stall_arcs = forward ? h_.in_arcs : h_.out_arcs;
             bool stalled = false;
             for (u32 i = stall_first[u]; i < stall_first[u + 1]; ++i) {
                 const QArc& a = stall_arcs[i];
-                if (stamp[a.to] == clock_ && dist[a.to] + a.w < d) { stalled = true; break; }
+                if (const Entry* reached = mine.find(a.to); reached && reached->dist + a.w < d) { stalled = true; break; }
             }
             if (stalled) continue;
-            const auto& first = forward ? h_.out_first : h_.in_first;
-            const auto& arcs = forward ? h_.out_arcs : h_.in_arcs;
+            const u32* first = forward ? h_.out_first : h_.in_first;
+            const QArc* arcs = forward ? h_.out_arcs : h_.in_arcs;
             for (u32 i = first[u]; i < first[u + 1]; ++i) {
                 const QArc& a = arcs[i];
                 const u32 nd = d + a.w;
-                if (stamp[a.to] != clock_ || nd < dist[a.to]) {
-                    stamp[a.to] = clock_; dist[a.to] = nd; parent[a.to] = u; q.push({nd, a.to});
-                }
+                const Entry* known = mine.find(a.to);
+                if (!known || nd < known->dist) { mine.set(a.to, nd, u); q.push({nd, a.to}); }
             }
         }
         return best;
@@ -124,10 +144,10 @@ public:
     {
         edges.clear();
         std::vector<u32> up;                       // source ... meet
-        for (u32 v = meet;; v = pf_[v]) { up.push_back(v); if (v == source) break; }
+        for (u32 v = meet;; v = f_.find(v)->parent) { up.push_back(v); if (v == source) break; }
         std::reverse(up.begin(), up.end());
         std::vector<u32> down;                     // meet ... target
-        for (u32 v = meet;; v = pb_[v]) { down.push_back(v); if (v == target) break; }
+        for (u32 v = meet;; v = b_.find(v)->parent) { down.push_back(v); if (v == target) break; }
         for (size_t i = 0; i + 1 < up.size(); ++i) {
             const QArc* a = find(h_.out_first, h_.out_arcs, up[i], up[i + 1]);
             if (!a || !unpack(up[i], up[i + 1], a->via, edges)) return false;
@@ -142,7 +162,53 @@ public:
     size_t settled = 0;   // nodes settled by the last run()
 
 private:
-    static const QArc* find(const std::vector<u32>& first, const std::vector<QArc>& arcs, u32 at, u32 to)
+    struct Entry { u32 node, dist, parent, stamp; };
+
+    // Open-addressing hash table of the nodes one search has reached; reset()
+    // is O(1) (a generation counter), so a Query can be reused for many routes.
+    class Table {
+    public:
+        Table() : slots_(1u << 12) {}
+        void reset() { ++stamp_; used_ = 0; }
+        const Entry* find(u32 node) const
+        {
+            for (u32 i = hash(node) & mask();; i = (i + 1) & mask()) {
+                const Entry& e = slots_[i];
+                if (e.stamp != stamp_) return nullptr;
+                if (e.node == node) return &e;
+            }
+        }
+        void set(u32 node, u32 dist, u32 parent)
+        {
+            if ((used_ + 1) * 2 > slots_.size()) grow();
+            for (u32 i = hash(node) & mask();; i = (i + 1) & mask()) {
+                Entry& e = slots_[i];
+                if (e.stamp != stamp_) { e = {node, dist, parent, stamp_}; ++used_; return; }
+                if (e.node == node) { e.dist = dist; e.parent = parent; return; }
+            }
+        }
+    private:
+        static u32 hash(u32 node) { return node * 2654435761u >> 7; }
+        u32 mask() const { return (u32)slots_.size() - 1; }
+        void grow()
+        {
+            std::vector<Entry> old(slots_.size() * 2);
+            old.swap(slots_);
+            const u32 live = stamp_;
+            used_ = 0;
+            for (const Entry& e : old) {
+                if (e.stamp != live) continue;
+                for (u32 i = hash(e.node) & mask();; i = (i + 1) & mask()) {
+                    if (slots_[i].stamp != live) { slots_[i] = e; ++used_; break; }
+                }
+            }
+        }
+        std::vector<Entry> slots_;
+        u32 stamp_ = 1;
+        u32 used_ = 0;
+    };
+
+    static const QArc* find(const u32* first, const QArc* arcs, u32 at, u32 to)
     {
         const QArc* hit = nullptr;
         for (u32 i = first[at]; i < first[at + 1]; ++i)
@@ -159,9 +225,8 @@ private:
         return left && right && unpack(a, via, left->via, edges) && unpack(via, b, right->via, edges);
     }
 
-    const Hierarchy& h_;
-    std::vector<u32> df_, db_, sf_, sb_, pf_, pb_;   // forward/backward distance, stamp, parent
-    u32 clock_ = 0;
+    HierarchyView h_;
+    Table f_, b_;   // forward and backward search state
 };
 
 }  // namespace onc_ch

@@ -84,6 +84,9 @@ onc_test(localization_test SOURCES localization_test.cpp LIBS navigation_ui m)
 onc_test(camera_controller_test SOURCES camera_controller_test.cpp LIBS navigation_ui)
 onc_test(labels_test SOURCES labels_test.cpp LIBS navigation_ui)
 onc_test(route_check_test SOURCES route_check_test.cpp LIBS navigation_ui m)
+# Contraction-hierarchy routing: query, contraction, sidecar file and snap lookup
+# (the library the navigation worker uses; pure C++, no OsmAnd).
+onc_test(ch_test SOURCES ch_test.cpp INCLUDES ${ONC_ROOT}/backends/osmand/ch ${ONC_ROOT}/tools/ch)
 # The vector style/tessellator test needs earcut.hpp from the OsmAnd tree.
 if(NOT OSMAND_QNX_ROOT AND DEFINED ENV{OSMAND_QNX_ROOT})
   set(OSMAND_QNX_ROOT $ENV{OSMAND_QNX_ROOT})

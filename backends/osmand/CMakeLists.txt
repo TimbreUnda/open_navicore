@@ -68,7 +68,7 @@ add_custom_target(build_info_git
   BYPRODUCTS ${_build_info} VERBATIM)
 
 add_library(osmand_backend SHARED
-  osmand_backend.cpp config.cpp session.cpp osmand_engine.cpp navigation_worker.cpp
+  osmand_backend.cpp config.cpp session.cpp osmand_engine.cpp navigation_worker.cpp ch_planner.cpp
   thread_priority.cpp crash_reporter.cpp frame_metrics.cpp build_info.cpp
   gpu_upload_context.cpp
   ui/gl_overlay_compositor.cpp
@@ -97,7 +97,7 @@ add_custom_command(TARGET osmand_backend POST_BUILD
 # link the core with a static libgcc) plus a dlopen launcher; both run from
 # /tmp on the radio against the /open-navicore libraries.
 add_library(route_bench SHARED ${ONC_ROOT}/deploy/bench/route_bench.cpp
-  ${ONC_ROOT}/deploy/bench/map_tags.cpp)
+  ${ONC_ROOT}/deploy/bench/map_tags.cpp ${ONC_ROOT}/backends/osmand/ch_planner.cpp)
 target_include_directories(route_bench PRIVATE ${ONC_OSMAND_INCLUDES})
 target_compile_definitions(route_bench PRIVATE ${ONC_OSMAND_DEFINES})
 target_compile_options(route_bench PRIVATE ${ONC_OSMAND_FLAGS} -w)

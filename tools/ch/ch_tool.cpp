@@ -7,6 +7,8 @@
 //   ch_tool route       <in.graph> <in.ch> lat lon lat lon
 //   ch_tool leanroute   <coords>   <in.ch> lat lon lat lon [repeats]   (radio: no edge arrays)
 //   ch_tool leanbench   <coords>   <in.ch> <pairs>
+//   ch_tool pack        <in.graph> <in.ch> <out.sidecar> <map.obf>...   the file the radio maps
+//   ch_tool sidecar-route <sidecar> lat lon lat lon [repeats]           route through the sidecar
 //
 // Ordering: edge difference + deleted neighbours + level, lazy updates;
 // witness searches are bounded by settled nodes.  The query is
@@ -23,11 +25,18 @@
 #include <string>
 #include <vector>
 
+#include <sys/stat.h>
+
 #include "../../backends/osmand/ch/ch_query.h"
+#include "../../backends/osmand/ch/ch_sidecar.h"
+#include "ch_contract.h"
+#include "ch_graph.h"
+#include "ch_pack.h"
 
 using namespace onc_ch;
 using i64 = int64_t;
 using u64 = uint64_t;
+using onc_ch::Graph;
 
 static double now() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -37,14 +46,6 @@ static double now() {
     std::exit(1);
 }
 
-struct Graph {
-    u32 n = 0, m = 0;
-    std::vector<int32_t> x, y;
-    std::vector<u32> from, to, cost, time, pf, pt;
-    std::vector<float> len;
-    std::vector<i64> road;
-    std::vector<uint8_t> rev;
-};
 
 template <class T> static void read_vec(std::FILE* f, std::vector<T>& v, size_t count) {
     if (!detail::read_vector(f, v, count)) die("short read");
@@ -68,161 +69,6 @@ static Graph load_graph(const char* path, bool coords_only = false) {
     }
     std::fclose(f);
     return g;
-}
-
-// ---------------------------------------------------------------- contraction
-
-struct Arc { u32 to, w; u32 via; };        // via: middle node, or BASE|edge
-
-struct Contractor {
-    const Graph& g;
-    std::vector<std::vector<Arc>> out, in;
-    std::vector<char> done;
-    std::vector<u32> deleted, level, order_rank;
-    // witness search state
-    std::vector<u32> dist, stamp;
-    u32 clock = 0;
-    int settle_limit;
-
-    explicit Contractor(const Graph& graph, int limit) : g(graph), settle_limit(limit) {
-        out.resize(g.n); in.resize(g.n); done.assign(g.n, 0);
-        deleted.assign(g.n, 0); level.assign(g.n, 0); order_rank.assign(g.n, 0);
-        dist.assign(g.n, INF); stamp.assign(g.n, 0);
-        for (u32 e = 0; e < g.m; ++e) add_arc(g.from[e], g.to[e], g.cost[e], BASE | e);
-    }
-
-    // One arc per ordered pair: the cheaper wins.
-    void add_arc(u32 u, u32 w, u32 weight, u32 via) {
-        for (Arc& a : out[u]) {
-            if (a.to != w) continue;
-            if (a.w <= weight) return;
-            a.w = weight; a.via = via;
-            for (Arc& b : in[w]) if (b.to == u) { b.w = weight; b.via = via; break; }
-            return;
-        }
-        out[u].push_back({w, weight, via});
-        in[w].push_back({u, weight, via});
-    }
-
-    void witness(u32 src, u32 skip, u32 max_dist) {
-        ++clock;
-        using Item = std::pair<u32, u32>;
-        std::priority_queue<Item, std::vector<Item>, std::greater<Item>> queue;
-        dist[src] = 0; stamp[src] = clock; queue.push({0, src});
-        int settled = 0;
-        while (!queue.empty()) {
-            auto [d, u] = queue.top(); queue.pop();
-            if (d != dist[u] || stamp[u] != clock) continue;
-            if (d > max_dist || ++settled > settle_limit) break;
-            for (const Arc& a : out[u]) {
-                if (done[a.to] || a.to == skip) continue;
-                u32 nd = d + a.w;
-                if (stamp[a.to] != clock || nd < dist[a.to]) {
-                    stamp[a.to] = clock; dist[a.to] = nd; queue.push({nd, a.to});
-                }
-            }
-        }
-    }
-
-    // Shortcuts needed to contract v; adds them when apply is set.
-    // removed gets the number of live arcs at v.
-    int contract(u32 v, bool apply, int& removed) {
-        std::vector<const Arc*> ins, outs;
-        for (const Arc& a : in[v]) if (!done[a.to]) ins.push_back(&a);
-        for (const Arc& a : out[v]) if (!done[a.to]) outs.push_back(&a);
-        removed = (int)(ins.size() + outs.size());
-        int shortcuts = 0;
-        std::vector<std::pair<std::pair<u32, u32>, std::pair<u32, u32>>> pending;
-        for (const Arc* in_arc : ins) {
-            u32 u = in_arc->to, max_dist = 0;
-            bool any = false;
-            for (const Arc* o : outs) if (o->to != u) { max_dist = std::max(max_dist, in_arc->w + o->w); any = true; }
-            if (!any) continue;
-            witness(u, v, max_dist);
-            for (const Arc* o : outs) {
-                if (o->to == u) continue;
-                u32 through = in_arc->w + o->w;
-                bool found = stamp[o->to] == clock && dist[o->to] <= through;
-                if (found) continue;
-                ++shortcuts;
-                if (apply) pending.push_back({{u, o->to}, {through, v}});
-            }
-        }
-        for (auto& p : pending) add_arc(p.first.first, p.first.second, p.second.first, p.second.second);
-        return shortcuts;
-    }
-
-    int priority(u32 v) {
-        int removed;
-        int shortcuts = contract(v, false, removed);
-        return 2 * (shortcuts - removed) + (int)deleted[v] + (int)level[v];
-    }
-
-    void run() {
-        using Item = std::pair<int, u32>;
-        std::priority_queue<Item, std::vector<Item>, std::greater<Item>> queue;
-        std::vector<int> current(g.n);
-        for (u32 v = 0; v < g.n; ++v) { current[v] = priority(v); queue.push({current[v], v}); }
-        u32 next_rank = 0;
-        double started = now();
-        while (!queue.empty()) {
-            auto [p, v] = queue.top(); queue.pop();
-            if (done[v] || p != current[v]) continue;
-            int fresh = priority(v);
-            if (fresh > p && !queue.empty() && fresh > queue.top().first) {   // lazy update
-                current[v] = fresh; queue.push({fresh, v}); continue;
-            }
-            int removed;
-            contract(v, true, removed);
-            done[v] = 1;
-            order_rank[v] = next_rank++;
-            std::vector<u32> neighbours;
-            for (const Arc& a : in[v]) if (!done[a.to]) neighbours.push_back(a.to);
-            for (const Arc& a : out[v]) if (!done[a.to]) neighbours.push_back(a.to);
-            std::sort(neighbours.begin(), neighbours.end());
-            neighbours.erase(std::unique(neighbours.begin(), neighbours.end()), neighbours.end());
-            for (u32 x : neighbours) {
-                ++deleted[x];
-                level[x] = std::max(level[x], level[v] + 1);
-                current[x] = priority(x);
-                queue.push({current[x], x});
-            }
-            if (next_rank % 100000 == 0)
-                std::fprintf(stderr, "  contracted %u / %u (%.0fs)\n", next_rank, g.n, now() - started);
-        }
-    }
-
-    Hierarchy finish() const {
-        Hierarchy h;
-        h.n = g.n; h.rank = order_rank;
-        std::vector<std::vector<QArc>> uo(g.n), ui(g.n);
-        for (u32 u = 0; u < g.n; ++u) {
-            for (const Arc& a : out[u]) if (order_rank[a.to] > order_rank[u]) uo[u].push_back({a.to, a.w, a.via});
-            for (const Arc& a : in[u]) if (order_rank[a.to] > order_rank[u]) ui[u].push_back({a.to, a.w, a.via});
-        }
-        h.out_first.assign(g.n + 1, 0); h.in_first.assign(g.n + 1, 0);
-        for (u32 u = 0; u < g.n; ++u) {
-            h.out_first[u + 1] = h.out_first[u] + (u32)uo[u].size();
-            h.in_first[u + 1] = h.in_first[u] + (u32)ui[u].size();
-            h.out_arcs.insert(h.out_arcs.end(), uo[u].begin(), uo[u].end());
-            h.in_arcs.insert(h.in_arcs.end(), ui[u].begin(), ui[u].end());
-        }
-        return h;
-    }
-};
-
-static void save(const Hierarchy& h, const char* path) {
-    std::FILE* f = std::fopen(path, "wb");
-    if (!f) die("cannot write hierarchy");
-    u32 counts[3] = {h.n, (u32)h.out_arcs.size(), (u32)h.in_arcs.size()};
-    std::fwrite("CHH1", 1, 4, f);
-    std::fwrite(counts, 4, 3, f);
-    std::fwrite(h.rank.data(), 4, h.n, f);
-    std::fwrite(h.out_first.data(), 4, h.n + 1, f);
-    std::fwrite(h.in_first.data(), 4, h.n + 1, f);
-    std::fwrite(h.out_arcs.data(), sizeof(QArc), h.out_arcs.size(), f);
-    std::fwrite(h.in_arcs.data(), sizeof(QArc), h.in_arcs.size(), f);
-    std::fclose(f);
 }
 
 static Hierarchy load_or_die(const char* path) {
@@ -307,7 +153,7 @@ static int lean_main(int argc, char** argv) {
     Hierarchy h = load_or_die(argv[3]);
     std::printf("loaded %u nodes, %zu upward arcs in %.2f s\n", g.n,
                 h.out_arcs.size() + h.in_arcs.size(), now() - t0);
-    Query q(h);
+    Query q(h.view());
     std::vector<u32> edges;
     if (cmd == "leanroute") {
         if (argc < 8) die("leanroute needs lat lon lat lon");
@@ -354,12 +200,66 @@ static int lean_main(int argc, char** argv) {
     return 0;
 }
 
+// Route through a sidecar file with the same Router the radio runs.
+static int sidecar_main(int argc, char** argv) {
+    if (argc < 7) die("sidecar-route <sidecar> lat lon lat lon [repeats]");
+    std::string error;
+    double t0 = now();
+    auto sidecar = Sidecar::open(argv[2], error);
+    if (!sidecar) die(error.c_str());
+    std::printf("opened %u nodes, %u real edges, %u roads, %zu maps in %.1f ms\n", sidecar->nodes(),
+                sidecar->real_edges(), sidecar->header().roads, sidecar->map_count(), (now() - t0) * 1e3);
+    auto to_tile = [](double lat, double lon, int& x, int& y) {
+        x = (int)((lon + 180.0) / 360.0 * 2147483648.0);
+        const double s = std::sin(lat * M_PI / 180.0);
+        y = (int)((0.5 - std::log((1 + s) / (1 - s)) / (4 * M_PI)) * 2147483648.0);
+    };
+    int sx, sy, ex, ey;
+    to_tile(std::atof(argv[3]), std::atof(argv[4]), sx, sy);
+    to_tile(std::atof(argv[5]), std::atof(argv[6]), ex, ey);
+    Router router(*sidecar);
+    std::vector<RoadRun> runs;
+    u32 cost = 0;
+    const u32 repeats = argc > 7 ? std::atoi(argv[7]) : 200;
+    Router::Status status = Router::Status::NoRoute;
+    double r0 = now();
+    for (u32 i = 0; i < repeats; ++i) status = router.route(sx, sy, ex, ey, runs, cost);
+    const double ms = (now() - r0) * 1e3 / repeats;
+    if (status != Router::Status::Ok) { std::printf("no route (%d)\n", (int)status); return 1; }
+    std::printf("cost %.1fs, %zu road stretches from %zu original edges, %zu nodes settled; snap + query + unpack "
+                "+ merge %.3f ms (avg of %u)\n", cost / 1000.0, runs.size(), router.edges().size(),
+                router.settled(), ms, repeats);
+    return 0;
+}
+
 int main(int argc, char** argv) {
-    if (argc < 4) die("usage: ch_tool build|export-meta|verify|bench|benchfull|route|leanroute|leanbench ...");
+    if (argc < 4) die("usage: ch_tool build|export-meta|pack|sidecar-route|verify|bench|benchfull|route|leanroute|leanbench ...");
     std::string cmd = argv[1];
     if (cmd == "leanroute" || cmd == "leanbench") return lean_main(argc, argv);
+    if (cmd == "sidecar-route") return sidecar_main(argc, argv);
     Graph g = load_graph(argv[2]);
     std::fprintf(stderr, "graph: %u nodes, %u edges\n", g.n, g.m);
+    if (cmd == "pack") {
+        if (argc < 5) die("pack <in.graph> <in.ch> <out.sidecar> <map.obf>...");
+        Hierarchy h = load_or_die(argv[3]);
+        std::vector<SidecarMap> maps;
+        for (int i = 5; i < argc; ++i) {
+            struct stat info {};
+            if (::stat(argv[i], &info) != 0) die("cannot stat a map file");
+            SidecarMap entry {};
+            const char* slash = std::strrchr(argv[i], '/');
+            std::strncpy(entry.name, slash ? slash + 1 : argv[i], sizeof(entry.name) - 1);
+            entry.size = (uint64_t)info.st_size;
+            maps.push_back(entry);
+        }
+        std::string error;
+        if (!pack_sidecar(g, h, maps, 15, argv[4], error)) die(error.c_str());
+        struct stat out {};
+        ::stat(argv[4], &out);
+        std::printf("sidecar: %u nodes, %zu+%zu arcs, %zu maps, %.1f MB\n", g.n, h.out_arcs.size(),
+                    h.in_arcs.size(), maps.size(), out.st_size / 1e6);
+        return 0;
+    }
     if (cmd == "export-meta") {
         export_meta(g, argv[3]);
         std::printf("meta: %u edges, %.1f MB\n", g.m, (4.0 + g.m * 21.0) / 1e6);
@@ -371,7 +271,7 @@ int main(int argc, char** argv) {
         c.run();
         Hierarchy h = c.finish();
         double t1 = now();
-        save(h, argv[3]);
+        if (!save_hierarchy(h, argv[3])) die("cannot write hierarchy");
         size_t arcs = h.out_arcs.size() + h.in_arcs.size();
         std::printf("built in %.1fs: %zu upward arcs (%.2f per base edge), %.1f MB (graph %.1f MB)\n",
                     t1 - t0, arcs, (double)arcs / g.m,
@@ -379,7 +279,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     Hierarchy h = load_or_die(argv[3]);
-    Query q(h);
+    Query q(h.view());
     Plain plain(g);
     std::vector<u32> edges;
     if (cmd == "route") {

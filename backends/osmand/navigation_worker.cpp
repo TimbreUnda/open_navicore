@@ -1,6 +1,7 @@
 #include "navigation_worker.h"
 
 
+#include "ch_planner.h"
 #include "diagnostics.h"
 #include "route_check.h"
 #include "session.h"
@@ -279,9 +280,11 @@ public:
     Impl(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
          std::shared_ptr<Wakeup> wakeup,
          std::vector<std::string> map_paths,
-         std::string routing_xml)
+         std::string routing_xml,
+         std::string ch_sidecar)
         : obfs_(std::move(obfs)), wakeup_(std::move(wakeup)),
-          map_paths_(std::move(map_paths)), routing_xml_(std::move(routing_xml))
+          map_paths_(std::move(map_paths)), routing_xml_(std::move(routing_xml)),
+          ch_sidecar_(std::move(ch_sidecar))
     {
         // Start only after every request/result flag below has completed
         // construction. Starting in the member initializer races run()
@@ -491,10 +494,12 @@ private:
         // a route may cross regions. Files without a routing index are closed.
         std::size_t routable = 0;
         std::size_t with_hh = 0;
+        std::vector<std::string> routable_maps;
         for (const std::string& path : map_paths_) {
             const auto map = initBinaryMapFile(path, false, true);
             if (map && !map->routingIndexes.empty()) {
                 ++routable;
+                routable_maps.push_back(path);
                 const bool car_hh = std::any_of(map->hhIndexes.begin(), map->hhIndexes.end(),
                     [](const SHARED_PTR<HHRouteIndex>& index) { return index->profile == "car"; });
                 if (car_hh) ++with_hh;
@@ -515,17 +520,24 @@ private:
                           has_hh_ ? 1 : 0, routable, with_hh);
             trace(line);
         }
+        // Contraction-hierarchy routing: only with a sidecar built from exactly these maps.
+        if (!ch_sidecar_.empty()) {
+            std::string error;
+            ch_ = ChPlanner::open(ch_sidecar_, routable_maps, error);
+            trace(ch_ ? ("worker=ch " + ch_->describe()).c_str()
+                      : ("worker=ch_off why=" + error).c_str());
+        }
         router_ready_ = true;
         return true;
     }
 
-    bool accept_hh_route(const Segments& segments, const char* which)
+    bool accept_route(const Segments& segments, const char* which)
     {
         const RouteCheck check = check_segments(segments);
         if (check.ok()) return true;
         char line[160];
         std::snprintf(line, sizeof(line),
-                      "worker=hh_rejected route=%s why=straight_legs legs=%zu filler=%zu gaps=%zu "
+                      "worker=route_rejected route=%s why=straight_legs legs=%zu filler=%zu gaps=%zu "
                       "max_gap_m=%.0f",
                       which, check.legs, check.filler_legs, check.gaps, check.max_gap_metres);
         trace(line);
@@ -570,13 +582,13 @@ private:
         // network nodes with a straight line; such a route crosses water and
         // forest. A bad main route fails HH (the caller runs A*); a bad
         // alternative is dropped.
-        if (!accept_hh_route(main->detailed, "main")) return routes;
+        if (!accept_route(main->detailed, "main")) return routes;
         routes.push_back(std::move(main->detailed));
         for (auto& alt : others) {
             if (alt->detailed.empty()) continue;
             prepareResult(context.get(), alt->detailed);
             front_end.makeStartEndPointsPrecise(context.get(), alt->detailed, sx, sy, ex, ey);
-            if (!accept_hh_route(alt->detailed, "alternative")) continue;
+            if (!accept_route(alt->detailed, "alternative")) continue;
             routes.push_back(std::move(alt->detailed));
         }
         return routes;
@@ -593,8 +605,27 @@ private:
         const int ey = get31TileNumberY(request.destination.latitude);
         RoutePlannerFrontEnd front_end;
         std::vector<Segments> found;
-        const char* method = "hh";
-        if (has_hh_) {
+        const char* method = "ch";
+        if (ch_) {
+            auto context = front_end.buildRoutingContext(routing_config_);
+            context->progress = std::make_shared<RouteProgress>(cancel);
+            std::string why;
+            Segments segments = ch_->route(front_end, context, sx, sy, ex, ey, why);
+            if (!segments.empty() && accept_route(segments, "ch")) {
+                const ChPlanner::Timing& timing = ch_->last_timing();
+                char line[160];
+                std::snprintf(line, sizeof(line),
+                              "worker=ch_route search_ms=%.1f roads_ms=%.0f prepare_ms=%.0f runs=%zu edges=%zu settled=%zu",
+                              timing.search_ms, timing.roads_ms, timing.prepare_ms, timing.road_runs,
+                              timing.base_edges, timing.settled);
+                trace(line);
+                found.push_back(std::move(segments));
+            } else if (!cancel->isAborted()) {
+                trace(("worker=ch_fallback why=" + (why.empty() ? std::string("route_rejected") : why)).c_str());
+            }
+        }
+        if (found.empty() && !cancel->isAborted()) method = "hh";
+        if (found.empty() && has_hh_) {
             auto context = front_end.buildRoutingContext(routing_config_);
             context->progress = std::make_shared<RouteProgress>(cancel);
             found = route_hh(front_end, context, sx, sy, ex, ey,
@@ -787,6 +818,8 @@ private:
     std::shared_ptr<Wakeup> wakeup_;
     std::vector<std::string> map_paths_;
     std::string routing_xml_;
+    std::string ch_sidecar_;  // empty: contraction-hierarchy routing is off
+    std::unique_ptr<ChPlanner> ch_;
     SHARED_PTR<RoutingConfiguration> routing_config_;
     std::mutex mutex_;
     std::condition_variable condition_;
@@ -809,9 +842,10 @@ private:
 NavigationWorker::NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
                                    std::shared_ptr<Wakeup> wakeup,
                                    std::vector<std::string> map_paths,
-                                   std::string routing_xml)
+                                   std::string routing_xml,
+                                   std::string ch_sidecar)
     : impl_(new Impl(std::move(obfs), std::move(wakeup), std::move(map_paths),
-                     std::move(routing_xml)))
+                     std::move(routing_xml), std::move(ch_sidecar)))
 {
 }
 

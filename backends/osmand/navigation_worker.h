@@ -39,7 +39,8 @@ public:
     NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
                      std::shared_ptr<Wakeup> wakeup,
                      std::vector<std::string> map_paths,
-                     std::string routing_xml);
+                     std::string routing_xml,
+                     std::string ch_sidecar = std::string());
     ~NavigationWorker();
     NavigationWorker(const NavigationWorker&) = delete;
     NavigationWorker& operator=(const NavigationWorker&) = delete;

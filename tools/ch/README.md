@@ -52,7 +52,38 @@ Only the Kyiv map open: 15 km route 300-325 ms against HH 2,973 ms.
 * One-time cost: loading the whole-country hierarchy, coordinates and edge table
   (417 MB) from flash took 17 s; a product build must memory-map it instead.
 
-## What is modelled, and what is not
+## M2: fidelity against OsmAnd's own routers (radio, Kyiv city map, 2026-10-19)
+
+The graph models what the core's A* models: access, oneway, speed and priority of the `car`
+profile; turn restrictions with the core's exact semantics (the candidates at a junction are
+the *car-accessible* roads touching that point; NO_* forbids its target; an ONLY_* whose
+target is a candidate forbids all other candidates; via restrictions are counted, not
+modelled); and `calculateTurnTime`: half the `penalty_transition` difference between the two
+roads, a roundabout entry/exit penalty, and 7.5/15/30 s above 30/60/120 degrees measured with
+`directionRoute`'s 5 m look-ahead. Traffic-signal and barrier times are not modelled: they only
+feed the reported time (`obstacle_time`), the routing cost uses `obstacle` (toll booths and
+size limits, none by default). Junctions are expanded into per-edge nodes joined by transition
+edges; only junctions where both roads end (a quarter of the two-road ones) fold into edge costs.
+
+Restriction violations in random routes (`check_restrictions.py`, same semantics): naive graph
+161 in 112 of 289 routes; with restrictions 0 in 294; with turn costs 0 in 290.
+
+`route_bench compare` on 39 pairs of interior road shape points 2-20 km apart
+(`gen_pairs.py`; junction coordinates tie between roads, so they are not used):
+
+| CH model | reference | route time CH/ref (median, p90, max) | shared road (median) | reference ms | CH ms |
+|---|---|---|---|---|---|
+| restrictions + turn costs | plain A* (ground truth) | x0.998, x1.06, x1.13 | 93% | 21,326 | 407 |
+| restrictions + turn costs | HH | x0.996, - , x1.13 | 91% | 2,851 | 375 |
+| restrictions only, no turn costs | HH (60 junction-node pairs) | x1.001, x1.14, x1.36 | 79% | 3,177 | 351 |
+
+Plain A* median 21.3 s (max 40.7 s) against CH 0.41 s; the CH route is within 6% of A*'s travel
+time for 90% of the pairs and faster than A* by more than 3% for 8 of 39.
+
+Whole Ukraine, restrictions and turn costs (PC): 15.2 M nodes, 30.8 M edges (22.3 M junction
+transitions), graph built in 85 s, hierarchy contracted in about 15 minutes.
+
+## What is modelled, and what is not (the first, simplified model)
 
 Modelled: access, oneway, speed (maxspeed or class default, clamped to the profile
 min/max) and priority of the `car` profile with no parameters set.
