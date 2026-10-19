@@ -47,6 +47,38 @@ double ms_since(Clock::time_point started)
     return std::chrono::duration<double, std::milli>(Clock::now() - started).count();
 }
 
+// ROUTE_BENCH_MANEUVERS=1: every segment that carries a turn, with its lanes ('+' marks the lanes
+// the route uses), road name and position; =2 also prints every segment with its end points.
+void dump_maneuvers(std::vector<SHARED_PTR<RouteSegmentResult>>& results)
+{
+    if (!std::getenv("ROUTE_BENCH_MANEUVERS")) return;
+    // What the worker turns into guidance: every segment that carries a turn,
+    // with its lanes ('*' marks lanes the route uses), road name and position.
+    double at = 0.0;
+    for (std::size_t i = 0; i < results.size(); ++i) {
+        const auto& s = results[i];
+        if (!s) continue;
+        if (std::strcmp(std::getenv("ROUTE_BENCH_MANEUVERS"), "2") == 0) {
+            // every segment: road, turn (or '-'), start and end point
+            const auto a = s->getPoint(s->getStartPointIndex());
+            const auto b = s->getPoint(s->getEndPointIndex());
+            std::printf("seg %7.3fkm %5.0fm road=%lld \"%s\" turn=%s start=%.5f,%.5f end=%.5f,%.5f\n",
+                        at / 1000.0, (double)s->distance, (long long)s->object->getId(),
+                        s->getStreetName("", false, results, static_cast<int>(i)).c_str(),
+                        s->turnType ? s->turnType->toString().c_str() : "-", a.lat, a.lon, b.lat, b.lon);
+        }
+        if (s->turnType && s->turnType->getValue() != TurnType::C) {
+            const std::string road = s->getStreetName("", false, results, static_cast<int>(i));
+            std::printf("turn %7.1fkm %-6s angle=%6.1f exit=%d road=\"%s\" lanes=%s\n", at / 1000.0,
+                        s->turnType->toString().c_str(), s->turnType->getTurnAngle(),
+                        s->turnType->getExitOut(), road.c_str(),
+                        s->turnType->getLanes().empty()
+                            ? "-" : TurnType::toString(s->turnType->getLanes()).c_str());
+        }
+        at += s->distance;
+    }
+}
+
 double route_metres(const std::vector<SHARED_PTR<RouteSegmentResult>>& segments, float* seconds)
 {
     double metres = 0.0;
@@ -253,6 +285,7 @@ int route_bench_main(int argc, char** argv)
             std::printf("run %d %s mem=%d: route=%.0fms build_config=%.0fms segments=%zu "
                         "distance=%.0fm time=%.0fs\n", run, mode.c_str(), memory_mb, route_ms,
                         build_ms, segments.size(), metres, seconds);
+            dump_maneuvers(segments);
             print_progress("progress", *context->progress);
             if (context->calculationProgressFirstPhase)
                 print_progress("phase1", *context->calculationProgressFirstPhase);
@@ -328,24 +361,7 @@ int route_bench_main(int argc, char** argv)
                         "distance=%.0fm time=%.0fs base_edges=%zu road_runs=%zu settled=%zu\n",
                         run, memory_mb, total_ms, timing.search_ms, timing.roads_ms, timing.prepare_ms,
                         results.size(), metres, seconds, timing.base_edges, timing.road_runs, timing.settled);
-            if (std::getenv("ROUTE_BENCH_MANEUVERS")) {
-                // What the worker turns into guidance: every segment that carries a turn,
-                // with its lanes ('*' marks lanes the route uses), road name and position.
-                double at = 0.0;
-                for (std::size_t i = 0; i < results.size(); ++i) {
-                    const auto& s = results[i];
-                    if (!s) continue;
-                    if (s->turnType && s->turnType->getValue() != TurnType::C) {
-                        const std::string road = s->getStreetName("", false, results, static_cast<int>(i));
-                        std::printf("turn %7.1fkm %-6s angle=%6.1f exit=%d road=\"%s\" lanes=%s\n", at / 1000.0,
-                                    s->turnType->toString().c_str(), s->turnType->getTurnAngle(),
-                                    s->turnType->getExitOut(), road.c_str(),
-                                    s->turnType->getLanes().empty()
-                                        ? "-" : TurnType::toString(s->turnType->getLanes()).c_str());
-                    }
-                    at += s->distance;
-                }
-            }
+            dump_maneuvers(results);
             print_progress("progress", *context->progress);
         } else {
             std::fprintf(stderr, "unknown mode %s\n", mode.c_str());
