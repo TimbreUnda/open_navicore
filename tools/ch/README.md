@@ -82,6 +82,11 @@ from flash, beside the running navigation; ChPlanner through route_bench):
 | Kyiv -> Kherson, 615.0 km (HH 615,033 m, CH 615,004 m) | 13,836 ms | 3,683 ms | 2,645 ms | search 13, roads 2,089 (995 tiles), prepare 543 |
 | Maidan -> Troieshchyna, 12-15 km | 5,170-5,454 ms | 859 ms | 550 ms | search 6, roads 488, prepare 56 |
 
+In the running product (installed 2026-10-19, autostart route from the bench marker, 26 maps):
+`worker=ch_route search_ms=156 roads_ms=532 prepare_ms=68 runs=48 edges=109 settled=69`,
+`worker=route_calculated method=ch ms=792` (HH logged 3.0-5.1 s for the same request on this
+route earlier), then 8 maneuvers published and guidance started.
+
 Opening the sidecar takes 35 ms (HH needs 10 s to open the 26 maps, which CH also needs once).
 What is left of the CH time is loading the route's roads from the maps and the core's result
 preparation; the search is a few milliseconds even through the page cache.
