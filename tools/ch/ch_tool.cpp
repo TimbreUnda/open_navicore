@@ -405,6 +405,33 @@ int main(int argc, char** argv) {
                     (t1 - t0) * 1e3, (t2 - t1) * 1e3, q.settled, (t4 - t3) * 1e3, settled);
         return 0;
     }
+    if (cmd == "routeedges") {
+        // Plain text dump of a route's original edges, for checks in Python:
+        // edge road_id point_from point_to reversed from_x from_y to_x to_y
+        if (argc < 8) die("routeedges needs lat lon lat lon");
+        u32 s = nearest(g, std::atof(argv[4]), std::atof(argv[5]));
+        u32 t = nearest(g, std::atof(argv[6]), std::atof(argv[7]));
+        u32 meet;
+        if (q.run(s, t, meet) == INF || !q.path_edges(s, t, meet, edges)) die("no route");
+        for (u32 e : edges)
+            std::printf("%u %lld %u %u %u %d %d %d %d\n", e, (long long)g.road[e], g.pf[e], g.pt[e],
+                        (unsigned)g.rev[e], g.x[g.from[e]], g.y[g.from[e]], g.x[g.to[e]], g.y[g.to[e]]);
+        return 0;
+    }
+    if (cmd == "pairedges") {
+        // routeedges for <pairs> random node pairs, separated by "ROUTE" lines
+        u32 count = argc > 4 ? std::atoi(argv[4]) : 100;
+        std::mt19937 gen(777);
+        for (u32 i = 0; i < count; ++i) {
+            u32 s = gen() % g.n, t = gen() % g.n, meet;
+            if (q.run(s, t, meet) == INF || !q.path_edges(s, t, meet, edges)) continue;
+            std::printf("ROUTE %u %u\n", s, t);
+            for (u32 e : edges)
+                std::printf("%u %lld %u %u %u %d %d %d %d\n", e, (long long)g.road[e], g.pf[e], g.pt[e],
+                            (unsigned)g.rev[e], g.x[g.from[e]], g.y[g.from[e]], g.x[g.to[e]], g.y[g.to[e]]);
+        }
+        return 0;
+    }
     u32 pairs = argc > 4 ? std::atoi(argv[4]) : 1000;
     std::mt19937 rng(12345);
     // The clock of some targets ticks in whole milliseconds, so per-query

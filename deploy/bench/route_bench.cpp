@@ -6,6 +6,7 @@
 //
 // MODE: astar (what the navigation worker did), hh (highway hierarchy),
 // ch (contraction hierarchy; ROUTE_BENCH_CH=<prefix> of the .coords/.ch/.meta files),
+// compare (hh vs ch on every "lat1 lon1 lat2 lon2" line of the file given as LAT1),
 // hhalt (hh with alternatives). Prints wall time per phase and OsmAnd's own
 // load/calculate timers and tile counters, one line per run.
 
@@ -28,7 +29,9 @@
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <sys/stat.h>
@@ -124,6 +127,52 @@ uint32_t nearest_node(const ChData& data, int x31, int y31)
     return best;
 }
 
+// The k nearest nodes (brute force; a product build uses a grid), nearest first,
+// with their distance in metres.  A split junction (turn restrictions) has several
+// nodes at one point, some arrival-only and some departure-only, so a route may
+// have to start or end at the second or third nearest.
+std::vector<std::pair<uint32_t, double>> nearest_nodes(const ChData& data, int x31, int y31, size_t k)
+{
+    std::vector<std::pair<int64_t, uint32_t>> best;   // (squared distance, node), kept sorted, size <= k
+    for (uint32_t i = 0; i < data.x.size(); ++i) {
+        const int64_t dx = (int64_t)data.x[i] - x31, dy = (int64_t)data.y[i] - y31;
+        const int64_t d = dx * dx + dy * dy;
+        if (best.size() == k && d >= best.back().first) continue;
+        best.insert(std::upper_bound(best.begin(), best.end(), std::make_pair(d, i)), {d, i});
+        if (best.size() > k) best.pop_back();
+    }
+    // 31-bit units to metres: the circumference over 2^31, shrunk by cos(latitude)
+    const double lat = std::atan(std::sinh(M_PI * (1.0 - 2.0 * (double)y31 / 2147483648.0)));
+    const double metres_per_unit = 40075016.7 / 2147483648.0 * std::cos(lat);
+    std::vector<std::pair<uint32_t, double>> out;
+    for (const auto& b : best) out.push_back({b.second, std::sqrt((double)b.first) * metres_per_unit});
+    return out;
+}
+
+// Cheapest route between the k nearest nodes at each end; the snap distance counts as
+// 120 ms per metre (a slow walk), so a node far away does not win on route cost alone.
+bool best_route(const ChData& data, onc_ch::Query& query, int sx, int sy, int ex, int ey,
+                std::vector<uint32_t>& edges, uint32_t& cost_out)
+{
+    const auto from = nearest_nodes(data, sx, sy, 4), to = nearest_nodes(data, ex, ey, 4);
+    double best = 1e18;
+    uint32_t best_from = 0, best_to = 0, best_meet = 0, best_cost = onc_ch::INF;
+    for (const auto& s : from) {
+        for (const auto& t : to) {
+            uint32_t meet = 0;
+            const uint32_t cost = query.run(s.first, t.first, meet);
+            if (cost == onc_ch::INF) continue;
+            const double total = cost + 120.0 * (s.second + t.second);
+            if (total < best) { best = total; best_from = s.first; best_to = t.first; best_meet = meet; best_cost = cost; }
+        }
+    }
+    if (best_cost == onc_ch::INF) return false;
+    uint32_t meet = 0;
+    query.run(best_from, best_to, meet);   // path_edges reads the last run
+    cost_out = best_cost;
+    return query.path_edges(best_from, best_to, meet, edges);
+}
+
 // One stretch of one road, in travel direction.
 struct RoadRun {
     int64_t road;
@@ -135,6 +184,7 @@ std::vector<RoadRun> merge_edges(const ChData& data, const std::vector<uint32_t>
 {
     std::vector<RoadRun> runs;
     for (uint32_t e : edges) {
+        if (data.road[e] < 0) continue;   // zero-length junction transition (turn restrictions)
         const int start = data.rev[e] ? (int)data.pt[e] : (int)data.pf[e];
         const int end = data.rev[e] ? (int)data.pf[e] : (int)data.pt[e];
         if (!runs.empty() && runs.back().road == data.road[e] && runs.back().end == start &&
@@ -203,6 +253,115 @@ int route_bench_main(int argc, char** argv)
         std::printf("core: %s\n", core.dli_fname);
     std::printf("setup: parse_xml=%.0fms open_map=%.0fms files=%zu routing_indexes=%zu hh_indexes=%zu\n",
                 parse_ms, open_ms, opened, routing_indexes, hh_indexes);
+
+    if (mode == "compare") {
+        // argv[5] is a text file of "lat1 lon1 lat2 lon2" lines.  Each pair is routed with
+        // HH and with CH; the routes are compared by time, length and shared road.
+        const char* prefix = std::getenv("ROUTE_BENCH_CH");
+        if (!prefix) { std::fprintf(stderr, "ROUTE_BENCH_CH=<prefix> is required\n"); return 2; }
+        ChData ch;
+        std::string error;
+        if (!load_ch(prefix, ch, error)) { std::fprintf(stderr, "ch load failed: %s\n", error.c_str()); return 1; }
+        onc_ch::Query query(ch.hierarchy);
+        std::FILE* pairs = std::fopen(argv[5], "r");
+        if (!pairs) { std::fprintf(stderr, "cannot open pairs file\n"); return 1; }
+        std::vector<double> time_ratio, dist_ratio, overlap_hh, overlap_ch, hh_ms_all, ch_ms_all;
+        double a, b, c, d;
+        int index = 0;
+        auto road_metres = [](const std::vector<SHARED_PTR<RouteSegmentResult>>& segments) {
+            std::map<int64_t, double> by_road;
+            for (const auto& s : segments) if (s) by_road[s->object->getId()] += s->distance;
+            return by_road;
+        };
+        while (std::fscanf(pairs, "%lf %lf %lf %lf", &a, &b, &c, &d) == 4) {
+            const int sx = get31TileNumberX(b), sy = get31TileNumberY(a);
+            const int ex = get31TileNumberX(d), ey = get31TileNumberY(c);
+            MAP_STR_STR parameters;
+            std::vector<int> ix, iy;
+            // reference router: HH, or plain A* with ROUTE_BENCH_REFERENCE=astar (the ground truth
+            // for the unit's routing.xml; HH shortcut weights come from the map's build)
+            const bool plain_astar = std::getenv("ROUTE_BENCH_REFERENCE") &&
+                                     std::strcmp(std::getenv("ROUTE_BENCH_REFERENCE"), "astar") == 0;
+            HHRoutingConfig* hh = nullptr;
+            if (!plain_astar) {
+                hh = HHRoutingConfig::astar(0);
+                hh->calcDetailed(HHRoutingConfig::CALCULATE_ALL_DETAILED);
+            }
+            RoutePlannerFrontEnd hh_front = hh ? RoutePlannerFrontEnd(hh) : RoutePlannerFrontEnd();
+            auto hh_context = hh_front.buildRoutingContext(builder->build("car", memory_mb, parameters));
+            hh_context->progress = std::make_shared<RouteCalculationProgress>();
+            auto t = Clock::now();
+            auto hh_segments = hh_front.searchRoute(hh_context, sx, sy, ex, ey, ix, iy, nullptr);
+            const double hh_ms = ms_since(t);
+            float hh_s = 0.0f;
+            const double hh_m = route_metres(hh_segments, &hh_s);
+            // CH
+            RoutePlannerFrontEnd ch_front;
+            auto ch_context = ch_front.buildRoutingContext(builder->build("car", memory_mb, parameters));
+            ch_context->progress = std::make_shared<RouteCalculationProgress>();
+            t = Clock::now();
+            uint32_t ch_cost = 0;
+            std::vector<uint32_t> edges;
+            std::vector<SHARED_PTR<RouteSegmentResult>> ch_segments;
+            if (best_route(ch, query, sx, sy, ex, ey, edges, ch_cost)) {
+                for (const auto& r : merge_edges(ch, edges)) {
+                    SHARED_PTR<RouteDataObject> road;
+                    for (const auto& segment : ch_context->loadRouteSegment(r.anchor_x, r.anchor_y))
+                        if (segment->getRoad()->getId() == r.road) { road = segment->getRoad(); break; }
+                    if (road) ch_segments.push_back(std::make_shared<RouteSegmentResult>(road, r.start, r.end));
+                }
+                prepareResult(ch_context.get(), ch_segments);
+                ch_front.makeStartEndPointsPrecise(ch_context.get(), ch_segments, sx, sy, ex, ey);
+            }
+            const double ch_ms = ms_since(t);
+            float ch_s = 0.0f;
+            const double ch_m = route_metres(ch_segments, &ch_s);
+            ++index;
+            if (hh_segments.empty() || ch_segments.empty() || hh_m <= 0 || ch_m <= 0) {
+                std::printf("pair %d: hh %zu segments, ch %zu segments: no comparison\n", index,
+                            hh_segments.size(), ch_segments.size());
+                continue;
+            }
+            if (const char* dump = std::getenv("ROUTE_BENCH_DUMP")) {
+                // ordered "road:metres" lists of both routes, for analysis on the PC
+                if (std::FILE* out = std::fopen(dump, "a")) {
+                    for (int which = 0; which < 2; ++which) {
+                        const auto& segments = which == 0 ? hh_segments : ch_segments;
+                        std::fprintf(out, "%c %d", which == 0 ? 'H' : 'C', index);
+                        for (const auto& s : segments)
+                            if (s) std::fprintf(out, " %lld:%.0f", (long long)s->object->getId(), (double)s->distance);
+                        std::fprintf(out, "\n");
+                    }
+                    std::fclose(out);
+                }
+            }
+            const auto hh_roads = road_metres(hh_segments), ch_roads = road_metres(ch_segments);
+            double shared = 0;
+            for (const auto& kv : ch_roads) {
+                const auto it = hh_roads.find(kv.first);
+                if (it != hh_roads.end()) shared += std::min(kv.second, it->second);
+            }
+            time_ratio.push_back(ch_s / hh_s); dist_ratio.push_back(ch_m / hh_m);
+            overlap_hh.push_back(shared / hh_m); overlap_ch.push_back(shared / ch_m);
+            hh_ms_all.push_back(hh_ms); ch_ms_all.push_back(ch_ms);
+            std::printf("pair %d: hh %.0fms %.0fm %.0fs | ch %.0fms %.0fm %.0fs | time x%.3f dist x%.3f shared %.0f%% of hh, %.0f%% of ch\n",
+                        index, hh_ms, hh_m, hh_s, ch_ms, ch_m, ch_s, ch_s / hh_s, ch_m / hh_m,
+                        100.0 * shared / hh_m, 100.0 * shared / ch_m);
+            std::fflush(stdout);
+        }
+        std::fclose(pairs);
+        auto median = [](std::vector<double> v) {
+            if (v.empty()) return 0.0;
+            std::sort(v.begin(), v.end());
+            return v[v.size() / 2];
+        };
+        std::printf("summary: %zu pairs; median hh %.0fms, ch %.0fms; median ch/hh time x%.3f dist x%.3f; "
+                    "median shared road %.0f%% of hh, %.0f%% of ch; worst time x%.3f\n", time_ratio.size(),
+                    median(hh_ms_all), median(ch_ms_all), median(time_ratio), median(dist_ratio),
+                    100.0 * median(overlap_hh), 100.0 * median(overlap_ch),
+                    time_ratio.empty() ? 0.0 : *std::max_element(time_ratio.begin(), time_ratio.end()));
+        return 0;
+    }
 
     for (int run = 0; run < repeat; ++run) {
         MAP_STR_STR parameters;
@@ -297,18 +456,16 @@ int route_bench_main(int argc, char** argv)
             const int ex = get31TileNumberX(lon2), ey = get31TileNumberY(lat2);
             auto total_started = Clock::now();
             auto step = Clock::now();
-            const uint32_t from_node = nearest_node(*ch, sx, sy), to_node = nearest_node(*ch, ex, ey);
-            const double snap_ms = ms_since(step);
-            step = Clock::now();
-            uint32_t meet = 0;
-            const uint32_t cost = query->run(from_node, to_node, meet);
-            const double query_ms = ms_since(step);
+            const double snap_ms = 0.0;   // snapping is inside best_route below
             std::vector<uint32_t> edges;
+            uint32_t cost = 0;
             step = Clock::now();
-            if (cost == onc_ch::INF || !query->path_edges(from_node, to_node, meet, edges)) {
+            if (!best_route(*ch, *query, sx, sy, ex, ey, edges, cost)) {
                 std::printf("run %d ch: no route\n", run);
                 continue;
             }
+            const double query_ms = ms_since(step);   // snap (4 x 4 nodes) + queries + unpack
+            step = Clock::now();
             const auto runs = merge_edges(*ch, edges);
             const double unpack_ms = ms_since(step);
             step = Clock::now();

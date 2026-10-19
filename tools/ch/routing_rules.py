@@ -90,9 +90,24 @@ class Profile:
         self.min_speed = float(profile.get('minSpeed'))
         self.default_speed = float(profile.get('defaultSpeed'))
         self.max_speed = float(profile.get('maxSpeed'))
+        # turn penalties in seconds (GeneralRouter::getSharpTurnPenalty etc.)
+        self.sharp_turn = float(profile.get('sharpTurn', 0))
+        self.slight_turn = float(profile.get('slightTurn', 0))
+        self.roundabout_turn = float(profile.get('roundaboutTurn', 0))
         self.attributes = {}
         for element in profile.findall('way'):
             self.attributes[element.get('attribute')] = Attribute(element, params)
+
+    def transition_penalty(self, tags):
+        """penalty_transition of a road (GeneralRouter::definePenaltyTransition)."""
+        attribute = self.attributes.get('penalty_transition')
+        value = attribute.evaluate(tags) if attribute else None
+        return 0.0 if value is None else value
+
+    @staticmethod
+    def roundabout(tags):
+        """RouteDataObject::roundabout(): a roundabout tag or junction=roundabout."""
+        return 'roundabout' in tags or tags.get('junction') == 'roundabout'
 
     def road(self, tags):
         """-> (access, oneway, speed_kmh, priority) for a tag dict."""
