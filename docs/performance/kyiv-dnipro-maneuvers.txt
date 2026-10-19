@@ -1,0 +1,43 @@
+core: /open-navicore/libOsmAndCore_shared.so
+setup: parse_xml=95ms open_map=9743ms files=26 routing_indexes=26 hh_indexes=52
+ch: nodes=15246356 edges=8486440 roads=2067260 maps=26 opened in 8ms
+run 0 ch mem=64: route=3866ms (search=740.00 roads=2501 prepare=625) segments=851 distance=478745m time=21477s base_edges=3023 road_runs=752 settled=313
+turn     0.3km Turn right(C|C|+TR,C|+TR) angle=  29.7 exit=0 road="Європейська площа" lanes=C|C|+TR,C|+TR
+turn     0.6km Turn left angle= -84.3 exit=0 road="алея Магдебурзького права" lanes=-
+turn     2.6km Keep left(+C,TSLR) angle=  -0.9 exit=0 road="площа Андрія Первозваного" lanes=+C,TSLR
+turn     3.8km Turn slightly left(TL|TL|+TSLL) angle=  -7.4 exit=0 road="Дніпровський узвіз" lanes=TL|TL|+TSLL
+turn     4.8km Keep left(+C|+C|+C|TSLR,TR) angle=  -0.7 exit=0 road="Набережне шосе" lanes=+C|+C|+C|TSLR,TR
+turn     5.1km Turn slightly right(C|C|+TSLR,C) angle=  13.0 exit=0 road="" lanes=C|C|+TSLR,C
+turn     5.3km Take 2 exit angle=-133.0 exit=2 road="" lanes=-
+turn    10.0km Turn slightly right(C|C|+TSLR,C) angle=  17.2 exit=0 road="Харківське шосе" lanes=C|C|+TSLR,C
+turn    16.1km Take 8 exit angle=-140.3 exit=8 road="Харківська площа" lanes=-
+turn    23.5km Keep left(+C|+C|+C|+C|TR) angle=  -0.0 exit=0 road="Харківське шосе" lanes=+C|+C|+C|+C|TR
+turn    31.5km Keep left(+C|+C|TSLR) angle=  -2.1 exit=0 road="" lanes=+C|+C|TSLR
+turn    43.0km Take 1 exit angle= -12.3 exit=1 road="" lanes=-
+turn   304.1km Turn right(C|C|+TR,C) angle= 101.1 exit=0 road="вулиця Козака Решетила" lanes=C|C|+TR,C
+turn   306.0km Turn left angle= -89.7 exit=0 road="Старокиївська вулиця" lanes=-
+turn   306.2km Turn right angle=  67.0 exit=0 road="Старокиївська вулиця" lanes=-
+turn   306.2km Turn right angle=  57.5 exit=0 road="Покровська вулиця" lanes=-
+turn   321.7km Keep left(+KL,KR) angle= -15.3 exit=0 road="Н-31 (в будові до кінця 2021)" lanes=+KL,KR
+turn   327.6km Turn slightly left(+TSLL|+TSLL,C) angle=  -5.9 exit=0 road="" lanes=+TSLL|+TSLL,C
+turn   337.7km Keep right(+C,TSLL|+C) angle=   0.7 exit=0 road="" lanes=+C,TSLL|+C
+turn   370.7km Turn slightly left(+TSLL,TL|+TSLL) angle=  -5.2 exit=0 road="" lanes=+TSLL,TL|+TSLL
+turn   396.4km Turn slightly right(+TSLR,TSLL) angle=   5.3 exit=0 road="Центральна вулиця" lanes=+TSLR,TSLL
+turn   399.1km Turn slightly left(+TSLL,TSLR) angle= -14.2 exit=0 road="Центральна вулиця" lanes=+TSLL,TSLR
+turn   401.2km Turn slightly left(+TSLL,TSLR) angle= -10.1 exit=0 road="Центральна вулиця" lanes=+TSLL,TSLR
+turn   421.1km Turn right angle=  58.8 exit=0 road="Першотравнева вулиця" lanes=-
+turn   423.1km Turn right angle=  69.3 exit=0 road="Центральна вулиця" lanes=-
+turn   423.1km Turn left angle= -74.3 exit=0 road="" lanes=-
+turn   423.7km Turn slightly left(+TSLL,TSLR) angle= -16.6 exit=0 road="" lanes=+TSLL,TSLR
+turn   425.3km Take 3 exit angle= -88.5 exit=3 road="" lanes=-
+turn   427.9km Take 2 exit angle=  11.8 exit=2 road="" lanes=-
+turn   437.2km Take 2 exit angle= -30.4 exit=2 road="" lanes=-
+turn   466.4km Keep left(+KL,KR) angle=   0.4 exit=0 road="" lanes=+KL,KR
+turn   466.4km Keep left(+KL,C) angle=  -0.8 exit=0 road="" lanes=+KL,C
+turn   466.5km Keep right(+KR,KL,C) angle=  27.0 exit=0 road="" lanes=+KR,KL,C
+turn   466.7km Turn slightly right(+TSLR,TR) angle=   8.2 exit=0 road="" lanes=+TSLR,TR
+turn   470.6km Turn slightly right(+TSLR,C) angle=  15.7 exit=0 road="" lanes=+TSLR,C
+turn   476.1km Turn slightly right(TSLL,TL|TSLL|+TSLR,TSLL|+TSLR,TR) angle=  31.5 exit=0 road="вулиця Набережна Заводська" lanes=TSLL,TL|TSLL|+TSLR,TSLL|+TSLR,TR
+turn   476.1km Turn slightly right(TSLL|TSLL|+TSLR,TSLL|+TSLR,TR) angle=   2.4 exit=0 road="вулиця Княгині Ольги" lanes=TSLL|TSLL|+TSLR,TSLL|+TSLR,TR
+turn   476.8km Turn left angle= -73.0 exit=0 road="проспект Дмитра Яворницького" lanes=-
+  progress: load=2599ms headers=131ms calc=0ms initial=0ms extra=0ms visited=0 loaded_tiles=1073 unloaded=0 reloaded=0 distinct=1073 max_loaded=0
