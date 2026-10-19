@@ -328,12 +328,28 @@ mock has no corresponding backend instead of synthesizing stale settings.
 ## Instrument-cluster backend and OsmAnd mapping
 
 [`include/open_navicore/cluster.h`](../include/open_navicore/cluster.h) is the
-public producer boundary for a future OsmAnd adapter. It exposes route and
-navigation state, numeric destination and maneuver distances plus recovered
-units, ETA/RTA bytes, bounded road text, lane-active state, bar fill, compass,
-and both speed-limit fields. Its semantic supported mask deliberately rejects
-route-symbol bit 2, lane bit 7, and unknown bit 12 because their encodings or
-meaning remain unresolved. The lower-level `open_navi_callback_send_cluster()`
+public producer boundary used by the OsmAnd backend. It exposes route and
+navigation state, the route-guidance symbol, numeric destination and maneuver
+distances plus recovered units, ETA/RTA bytes, bounded road text, lane-active
+state, bar fill, compass, and both speed-limit fields. Its semantic supported
+mask deliberately rejects lane bit 7 and unknown bit 12 because their
+encodings or meaning remain unresolved.
+
+The route-guidance symbol (bit 2, byte `+0x003`) was mapped live on the
+installed bench unit (2026-10-19, analysis `Cluster_TBT_Symbols.md`; table in
+`enum OpenNaviClusterRouteSymbol`). The cluster uses `symbol & 0x3f`; 1..61
+are pictures, 0 makes it leave its navigation page and 62/63 draw nothing, so
+the API accepts only 1..61 (`OPEN_NAVI_CLUSTER_INVALID_VALUE` otherwise). The
+turn view is drawn only while bit 2 **and** bar-fill bit 10 are valid; the
+bar value itself is not drawn. Of a guidance record the turn view shows only
+the maneuver distance (with unit), one road text and the symbol; route state,
+navigation status, ETA/RTA, destination distance and both speed limits are
+not drawn there (other cluster pages unchecked). A change of road text alone
+does not redraw the cluster: the new text appears with the next symbol change.
+In the backend ABI (`OpenNaviBackendClusterV1`) the symbol uses the former
+reserved byte after `legal_speed_unit` (layout and size unchanged; read only
+with bit 2); the semantic `OpenNaviClusterNavigationState` gains it as an
+appended member. The lower-level `open_navi_callback_send_cluster()`
 remains the explicit expert passthrough for a caller that already owns a fully
 verified exact OEM record; it performs no semantic repair.
 
@@ -381,15 +397,50 @@ telemetry or semantic-history resurrection. Cluster
 diagnostic generation records only accepted publications from the current
 lifecycle, not attempted or teardown-invalidated sends.
 
-For OsmAnd, map its route phase to the recovered route-state enum and its
-route availability to the navigation-status enum; convert destination distance
-to a nonnegative integer in the selected unit and maneuver distance to tenths;
-pass ETA/RTA clock components and current/next street names as bounded UTF-8;
-and map compass/speed units only to the recovered enums. Keep route-symbol and
-lane validity clear until a separate adapter owns a verified OEM encoding
-table. Bar fill is accepted only in `0..100`. The time bytes remain unbounded
-because static evidence proves only their byte width, not clock validation
-rules.
+For OsmAnd (`backends/osmand/cluster_payload.cpp`), the route phase maps to
+the recovered route-state enum and route availability to the navigation-status
+enum; destination distance is a nonnegative integer in the selected unit and
+maneuver distance is in tenths; ETA/RTA clock components and current/next
+street names are passed as bounded UTF-8; compass and speed units map only to
+the recovered enums. Lane validity stays clear (no lane picture rendered live
+with any tried encoding). Bar fill is accepted only in `0..100`. The time
+bytes remain unbounded because static evidence proves only their byte width,
+not clock validation rules.
+
+During guidance with a position every record carries a symbol and a valid
+bar fill (the countdown, 100 from 400 m to 0 at the turn; 0 once arrived):
+
+| Guidance | Symbol |
+|---|---:|
+| straight / continue | 9 |
+| left, right | 1, 2 |
+| slight left, slight right | 3, 4 |
+| sharp left, sharp right | 5, 6 |
+| keep left, keep right (fork) | 7, 8 |
+| U-turn (OsmAnd TU), right U-turn (TRU) | 10, 28 |
+| roundabout, right-hand traffic (RNDB) | 19..26 |
+| roundabout, left-hand traffic (RNLB) | 36..43 |
+| next manoeuvre is the destination | 15 |
+| arrived | 27 |
+| recalculating | 16 |
+
+A roundabout takes the clock position nearest to OsmAnd's exit angle
+(`TurnType::getTurnAngle()`, positive clockwise from the entry direction):
+12:00 = 0 degrees, 1:00 = 30, 3:00 = 90, 4:00 = 120, U-turn = 180, 7:00 = -150,
+9:00 = -90, 11:00 = -30. The set follows OsmAnd's driving side (RNLB is its
+clockwise roundabout); the worker does not set OsmAnd's
+`leftSideNavigation`, so routes are calculated for right-hand traffic.
+
+Text-only change: when a new record keeps the published symbol but changes a
+road text, `apply_text_redraw()` sends it once with a neighbouring symbol of
+similar meaning (left 1 -> 50, right 2 -> 49, straight 9 -> 56, a roundabout
+exit -> the same exit of the other traffic set, ...); the next publication
+(the engine publishes at most every 500 ms) carries the real symbol again,
+and both symbol changes redraw the cluster with the new text. The flash and
+its 500 ms length are not yet confirmed live. Untested alternative: the
+cluster ignores bits 6..7 (`n + 64` draws `n`), which might redraw without a
+visible flash if `vs_can` forwards the whole byte; the semantic API does not
+allow it.
 
 ## Native Screen/EGL milestone
 

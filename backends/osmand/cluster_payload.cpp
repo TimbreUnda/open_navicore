@@ -23,6 +23,122 @@ bool ClusterPayload::same_as(const ClusterPayload& other) const noexcept
            next_road == other.next_road;
 }
 
+namespace {
+
+// Clock positions the cluster draws for a roundabout exit: angle from the
+// entry direction (positive clockwise) and the right-/left-hand-traffic
+// symbol. The LHT set 36..43 is the RHT set 19..26 in the same order.
+struct ClockExit {
+    double angle;
+    uint8_t rht;
+};
+constexpr ClockExit clock_exits[] = {
+    {0.0, OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_12},
+    {30.0, OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_1},
+    {90.0, OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_3},
+    {120.0, OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_4},
+    {180.0, OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_U},
+    {-150.0, OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_7},
+    {-90.0, OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_9},
+    {-30.0, OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_11},
+};
+constexpr int lht_offset =
+    OPEN_NAVI_CLUSTER_SYMBOL_LHT_ROUNDABOUT_12 - OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_12;
+
+uint8_t maneuver_symbol(const ui::Maneuver& m) noexcept
+{
+    using K = ui::ManeuverKind;
+    switch (m.kind) {
+    case K::Straight: return OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT;
+    case K::Left: return OPEN_NAVI_CLUSTER_SYMBOL_LEFT;
+    case K::SlightLeft: return OPEN_NAVI_CLUSTER_SYMBOL_SLIGHT_LEFT;
+    case K::SharpLeft: return OPEN_NAVI_CLUSTER_SYMBOL_SHARP_LEFT;
+    case K::Right: return OPEN_NAVI_CLUSTER_SYMBOL_RIGHT;
+    case K::SlightRight: return OPEN_NAVI_CLUSTER_SYMBOL_SLIGHT_RIGHT;
+    case K::SharpRight: return OPEN_NAVI_CLUSTER_SYMBOL_SHARP_RIGHT;
+    case K::KeepLeft: return OPEN_NAVI_CLUSTER_SYMBOL_FORK_LEFT;
+    case K::KeepRight: return OPEN_NAVI_CLUSTER_SYMBOL_FORK_RIGHT;
+    // OsmAnd TU is the left U-turn, TRU (left_side) the right one.
+    case K::UTurn:
+        return m.left_side ? OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_RIGHT
+                           : OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_LEFT;
+    case K::Roundabout: return roundabout_symbol(m.turn_angle_degrees, m.left_side);
+    case K::Arrive: return OPEN_NAVI_CLUSTER_SYMBOL_APPROACHING_DESTINATION;
+    }
+    return OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT;
+}
+
+} // namespace
+
+uint8_t roundabout_symbol(double turn_angle_degrees, bool left_hand_traffic) noexcept
+{
+    double angle = std::isfinite(turn_angle_degrees)
+        ? std::fmod(turn_angle_degrees, 360.0) : 0.0;
+    uint8_t best = clock_exits[0].rht;
+    double best_distance = 1000.0;
+    for (const auto& exit : clock_exits) {
+        double d = std::fabs(std::fmod(angle - exit.angle + 720.0, 360.0));
+        d = std::min(d, 360.0 - d);
+        if (d < best_distance) {
+            best_distance = d;
+            best = exit.rht;
+        }
+    }
+    return static_cast<uint8_t>(left_hand_traffic ? best + lht_offset : best);
+}
+
+uint8_t cluster_symbol(const ui::GuidanceState& g) noexcept
+{
+    if (g.arrived) return OPEN_NAVI_CLUSTER_SYMBOL_DESTINATION_REACHED;
+    if (g.recalculating) return OPEN_NAVI_CLUSTER_SYMBOL_RECALCULATING;
+    return maneuver_symbol(g.maneuver);
+}
+
+uint8_t redraw_symbol(uint8_t symbol) noexcept
+{
+    switch (symbol) {
+    case OPEN_NAVI_CLUSTER_SYMBOL_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_T_TURN_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_T_TURN_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_SLIGHT_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_EXIT_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_SLIGHT_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_EXIT_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_SHARP_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_SHARP_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_FORK_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_SPLIT_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_FORK_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_SPLIT_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_CROSSING_STRAIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_DIVIDED_U_TURN_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_DIVIDED_U_TURN_RIGHT;
+    default: break;
+    }
+    // A roundabout: the same exit in the other traffic direction's set.
+    if (symbol >= OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_12 &&
+        symbol <= OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_7)
+        return static_cast<uint8_t>(symbol + lht_offset);
+    if (symbol >= OPEN_NAVI_CLUSTER_SYMBOL_LHT_ROUNDABOUT_12 &&
+        symbol <= OPEN_NAVI_CLUSTER_SYMBOL_LHT_ROUNDABOUT_7)
+        return static_cast<uint8_t>(symbol - lht_offset);
+    // Text symbols (15, 16, 27) and the rest: straight, or the crossing.
+    return symbol == OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT ? OPEN_NAVI_CLUSTER_SYMBOL_CROSSING_STRAIGHT
+                                                       : OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT;
+}
+
+bool apply_text_redraw(ClusterPayload& next, const ClusterPayload& last) noexcept
+{
+    constexpr uint16_t roads = OPEN_NAVI_CLUSTER_CURRENT_ROAD | OPEN_NAVI_CLUSTER_NEXT_ROAD;
+    const auto& n = next.cluster;
+    const auto& l = last.cluster;
+    if (!(n.valid_attributes & l.valid_attributes & OPEN_NAVI_CLUSTER_ROUTE_SYMBOL) ||
+        n.route_guidance_symbol != l.route_guidance_symbol)
+        return false;
+    const bool text_changed = (n.valid_attributes & roads) != (l.valid_attributes & roads) ||
+                              next.current_road != last.current_road ||
+                              next.next_road != last.next_road;
+    if (!text_changed)
+        return false;
+    next.cluster.route_guidance_symbol = redraw_symbol(n.route_guidance_symbol);
+    return true;
+}
+
 // Outside guidance: "no route", or "route calculation" while one is being
 // calculated. Guidance without a position: "direction not available".
 ClusterPayload build_cluster_payload(const ClusterInputs& in)
@@ -94,12 +210,13 @@ ClusterPayload build_cluster_payload(const ClusterInputs& in)
             c.rta_hour = static_cast<uint8_t>(std::min(99L, minutes / 60));
             c.rta_minute = static_cast<uint8_t>(minutes % 60);
         }
-        if (near) {
-            // The turn countdown: 100 at 400 m to 0 at the turn.
-            valid |= OPEN_NAVI_CLUSTER_BAR_PERCENT;
-            c.bar_percent = static_cast<uint8_t>(
-                std::clamp(std::lround(g.distance_to_maneuver_metres / 4.0), 0L, 100L));
-        }
+        // The turn view needs a valid symbol and a valid bar fill (bit 10;
+        // its value is not drawn). Bar: the turn countdown, 100 from 400 m
+        // to 0 at the turn; 0 once arrived.
+        valid |= OPEN_NAVI_CLUSTER_ROUTE_SYMBOL | OPEN_NAVI_CLUSTER_BAR_PERCENT;
+        c.route_guidance_symbol = cluster_symbol(g);
+        c.bar_percent = g.arrived ? 0 : static_cast<uint8_t>(
+            std::clamp(std::lround(g.distance_to_maneuver_metres / 4.0), 0L, 100L));
         if (!g.road.empty()) {
             out.current_road = g.road;
             valid |= OPEN_NAVI_CLUSTER_CURRENT_ROAD;

@@ -21,6 +21,7 @@ typedef struct OpenNaviClusterPublishFrame {
 static const OpenNaviClusterField g_fields[] = {
     { OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE, 0x000, 1 },
     { OPEN_NAVI_CLUSTER_NAVIGATION_STATUS, 0x001, 1 },
+    { OPEN_NAVI_CLUSTER_ROUTE_SYMBOL, 0x003, 1 },
     { OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION, 0x104, 0x21 },
     { OPEN_NAVI_CLUSTER_ETA, 0x128, 2 },
     { OPEN_NAVI_CLUSTER_RTA, 0x12a, 2 },
@@ -254,6 +255,14 @@ uint32_t open_navi_cluster_backend_serialize(
             return OPEN_NAVI_CLUSTER_INVALID_VALUE;
         }
         record_out[0x001] = state->navigation_status;
+    }
+    if ((valid & OPEN_NAVI_CLUSTER_ROUTE_SYMBOL) != 0u) {
+        if (!valid_range(state->route_guidance_symbol,
+                         OPEN_NAVI_CLUSTER_SYMBOL_MIN,
+                         OPEN_NAVI_CLUSTER_SYMBOL_MAX)) {
+            return OPEN_NAVI_CLUSTER_INVALID_VALUE;
+        }
+        record_out[0x003] = state->route_guidance_symbol;
     }
     if ((valid & OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION) != 0u) {
         if (!valid_range(state->distance_destination_unit, 1u, 5u)) {

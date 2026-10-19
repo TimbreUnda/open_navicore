@@ -684,6 +684,8 @@ private:
                 maneuver.geometry_index = geometry_at_start;
                 maneuver.roundabout_exit = segment->turnType->getExitOut();
                 maneuver.lanes = lanes_of(segment->turnType);
+                maneuver.left_side = segment->turnType->isLeftSide();
+                maneuver.turn_angle_degrees = segment->turnType->getTurnAngle();
                 alternative.maneuvers.push_back(std::move(maneuver));
             }
             alternative.distance_metres += segment->distance;
@@ -705,7 +707,8 @@ private:
         if (alternative.geometry.size() < 2) return alternative;
         alternative.maneuvers.push_back({
             ui::ManeuverKind::Arrive, request.destination.title,
-            alternative.distance_metres, alternative.geometry.size() - 1u, 0, {}});
+            alternative.distance_metres, alternative.geometry.size() - 1u, 0, {}, false,
+            0.0});
         return alternative;
     }
 

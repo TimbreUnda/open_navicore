@@ -971,6 +971,12 @@ void OsmAndEngine::publish_cluster()
     ClusterPayload payload = build_cluster_payload(inputs);
     if (cluster_published_ && payload.same_as(cluster_last_))
         return;
+    // A new road text alone does not redraw the cluster: send it once with
+    // a neighbouring symbol; the next publication (500 ms on) restores the
+    // real symbol, which redraws again with the new text.
+    if (cluster_published_ && apply_text_redraw(payload, cluster_last_))
+        trace_result("cluster=text_redraw", payload.cluster.route_guidance_symbol,
+                     cluster_last_.cluster.route_guidance_symbol);
     const uint32_t status =
         outbound_->publish_cluster(outbound_->v1.runtime_context, &payload.cluster);
     cluster_last_ = std::move(payload);

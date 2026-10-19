@@ -470,13 +470,22 @@ void check_cluster_valid(const navicore_osmand::ClusterPayload& payload)
                c.distance_maneuver_tenths <= 65535u);
     if (valid & OPEN_NAVI_CLUSTER_BAR_PERCENT)
         assert(c.bar_percent <= 100);
+    if (valid & OPEN_NAVI_CLUSTER_ROUTE_SYMBOL)
+        assert(c.route_guidance_symbol >= OPEN_NAVI_CLUSTER_SYMBOL_MIN &&
+               c.route_guidance_symbol <= OPEN_NAVI_CLUSTER_SYMBOL_MAX);
+    else
+        assert(c.route_guidance_symbol == 0);
+    // The cluster draws its turn view only with both bits (live, 2026-10-19).
+    if (valid & OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE)
+        assert((valid & OPEN_NAVI_CLUSTER_ROUTE_SYMBOL) &&
+               (valid & OPEN_NAVI_CLUSTER_BAR_PERCENT));
     if (valid & OPEN_NAVI_CLUSTER_COMPASS)
         assert(c.compass >= 1 && c.compass <= 8);
     if (valid & OPEN_NAVI_CLUSTER_SPEED_LIMIT)
         assert(c.speed_unit >= 1 && c.speed_unit <= 2);
     assert(c.current_road.byte_count == payload.current_road.size());
     assert(c.next_road.byte_count == payload.next_road.size());
-    assert(c.reserved0[0] == 0 && c.reserved0[1] == 0);
+    assert(c.reserved0[0] == 0);
 }
 
 void test_cluster_payload()
@@ -521,6 +530,7 @@ void test_cluster_payload()
     assert(c.rta_hour == 0 && c.rta_minute == 7);
     assert(c.valid_attributes & OPEN_NAVI_CLUSTER_ETA);
     assert(c.bar_percent == 63);
+    assert(c.route_guidance_symbol == OPEN_NAVI_CLUSTER_SYMBOL_LEFT);
     assert(c.compass == OPEN_NAVI_CLUSTER_COMPASS_E);
     assert(c.speed_limit == 50 && c.speed_unit == OPEN_NAVI_CLUSTER_SPEED_KMH);
     assert(p.current_road == "бульвар Тараса Шевченка" && p.next_road == "вулиця Антоновича");
@@ -537,7 +547,9 @@ void test_cluster_payload()
     p = build_cluster_payload(in);
     check_cluster_valid(p);
     assert(p.cluster.route_guidance_state == OPEN_NAVI_CLUSTER_ROUTE_FOLLOW_STREET);
-    assert(!(p.cluster.valid_attributes & OPEN_NAVI_CLUSTER_BAR_PERCENT));
+    // Far from the turn the bar stays valid (full); the cluster needs it.
+    assert((p.cluster.valid_attributes & OPEN_NAVI_CLUSTER_BAR_PERCENT) &&
+           p.cluster.bar_percent == 100);
     assert(p.cluster.distance_maneuver_tenths == 13 &&
            p.cluster.distance_maneuver_unit == OPEN_NAVI_CLUSTER_DISTANCE_KILOMETRES);
     assert(!p.same_as(copy));
@@ -555,14 +567,127 @@ void test_cluster_payload()
     p = build_cluster_payload(in);
     assert(p.cluster.route_guidance_state == OPEN_NAVI_CLUSTER_ROUTE_RECALCULATION &&
            p.cluster.navigation_status == OPEN_NAVI_CLUSTER_NAV_ROUTE_CALCULATION);
+    check_cluster_valid(p);
+    assert(p.cluster.route_guidance_symbol == OPEN_NAVI_CLUSTER_SYMBOL_RECALCULATING);
     in.guidance.recalculating = false;
     in.guidance.arrived = true;
     p = build_cluster_payload(in);
     check_cluster_valid(p);
     assert(p.cluster.route_guidance_state == OPEN_NAVI_CLUSTER_ROUTE_DESTINATION_REACHED);
     assert(!(p.cluster.valid_attributes &
-             (OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION | OPEN_NAVI_CLUSTER_DISTANCE_MANEUVER |
-              OPEN_NAVI_CLUSTER_BAR_PERCENT)));
+             (OPEN_NAVI_CLUSTER_DISTANCE_DESTINATION | OPEN_NAVI_CLUSTER_DISTANCE_MANEUVER)));
+    assert(p.cluster.route_guidance_symbol == OPEN_NAVI_CLUSTER_SYMBOL_DESTINATION_REACHED);
+    assert((p.cluster.valid_attributes & OPEN_NAVI_CLUSTER_BAR_PERCENT) &&
+           p.cluster.bar_percent == 0);
+}
+
+// Every manoeuvre kind maps to a picture of the live symbol table
+// (analysis Cluster_TBT_Symbols.md).
+void test_cluster_symbols()
+{
+    using navicore_osmand::cluster_symbol;
+    using navicore_osmand::roundabout_symbol;
+    using navicore_osmand::redraw_symbol;
+    navicore_osmand::ui::GuidanceState g;
+    const std::vector<std::pair<ManeuverKind, int>> kinds = {
+        {ManeuverKind::Straight, 9}, {ManeuverKind::Left, 1},
+        {ManeuverKind::SlightLeft, 3}, {ManeuverKind::SharpLeft, 5},
+        {ManeuverKind::Right, 2}, {ManeuverKind::SlightRight, 4},
+        {ManeuverKind::SharpRight, 6}, {ManeuverKind::KeepLeft, 7},
+        {ManeuverKind::KeepRight, 8}, {ManeuverKind::UTurn, 10},
+        {ManeuverKind::Arrive, 15}};
+    for (const auto& kind : kinds) {
+        g.maneuver.kind = kind.first;
+        assert(cluster_symbol(g) == kind.second);
+    }
+    // OsmAnd TRU (left_side): the right U-turn.
+    g.maneuver.kind = ManeuverKind::UTurn;
+    g.maneuver.left_side = true;
+    assert(cluster_symbol(g) == 28);
+    // Roundabouts by exit angle (positive = clockwise, right), nearest
+    // clock position; RHT 19..26, LHT (OsmAnd RNLB) 36..43.
+    const std::vector<std::pair<double, int>> exits = {
+        {0.0, 19}, {10.0, 19}, {-14.0, 19}, {25.0, 23}, {44.0, 23},
+        {80.0, 21}, {95.0, 21}, {115.0, 25}, {140.0, 25}, {170.0, 20},
+        {180.0, 20}, {-180.0, 20}, {-175.0, 20}, {-160.0, 26}, {-140.0, 26},
+        {-100.0, 22}, {-75.0, 22}, {-40.0, 24}, {-20.0, 24}, {450.0, 21},
+        {-270.0, 21}, {359.0, 19}};
+    for (const auto& exit : exits) {
+        assert(roundabout_symbol(exit.first, false) == exit.second);
+        assert(roundabout_symbol(exit.first, true) == exit.second + 17);
+    }
+    assert(roundabout_symbol(std::nan(""), false) == 19);
+    g.maneuver.kind = ManeuverKind::Roundabout;
+    g.maneuver.left_side = false;
+    g.maneuver.turn_angle_degrees = 92.0;
+    assert(cluster_symbol(g) == 21);
+    g.maneuver.left_side = true;
+    assert(cluster_symbol(g) == 38);
+    // Arrived and recalculating win over the manoeuvre.
+    g.recalculating = true;
+    assert(cluster_symbol(g) == 16);
+    g.arrived = true;
+    assert(cluster_symbol(g) == 27);
+    // The redraw symbol is always another valid picture.
+    for (int symbol = OPEN_NAVI_CLUSTER_SYMBOL_MIN; symbol <= OPEN_NAVI_CLUSTER_SYMBOL_MAX;
+         ++symbol) {
+        const int other = redraw_symbol(static_cast<uint8_t>(symbol));
+        assert(other != symbol && other >= OPEN_NAVI_CLUSTER_SYMBOL_MIN &&
+               other <= OPEN_NAVI_CLUSTER_SYMBOL_MAX);
+    }
+    assert(redraw_symbol(1) == 50 && redraw_symbol(2) == 49 && redraw_symbol(9) == 56);
+    assert(redraw_symbol(21) == 38 && redraw_symbol(38) == 21);
+}
+
+// A road text change with an unchanged symbol is sent once with another
+// symbol, then (next publication) with the real one.
+void test_cluster_text_redraw()
+{
+    using navicore_osmand::ClusterInputs;
+    using navicore_osmand::apply_text_redraw;
+    using navicore_osmand::build_cluster_payload;
+    ClusterInputs in;
+    in.now = 12 * 3600;
+    in.screen = Screen::Guidance;
+    in.guidance.position_available = true;
+    in.guidance.distance_to_maneuver_metres = 300.0;
+    in.guidance.remaining_metres = 2000.0;
+    in.guidance.maneuver.kind = ManeuverKind::Right;
+    in.guidance.maneuver.road = "Main Street";
+    in.guidance.road = "First Avenue";
+    const auto last = build_cluster_payload(in);
+    // Only the distance changes: no redraw needed.
+    in.guidance.distance_to_maneuver_metres = 250.0;
+    auto next = build_cluster_payload(in);
+    assert(!apply_text_redraw(next, last));
+    assert(next.cluster.route_guidance_symbol == 2);
+    // The next road changes, same symbol: a neighbouring symbol first.
+    in.guidance.maneuver.road = "High Street";
+    next = build_cluster_payload(in);
+    assert(apply_text_redraw(next, last));
+    check_cluster_valid(next);
+    assert(next.cluster.route_guidance_symbol == 49 && next.next_road == "High Street");
+    // The real payload then differs from the redraw one by the symbol and
+    // is published as is.
+    auto real = build_cluster_payload(in);
+    assert(!real.same_as(next));
+    assert(!apply_text_redraw(real, next));
+    assert(real.cluster.route_guidance_symbol == 2);
+    // The current road appearing counts as a text change too.
+    in.guidance.road.clear();
+    const auto no_road = build_cluster_payload(in);
+    in.guidance.road = "Second Avenue";
+    next = build_cluster_payload(in);
+    assert(apply_text_redraw(next, no_road));
+    // A symbol change redraws by itself.
+    in.guidance.maneuver.kind = ManeuverKind::Left;
+    in.guidance.maneuver.road = "Low Street";
+    next = build_cluster_payload(in);
+    assert(!apply_text_redraw(next, real));
+    // Outside guidance there is no symbol and nothing to do.
+    in.screen = Screen::FreeDrive;
+    next = build_cluster_payload(in);
+    assert(!apply_text_redraw(next, real));
 }
 
 void test_dev_menu()
@@ -730,6 +855,8 @@ int main()
     test_place_card_and_back();
     test_dev_menu();
     test_cluster_payload();
+    test_cluster_symbols();
+    test_cluster_text_redraw();
     test_keyboard();
     test_reroute();
 
@@ -806,8 +933,8 @@ int main()
     fast.distance_metres = 1828.0;
     fast.geometry = {{50.0, 30.0}, {50.0, 30.01}, {50.01, 30.01}};
     fast.maneuvers = {
-        {ManeuverKind::Right, "River Road", 716.0, 1, 0, {}},
-        {ManeuverKind::Arrive, "Riverside Ave 12", 1828.0, 2, 0, {}}};
+        {ManeuverKind::Right, "River Road", 716.0, 1, 0, {}, false, 90.0},
+        {ManeuverKind::Arrive, "Riverside Ave 12", 1828.0, 2, 0, {}, false, 0.0}};
     RouteAlternative quiet = fast;
     quiet.id = "quiet";
     quiet.duration = "12 min";

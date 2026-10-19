@@ -55,6 +55,12 @@ struct Maneuver {
     std::size_t geometry_index = 0;
     int roundabout_exit = 0;
     std::vector<Lane> lanes;  // left to right; empty when unknown
+    // OsmAnd TurnType::isLeftSide(): a clockwise (left-hand traffic)
+    // roundabout, or a right U-turn (TRU).
+    bool left_side = false;
+    // OsmAnd TurnType::getTurnAngle(): degrees, positive clockwise (right);
+    // for a roundabout the exit relative to the entry direction.
+    double turn_angle_degrees = 0.0;
 };
 
 // A stretch of the route on one road: from start_metres until the next.

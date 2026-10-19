@@ -636,7 +636,15 @@ static void test_provider_v3_outbound_bridge(void)
     cluster.struct_size = sizeof(cluster);
     cluster.valid_attributes = OPEN_NAVI_CLUSTER_ROUTE_SYMBOL;
     assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
-           OPEN_NAVI_CLUSTER_UNSUPPORTED_FIELD);
+           OPEN_NAVI_CLUSTER_INVALID_VALUE);  /* symbol 0 */
+    cluster.route_guidance_symbol = 62u;
+    assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
+           OPEN_NAVI_CLUSTER_INVALID_VALUE);
+    cluster.route_guidance_symbol = 0u;
+    cluster.reserved0[0] = 1u;
+    assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
+           OPEN_NAVI_BACKEND_SERVICE_BAD_VALUE);
+    cluster.reserved0[0] = 0u;
     cluster.valid_attributes = OPEN_NAVI_CLUSTER_LANE;
     assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==
            OPEN_NAVI_CLUSTER_UNSUPPORTED_FIELD);
@@ -649,7 +657,9 @@ static void test_provider_v3_outbound_bridge(void)
     cluster.valid_attributes =
         OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE |
         OPEN_NAVI_CLUSTER_NAVIGATION_STATUS |
+        OPEN_NAVI_CLUSTER_ROUTE_SYMBOL |
         OPEN_NAVI_CLUSTER_CURRENT_ROAD;
+    cluster.route_guidance_symbol = OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_3;
     cluster.route_guidance_state = OPEN_NAVI_CLUSTER_ROUTE_FOLLOW_STREET;
     cluster.navigation_status = OPEN_NAVI_CLUSTER_NAV_NO_ROUTE;
     cluster.current_road.bytes = current_road;
@@ -660,6 +670,7 @@ static void test_provider_v3_outbound_bridge(void)
     open_navi_callback_test_state(&callback);
     assert(callback.cluster_generation == 1u);
     assert(callback.cluster_record[0x150] == 'R');
+    assert(callback.cluster_record[0x003] == 21u);
     g_adapter_proxies[17].callback_status = 9u;
     cluster.navigation_status = OPEN_NAVI_CLUSTER_NAV_ROUTE_CALCULATION;
     assert(services.publish_cluster(services.v1.runtime_context, &cluster) ==

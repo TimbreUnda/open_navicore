@@ -192,7 +192,11 @@ typedef struct {
     uint8_t speed_unit;
     uint8_t legal_speed_limit;
     uint8_t legal_speed_unit;
-    uint8_t reserved0[2];
+    /* Former reserved byte: route-guidance symbol (cluster.h
+     * OpenNaviClusterRouteSymbol), read only when valid bit 2 is set; zero
+     * otherwise. The layout and size are unchanged. */
+    uint8_t route_guidance_symbol;
+    uint8_t reserved0[1];
     OpenNaviBackendUtf8SpanV1 current_road;
     OpenNaviBackendUtf8SpanV1 next_road;
 } OpenNaviBackendClusterV1;

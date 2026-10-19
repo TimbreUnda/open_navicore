@@ -1910,7 +1910,7 @@ uint32_t open_navi_service_publish_cluster(
         cluster->struct_size < sizeof(*cluster)) {
         return OPEN_NAVI_BACKEND_SERVICE_BAD_ABI;
     }
-    if (cluster->reserved0[0] != 0u || cluster->reserved0[1] != 0u ||
+    if (cluster->reserved0[0] != 0u ||
         (cluster->current_road.byte_count != 0u &&
          cluster->current_road.bytes == NULL) ||
         (cluster->next_road.byte_count != 0u &&
@@ -1943,6 +1943,7 @@ uint32_t open_navi_service_publish_cluster(
     state.speed_unit = cluster->speed_unit;
     state.legal_speed_limit = cluster->legal_speed_limit;
     state.legal_speed_unit = cluster->legal_speed_unit;
+    state.route_guidance_symbol = cluster->route_guidance_symbol;
     return open_navi_cluster_backend_publish(&state);
 }
 
