@@ -316,11 +316,13 @@ Additional backend-driven APIs expose only contracts supported by real state:
   and synchronously forwards it through InstrumentCluster slot 3. A rejected
   callback does not advance publication history.
 - A provider Voice slot-19 request is answered through callback slot 23 with
-  that exact incoming handle and the backend's current result/guidance state
-  (see "Route guidance and phone-projection navigation focus"); no timer or
-  captured handle is replayed.
+  that exact incoming handle, result 2 and guidance_status 1 (the stock idle
+  value), or the backend's guidance state with the bench marker
+  `report-guidance-status` (see "Route guidance and phone-projection
+  navigation focus"); no timer or captured handle is replayed.
 - Voice slot 13 (`requestGuidanceStop`) is answered asynchronously through
-  callback slot 16 (`replyGuidanceStop`) from the HMI reply FIFO.
+  callback slot 17 (`replyGuidanceStop`, result 2) from the HMI reply FIFO.
+  Callback slot 16 is `replyGuidanceStart` and is not emitted.
 - `open_navi_callback_signal_thread_status()` forwards root slot 10 with a terminated
   wide name converted from at most 63 input bytes and stores an owned bounded
   diagnostic copy.
@@ -872,7 +874,7 @@ Android Auto (and CarPlay) navigation needs the native navigation to give up
 navigation focus. The chain (static analysis, QR39.5: `mm_gal_service`,
 `sa_vp4_sal_service`, USA `nv_navigation`) ends in nv_navigation's
 SI_VoiceRecognition, which calls provider adapter 25 slot 13
-`requestGuidanceStop(handle)` from two places and waits for callback 25/16
+`requestGuidanceStop(handle)` from two places and waits for callback 25/17
 `replyGuidanceStop(handle, result)`:
 `OnCARPLAY_RouteGuidanceInstruction` (the projection route-guidance request,
 call at `0x080ec5de`) sets a pending flag, and the reply handler
@@ -884,19 +886,46 @@ uses is not recovered; both need the reply. Without it the request hangs,
 SAL never reports the native navigation stopped, and the phone gives up on
 its projected navigation after about 10 s (live symptom).
 
+Callback indices (nv_navigation callback vtable `0x081ef688`): 15
+replyGuidanceInstructionsRepeat, 16 replyGuidanceStart (`0x080eb364`), 17
+replyGuidanceStop (entry `0x081ef6cc` -> `0x080eb29c`), 23
+replyRouteGuidanceStatus, 25 replyTEFFile. The stock libNaviCore
+replyGuidanceStop poster (`0x2a1e0c`) calls vtable `+0x44`, index 17.
+Before this fix `host_callbacks.c` had stop and start swapped (stop on 16).
+
+The SAL arbitration (`sa_vp4_sal_service`, CSalSession): the phone's
+NavFocusRequest reaches SAL as mm_gal NavigationStatus; SAL sends
+nv_navigation RouteGuidanceInstruction (msg `0x8c`: 1 DISABLE, 2 ENABLE,
+3 CANCEL; SWITCHTOPROJECTIONNAV with `switchNavi=1` becomes CANCEL).
+nv_navigation's CANCEL path (`OnCARPLAY_RouteGuidanceInstruction`
+`0x080ec380`) calls slot 13 at `0x080ec5de`, sets the pending flag (+0x20)
+and waits for replyGuidanceStop; result 2 is success (internal `0x1618`
+status 0). HUNavigationStateChanged to mm_gal (msg `0x3e`) comes from SAL's
+ROUTEGUIDANCESTATUSCHANGE_EVENT handler (`0x082c4db0`: status 1 ->
+HUNavigationStateChanged(1), projected navigation allowed; status 2 ->
+native active, HUNavigationStateChanged(0) if the projection is navigating)
+and from RESUMENAVIGATION; ReleaseNavigation (`0x2e`) comes from
+SWITCHTOPROJECTIONNAV / CANCELPROJECTIONNAV.
+
 Open NaviCore therefore:
 
 - Implements slot 13 (`open_navi_25_13`): it records telemetry and a pending
   request, sends the stop to a V6 backend (`guidance_stop_requested`), queues
-  the reply in the HMI reply FIFO and returns 0. The worker replies after the
-  FIFO's usual 50 ms, in order with HMI replies, under a lifecycle lease:
-  result `2` when the reported guidance state is idle (the stop was delivered,
-  or there was no guidance), else `1`. A missing callback-16 proxy drops that
+  the reply in the HMI reply FIFO and returns 0. The worker replies through
+  callback 25/17 after the FIFO's usual 50 ms, in order with HMI replies,
+  under a lifecycle lease, always with result `2`, also when nothing was
+  guiding (stock always answers). A missing callback-17 proxy drops that
   reply but keeps the FIFO running. A full FIFO returns 1 (no reply).
-- Reports the real guidance state in the slot-19 reply. The OsmAnd backend
-  publishes `guiding` when it enters and leaves `ui::Screen::Guidance` (Start,
-  End, arrival auto-end, the stop request, engine release); the provider maps
-  it to the reply's `guidance_status`.
+- Answers slot 19 with `guidance_status` 1 by default, the value stock sent
+  while idle. The meaning of `guidance_status` is not recovered: SAL's logic
+  suggests 0 -> event status 1 -> projection allowed, while the stock idle
+  trace shows 1. Bench marker `/datastore/navicore-backend/report-guidance-status`
+  (read once in `panaInitialize`; logged as
+  `replyRouteGuidanceStatus guidance_status=constant-1|backend-state`):
+  when present, the reply carries the backend's state instead, 0 while
+  guiding and 1 otherwise. The OsmAnd backend publishes `guiding` when it
+  enters and leaves `ui::Screen::Guidance` (Start, End, arrival auto-end, the
+  stop request, engine release); the provider tracks it in both modes.
 - After a stop reaches the backend the provider reports idle at once and
   ignores "guiding" publications already in flight for up to 5 s, or until the
   backend reports idle.
@@ -906,8 +935,8 @@ Encodings recovered from nv_navigation (`replyRouteGuidanceStatus`,
 errors and nothing is published); `guidance_status == 0` is published to SAL
 as RouteGuidanceStatus 1 and any other value as 2. In `sa_vp4_sal_service`
 (`0x082c4db6`) status 1 sets the native-guidance-active flags and 2 (its
-default) clears them, so the provider sends `0` while guiding and `1`
-otherwise; stock also replied `1` when idle on the bench. The names
+default) clears them; with the marker the provider sends `0` while guiding
+and `1` otherwise; stock replied `1` when idle on the bench. The names
 "success" for result 2 and "guiding" for status 0 are inferred from this
 control flow; the other result values are not recovered.
 

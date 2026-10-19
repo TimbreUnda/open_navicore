@@ -239,9 +239,12 @@ DEFINE_PAS_3(nc_host_voice_reply_file_from_dbid_get, 25u, 12u,
              OPEN_NAVI_CALLBACK_OPTIONAL)
 DEFINE_PAS_2(nc_host_voice_reply_guidance_instructions_repeat, 25u, 15u,
              OPEN_NAVI_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(nc_host_voice_reply_guidance_stop, 25u, 16u,
+/* nv_navigation callback vtable 0x081ef688: index 16 replyGuidanceStart
+ * (0x080eb364), index 17 replyGuidanceStop (entry 0x081ef6cc -> 0x080eb29c);
+ * the stock libNaviCore replyGuidanceStop poster 0x2a1e0c calls +0x44. */
+DEFINE_PAS_2(nc_host_voice_reply_guidance_start, 25u, 16u,
              OPEN_NAVI_CALLBACK_OPTIONAL)
-DEFINE_PAS_2(nc_host_voice_reply_guidance_start, 25u, 17u,
+DEFINE_PAS_2(nc_host_voice_reply_guidance_stop, 25u, 17u,
              OPEN_NAVI_CALLBACK_OPTIONAL)
 DEFINE_PAS_3(nc_host_voice_reply_location_check, 25u, 18u,
              OPEN_NAVI_CALLBACK_OPTIONAL)

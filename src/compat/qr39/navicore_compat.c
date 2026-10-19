@@ -1389,13 +1389,44 @@ static uint32_t open_navi_20_8(void *self,
     return 0u;
 }
 
+/* Bench marker: report the backend's guidance state in replyRouteGuidance
+ * Status instead of the constant stock idle value.  Read at panaInitialize
+ * (before the lifecycle turns ACTIVE; slot 19 reads it under a lease). */
+#ifndef OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER
+#define OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER \
+    "/datastore/navicore-backend/report-guidance-status"
+#endif
+static const char *g_report_guidance_status_marker =
+    OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER;
+static int g_report_guidance_status;
+
+static void open_navi_read_guidance_status_marker(void)
+{
+    g_report_guidance_status =
+        access(g_report_guidance_status_marker, F_OK) == 0;
+    open_navi_log(LOG_NOTICE,
+             "replyRouteGuidanceStatus guidance_status=%s (marker %s %s)",
+             g_report_guidance_status != 0 ? "backend-state" : "constant-1",
+             g_report_guidance_status_marker,
+             g_report_guidance_status != 0 ? "present" : "absent");
+}
+
+#if defined(OPEN_NAVI_TESTING)
+void open_navi_test_reload_guidance_status_marker(const char *path)
+{
+    g_report_guidance_status_marker =
+        path != NULL ? path : OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER;
+    open_navi_read_guidance_status_marker();
+}
+#endif
+
 /* requestGuidanceStop(handle), adapter 25 slot 13: nv_navigation calls it
  * from onGuidanceStopRequest (0x080ead12) and from the projection path
  * OnCARPLAY_RouteGuidanceInstruction (0x080ec5de, answered to SAL as
  * GuidanceStopResponse) and waits for replyGuidanceStop.  The stop goes to
- * a V6 backend now; the reply follows asynchronously from the HMI reply
- * FIFO.  Outside guidance, or with a backend that has no stop input (and so
- * never reported guidance), the reply reports the stop as done. */
+ * a V6 backend now; replyGuidanceStop (callback 25/17, result 2) follows
+ * asynchronously from the HMI reply FIFO, whether or not anything was
+ * guiding (stock always answers). */
 static uint32_t open_navi_25_13(void *self, uintptr_t handle_word)
 {
     OpenNaviLifecycleLease lease;
@@ -1438,8 +1469,13 @@ static uint32_t open_navi_25_13(void *self, uintptr_t handle_word)
 
 /* requestRouteGuidanceStatus(handle), polled by nv_navigation's
  * OnRouteGuidanceRepeatTimer (1000 ms, re-armed after every poll from
- * adapterReady on).  guidance_status is the backend's published state:
- * 0 while guiding, 1 otherwise (see OPEN_NAVI_VOICE_GUIDANCE_STATUS_*). */
+ * adapterReady on), answered with replyRouteGuidanceStatus (callback 25/23:
+ * handle, result 2, guidance_status).  The meaning of guidance_status is not
+ * recovered: SAL publishes 0 as event status 1 (projection navigation
+ * allowed), but stock answered 1 while idle.  Default: always 1, the stock
+ * idle value.  With the bench marker OPEN_NAVI_REPORT_GUIDANCE_STATUS_MARKER
+ * present at provider start, the backend's published state is reported
+ * instead: 0 while guiding, 1 otherwise. */
 static uint32_t open_navi_25_19(void *self, uint32_t handle)
 {
     OpenNaviLifecycleLease inbound;
@@ -1451,6 +1487,8 @@ static uint32_t open_navi_25_19(void *self, uint32_t handle)
     if (!open_navi_lifecycle_acquire(&inbound)) return 1u;
     open_navi_api_telemetry_record(25u,19u,1u,handle,0u,0u,0u);
     open_navi_callback_get_voice_state(&reply_result,&guidance);
+    if (g_report_guidance_status == 0)
+        guidance = OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE;
     open_navi_callback_pending_add(25u,19u,handle);
     if (open_navi_lifecycle_acquire_proxy(25u, 23u, &outbound, &proxy)) {
         status = nc_host_voice_reply_route_guidance_status(proxy,handle,reply_result,guidance);
@@ -2138,12 +2176,14 @@ static int open_navi_take_hmi_event(OpenNaviHMIEvent *event)
     return available;
 }
 
-/* replyGuidanceStop(handle, result).  nv_navigation (0x080eb29c) answers a
- * pending projection stop with GuidanceStopResponse (PAS 0x1618), a success
- * only when result == 2, otherwise the VR request through PAS 0x15e7; the
- * handle word is not read there.  The stop was delivered to the backend
- * when the request arrived, so the result reflects the state reported from
- * then on: 2 when idle, 1 when guidance is still reported.  A failed host
+/* replyGuidanceStop(handle, result), adapter 25 callback 17 (nv_navigation
+ * callback vtable 0x081ef688 entry 0x081ef6cc -> 0x080eb29c; stock
+ * libNaviCore's poster 0x2a1e0c calls vtable +0x44).  nv_navigation answers
+ * a pending projection stop with GuidanceStopResponse (PAS 0x1618), a
+ * success only when result == 2, otherwise the VR request through PAS
+ * 0x15e7; the handle word is not read there.  The stop was delivered to the
+ * backend when the request arrived; like stock, the provider always answers
+ * and always with result 2, also when nothing was guiding.  A failed host
  * call is logged and the worker continues (unlike the HMI replies, it does
  * not end it). */
 static int open_navi_reply_guidance_stop(uint32_t handle)
@@ -2154,7 +2194,7 @@ static int open_navi_reply_guidance_stop(uint32_t handle)
     uint32_t guidance;
     uint32_t result;
 
-    if (!open_navi_lifecycle_acquire_proxy(25u, 16u, &lease, &proxy)) {
+    if (!open_navi_lifecycle_acquire_proxy(25u, 17u, &lease, &proxy)) {
         /* No reply proxy: drop this reply but keep serving the HMI FIFO
          * while the lifecycle is still active. */
         int active = open_navi_lifecycle_acquire(&lease);
@@ -2168,8 +2208,7 @@ static int open_navi_reply_guidance_stop(uint32_t handle)
         return active;
     }
     open_navi_callback_get_voice_state(&reply_result, &guidance);
-    if (guidance != OPEN_NAVI_VOICE_GUIDANCE_STATUS_IDLE)
-        reply_result = OPEN_NAVI_VOICE_RESULT_FAILED;
+    reply_result = OPEN_NAVI_VOICE_RESULT_OK;
     result = nc_host_voice_reply_guidance_stop(proxy, handle, reply_result);
     if (open_navi_lifecycle_is_current(&lease)) {
         if (result == 0u)
@@ -2178,7 +2217,7 @@ static int open_navi_reply_guidance_stop(uint32_t handle)
             open_navi_callback_pending_cancel(25u, 13u, handle);
     }
     open_navi_log(LOG_NOTICE,
-             "VR replyGuidanceStop proxy=%p slot=16 handle=%u result=%u "
+             "VR replyGuidanceStop proxy=%p slot=17 handle=%u result=%u "
              "guidance_status=%u status=%u",
              proxy, handle, reply_result, guidance, result);
     open_navi_lifecycle_release(&lease);
@@ -2707,6 +2746,7 @@ uint32_t panaInitialize(const void *init_record)
     open_navi_pointer_backend_reset();
     open_navi_callback_backend_reset();
     open_navi_cluster_backend_reset();
+    open_navi_read_guidance_status_marker();
     /* The backend choice is process-lifetime and must be finalized while the
      * renderer is still COLD. Failure is deliberately non-fatal: bootstrap
      * leaves the built-in magenta backend selected. */

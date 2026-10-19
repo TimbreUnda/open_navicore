@@ -2,7 +2,8 @@
 """Independently guard the 35 contracts recovered from owned dense thunks.
 
 All are typed and dormant except the reviewed EMITTED set, which the
-provider calls (replyGuidanceStop, 25/16, from requestGuidanceStop)."""
+provider calls (replyGuidanceStop, 25/17, from requestGuidanceStop; 25/16
+is replyGuidanceStart and stays dormant)."""
 
 import copy
 import csv
@@ -32,7 +33,7 @@ WORDS = {
 }
 
 FAIL_CLOSED = set()
-EMITTED = {("25", "16")}
+EMITTED = {("25", "17")}
 
 
 def validate(rows, header_text, source_text, provider_text=""):
