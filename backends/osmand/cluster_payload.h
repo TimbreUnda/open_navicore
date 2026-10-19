@@ -37,8 +37,11 @@ ClusterPayload build_cluster_payload(const ClusterInputs& inputs);
 
 // The cluster symbol (OpenNaviClusterRouteSymbol, 1..61) for a guidance
 // state: arrived 27, recalculating 16, destination next 15, otherwise the
-// next manoeuvre's picture.
+// next manoeuvre's picture: the junction-shape picture when its geometry
+// gives one (junction_shape.h), else the turn-type picture.
 uint8_t cluster_symbol(const ui::GuidanceState& guidance) noexcept;
+// The picture for one manoeuvre (what cluster_symbol uses during guidance).
+uint8_t maneuver_symbol(const ui::Maneuver& maneuver) noexcept;
 // A roundabout exit at turn_angle_degrees (positive clockwise from the entry
 // direction) as the nearest clock position the cluster has (12, 1, 3, 4,
 // U-turn, 7, 9, 11), from the right- or left-hand-traffic set.

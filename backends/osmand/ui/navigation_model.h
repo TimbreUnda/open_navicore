@@ -48,6 +48,29 @@ struct Lane {
     bool recommended = false;
 };
 
+// The junction at a manoeuvre, for the cluster picture: angles in degrees
+// relative to the incoming direction of travel, positive clockwise (right),
+// in (-180, 180]; 0 is straight on. From OsmAnd's attached roads at the
+// junction node (navigation_worker.cpp, junction_shape.h).
+struct JunctionShape {
+    static constexpr std::size_t kMaxBranches = 6;
+    bool valid = false;              // geometry known (not for roundabouts)
+    float route_angle = 0.0f;        // the road the route takes
+    // The other roads leaving the node (not the incoming road, not the
+    // route), in no particular order.
+    uint8_t branch_count = 0;
+    float branches[kMaxBranches] = {};
+    bool truncated = false;          // more than kMaxBranches other roads
+    bool through_road = false;       // a branch within 25 degrees of straight
+    // Lanes (from Maneuver::lanes): count, recommended ones (bit 0 = the
+    // leftmost lane) and -1/+1 when the recommended lanes are a block at
+    // the left/right edge with others beside them (a move toward that
+    // side), else 0.
+    uint8_t lane_count = 0;
+    uint16_t recommended_lanes = 0;
+    int8_t lane_change = 0;
+};
+
 struct Maneuver {
     ManeuverKind kind = ManeuverKind::Straight;
     std::string road;
@@ -61,6 +84,7 @@ struct Maneuver {
     // OsmAnd TurnType::getTurnAngle(): degrees, positive clockwise (right);
     // for a roundabout the exit relative to the entry direction.
     double turn_angle_degrees = 0.0;
+    JunctionShape junction;
 };
 
 // A stretch of the route on one road: from start_metres until the next.

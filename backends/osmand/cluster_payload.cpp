@@ -1,5 +1,7 @@
 #include "cluster_payload.h"
 
+#include "junction_shape.h"
+
 #include <open_navicore/cluster.h>
 
 #include <algorithm>
@@ -45,7 +47,8 @@ constexpr ClockExit clock_exits[] = {
 constexpr int lht_offset =
     OPEN_NAVI_CLUSTER_SYMBOL_LHT_ROUNDABOUT_12 - OPEN_NAVI_CLUSTER_SYMBOL_RHT_ROUNDABOUT_12;
 
-uint8_t maneuver_symbol(const ui::Maneuver& m) noexcept
+// The turn-type picture (b1044e1), used when no junction picture applies.
+uint8_t turn_type_symbol(const ui::Maneuver& m) noexcept
 {
     using K = ui::ManeuverKind;
     switch (m.kind) {
@@ -69,6 +72,15 @@ uint8_t maneuver_symbol(const ui::Maneuver& m) noexcept
 }
 
 } // namespace
+
+// The junction-shape picture when the geometry gives one, else the
+// turn-type picture. Roundabouts, U-turns and arrival always use the
+// turn type (junction_symbol returns 0 for them).
+uint8_t maneuver_symbol(const ui::Maneuver& m) noexcept
+{
+    const uint8_t shaped = junction_symbol(m);
+    return shaped ? shaped : turn_type_symbol(m);
+}
 
 uint8_t roundabout_symbol(double turn_angle_degrees, bool left_hand_traffic) noexcept
 {
@@ -108,6 +120,37 @@ uint8_t redraw_symbol(uint8_t symbol) noexcept
     case OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_CROSSING_STRAIGHT;
     case OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_DIVIDED_U_TURN_LEFT;
     case OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_DIVIDED_U_TURN_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_DIVIDED_U_TURN_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_DIVIDED_U_TURN_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_U_TURN_RIGHT;
+    // Junction pictures: the plain arrow with the same meaning, or the
+    // nearest junction picture.
+    case OPEN_NAVI_CLUSTER_SYMBOL_T_END_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_T_END_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_T_TURN_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_T_TURN_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_CROSSING_STRAIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_SIDE_LEFT_STRAIGHT:
+    case OPEN_NAVI_CLUSTER_SYMBOL_SIDE_RIGHT_STRAIGHT:
+        return OPEN_NAVI_CLUSTER_SYMBOL_CROSSING_STRAIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_CROSS_SLASH_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_SLIGHT_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_CROSS_SLASH_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_SHARP_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_CROSS_BACKSLASH_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_SHARP_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_CROSS_BACKSLASH_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_SLIGHT_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_CROSS_SLASH_STRAIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT_PAST_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_CROSS_BACKSLASH_STRAIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT_PAST_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_EXIT_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_SLIGHT_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_EXIT_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_SLIGHT_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_LANE_CHANGE_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_EXIT_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_LANE_CHANGE_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_EXIT_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT_PAST_LEFT:
+    case OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT_PAST_RIGHT:
+        return OPEN_NAVI_CLUSTER_SYMBOL_STRAIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_FAN_STRAIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_SPLIT_STRAIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_FAN_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_SPLIT_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_FAN_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_SPLIT_LEFT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_SPLIT_STRAIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_FAN_STRAIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_SPLIT_RIGHT: return OPEN_NAVI_CLUSTER_SYMBOL_FAN_RIGHT;
+    case OPEN_NAVI_CLUSTER_SYMBOL_SPLIT_LEFT: return OPEN_NAVI_CLUSTER_SYMBOL_FAN_LEFT;
     default: break;
     }
     // A roundabout: the same exit in the other traffic direction's set.

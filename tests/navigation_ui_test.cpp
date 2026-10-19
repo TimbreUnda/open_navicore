@@ -1,5 +1,6 @@
 #include "cluster_payload.h"
 #include "guidance_tracker.h"
+#include "junction_shape.h"
 #include "ui/compact_text.h"
 #include "ui/navigation_model.h"
 #include "ui/navigation_view.h"
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -639,6 +641,155 @@ void test_cluster_symbols()
     assert(redraw_symbol(21) == 38 && redraw_symbol(38) == 21);
 }
 
+// Junction shapes (junction_shape.h): angles relative to the incoming
+// direction, positive = right. Lanes: 'R' recommended, '.' not, left to
+// right.
+struct JunctionCase {
+    ManeuverKind kind;
+    double route;
+    std::vector<double> arms;
+    const char* lanes;
+    int expected;
+};
+
+Maneuver junction_maneuver(const JunctionCase& c)
+{
+    Maneuver m;
+    m.kind = c.kind;
+    m.turn_angle_degrees = c.route;
+    for (const char* l = c.lanes; *l; ++l) {
+        Lane lane;
+        lane.recommended = *l == 'R';
+        m.lanes.push_back(lane);
+    }
+    m.junction = navicore_osmand::make_junction_shape(c.route, c.arms);
+    navicore_osmand::summarize_lanes(m.lanes, m.junction);
+    return m;
+}
+
+void test_junction_shapes()
+{
+    using navicore_osmand::cluster_symbol;
+    using navicore_osmand::junction_symbol;
+    using navicore_osmand::make_junction_shape;
+    using navicore_osmand::summarize_lanes;
+    using K = ManeuverKind;
+    // The description: normalised, duplicates and the route's own arm
+    // merged, non-finite skipped, through road flagged, at most 6 kept.
+    auto j = make_junction_shape(370.0, {350.0, -5.0, 14.0, std::nan(""), 92.0, 95.0, -180.0});
+    assert(j.valid && std::fabs(j.route_angle - 10.0f) < 1e-4f);
+    assert(j.branch_count == 3 && j.through_road && !j.truncated);
+    assert(std::fabs(j.branches[0] + 10.0f) < 1e-4f && std::fabs(j.branches[1] - 92.0f) < 1e-4f &&
+           std::fabs(j.branches[2] - 180.0f) < 1e-4f);
+    j = make_junction_shape(0.0, {-150.0, -120.0, -90.0, -60.0, 60.0, 90.0, 120.0});
+    assert(j.branch_count == 6 && j.truncated && !j.through_road);
+    assert(!make_junction_shape(std::nan(""), {0.0}).valid);
+    // Lanes: a recommended block at an edge asks for a move to that side.
+    const std::vector<std::pair<const char*, int>> lane_cases = {
+        {"RR.", -1}, {".R", 1}, {"..RR", 1}, {".R.", 0}, {"R.R", 0}, {"RRR", 0},
+        {"...", 0}, {"", 0}, {"R", 0}};
+    for (const auto& lc : lane_cases) {
+        const auto m = junction_maneuver({K::Left, -90.0, {}, lc.first, 0});
+        assert(m.junction.lane_change == lc.second);
+        assert(static_cast<std::size_t>(m.junction.lane_count) == std::string(lc.first).size());
+    }
+    assert(junction_maneuver({K::Left, -90.0, {}, "RR.", 0}).junction.recommended_lanes == 3u);
+
+    const std::vector<JunctionCase> cases = {
+        // Turns at a crossing, a side road and a T where the road ends.
+        {K::Left, -90.0, {0.0, 90.0}, "", 1},
+        {K::Right, 90.0, {2.0, -88.0}, "", 2},
+        {K::Left, -85.0, {3.0}, "", 50},
+        {K::Right, 95.0, {-4.0}, "", 49},
+        {K::Left, -90.0, {90.0}, "", 60},
+        {K::Right, 88.0, {-92.0}, "", 61},
+        {K::Left, -100.0, {5.0, 130.0}, "", 1},     // other side diagonal: still a crossing
+        {K::Right, 80.0, {0.0, -90.0, -175.0}, "", 2},  // reverse arm ignored
+        // Slight turns: exit, lane change, diagonal crossing, splits, fork.
+        {K::SlightLeft, -45.0, {0.0}, "", 11},
+        {K::SlightRight, 40.0, {-2.0}, "", 12},
+        {K::SlightLeft, -45.0, {0.0}, "R..", 58},
+        {K::SlightRight, 45.0, {0.0}, "..R", 59},
+        {K::SlightLeft, -45.0, {0.0}, ".R.", 11},
+        {K::SlightLeft, -45.0, {0.0, 135.0}, "", 33},
+        {K::SlightRight, 45.0, {0.0, -135.0}, "", 30},
+        {K::SlightLeft, -35.0, {0.0, 35.0}, "", 55},
+        {K::SlightRight, 35.0, {0.0, -38.0}, "", 53},
+        {K::SlightLeft, -55.0, {0.0, 50.0}, "", 46},
+        {K::SlightRight, 50.0, {0.0, -55.0}, "", 45},
+        {K::SlightLeft, -40.0, {40.0}, "", 7},
+        {K::SlightRight, 40.0, {-40.0}, "", 8},
+        // Sharp turns into a diagonal crossing.
+        {K::SharpLeft, -135.0, {0.0, 45.0}, "", 31},
+        {K::SharpRight, 140.0, {0.0, -45.0}, "", 32},
+        // Keep / straight on.
+        {K::KeepRight, 5.0, {-40.0}, "", 13},
+        {K::KeepLeft, -5.0, {40.0}, "", 14},
+        {K::Straight, 0.0, {-90.0, 90.0}, "", 56},
+        {K::KeepLeft, -3.0, {-88.0, 91.0}, "", 56},
+        {K::Straight, 2.0, {-90.0}, "", 47},
+        {K::Straight, -2.0, {88.0}, "", 48},
+        {K::KeepLeft, -2.0, {45.0, -135.0}, "", 34},
+        {K::KeepRight, 3.0, {-45.0, 135.0}, "", 35},
+        {K::KeepLeft, 0.0, {-35.0, 35.0}, "", 54},
+        {K::KeepRight, 0.0, {-55.0, 50.0}, "", 44},
+        {K::KeepLeft, -40.0, {0.0}, "", 11},
+        {K::KeepLeft, -40.0, {0.0}, "RR..", 58},
+        {K::KeepRight, 40.0, {0.0}, "...R", 59},
+        {K::KeepRight, 40.0, {-35.0, 0.0}, "", 53},
+        {K::KeepRight, 40.0, {-40.0}, "", 8},
+        // Fallbacks to the turn-type picture (b1044e1).
+        {K::Left, -90.0, {}, "", 1},                 // no other road
+        {K::Left, -90.0, {90.0, 27.0}, "", 1},       // arm in a gap: ambiguous
+        {K::Right, 90.0, {-90.0, 65.0}, "", 2},      // ambiguous
+        {K::Left, 80.0, {0.0, -90.0}, "", 1},        // geometry disagrees with the turn type
+        {K::SlightLeft, -45.0, {}, "", 3},
+        {K::SlightLeft, -45.0, {0.0, -90.0}, "", 3}, // more roads on the route's side
+        {K::SlightLeft, -80.0, {0.0}, "", 3},        // not a slight angle
+        {K::SlightRight, 45.0, {0.0, 90.0}, "", 4},
+        {K::SharpLeft, -135.0, {0.0}, "", 5},
+        {K::SharpRight, 135.0, {-90.0, 0.0}, "", 6},
+        {K::KeepLeft, -3.0, {-40.0}, "", 7},         // branch on the side OsmAnd keeps to
+        {K::KeepRight, 3.0, {40.0}, "", 8},
+        {K::KeepLeft, -10.0, {10.0}, "", 7},         // two roads ahead: narrow fork
+        {K::KeepRight, 40.0, {}, "", 8},
+        {K::Straight, 0.0, {}, "", 9},
+        {K::Straight, 0.0, {-90.0, 90.0, 45.0}, "", 9},
+        {K::UTurn, -175.0, {0.0, 90.0}, "", 10},
+        {K::Roundabout, 92.0, {0.0, -90.0}, "", 21},
+        {K::Arrive, 0.0, {-90.0, 90.0}, "", 15},
+    };
+    std::set<int> produced;
+    for (const auto& c : cases) {
+        GuidanceState g;
+        g.maneuver = junction_maneuver(c);
+        const int symbol = cluster_symbol(g);
+        if (symbol != c.expected)
+            std::fprintf(stderr, "junction case kind=%d route=%.0f: got %d want %d\n",
+                         static_cast<int>(c.kind), c.route, symbol, c.expected);
+        assert(symbol == c.expected);
+        if (junction_symbol(g.maneuver)) produced.insert(symbol);
+    }
+    // Every new junction picture is produced by some case.
+    for (const int symbol : {1, 2, 7, 8, 11, 12, 13, 14, 30, 31, 32, 33, 34, 35, 44, 45, 46, 47,
+                             48, 49, 50, 53, 54, 55, 56, 58, 59, 60, 61})
+        assert(produced.count(symbol) == 1);
+    // A truncated description (more than six other roads) falls back.
+    GuidanceState g;
+    g.maneuver = junction_maneuver({K::Right, 90.0, {0.0, -90.0}, "", 0});
+    g.maneuver.junction.truncated = true;
+    assert(cluster_symbol(g) == 2 && junction_symbol(g.maneuver) == 0);
+    g.maneuver = junction_maneuver({K::Left, -90.0, {90.0}, "", 0});
+    g.maneuver.junction.valid = false;
+    assert(cluster_symbol(g) == 1);
+    // Text redraw stand-ins for the junction pictures.
+    using navicore_osmand::redraw_symbol;
+    assert(redraw_symbol(60) == 1 && redraw_symbol(61) == 2 && redraw_symbol(50) == 1 &&
+           redraw_symbol(49) == 2 && redraw_symbol(56) == 9 && redraw_symbol(47) == 56 &&
+           redraw_symbol(58) == 11 && redraw_symbol(11) == 3 && redraw_symbol(44) == 54 &&
+           redraw_symbol(54) == 44 && redraw_symbol(33) == 3 && redraw_symbol(31) == 5);
+}
+
 // A road text change with an unchanged symbol is sent once with another
 // symbol, then (next publication) with the real one.
 void test_cluster_text_redraw()
@@ -856,6 +1007,7 @@ int main()
     test_dev_menu();
     test_cluster_payload();
     test_cluster_symbols();
+    test_junction_shapes();
     test_cluster_text_redraw();
     test_keyboard();
     test_reroute();
@@ -933,8 +1085,8 @@ int main()
     fast.distance_metres = 1828.0;
     fast.geometry = {{50.0, 30.0}, {50.0, 30.01}, {50.01, 30.01}};
     fast.maneuvers = {
-        {ManeuverKind::Right, "River Road", 716.0, 1, 0, {}, false, 90.0},
-        {ManeuverKind::Arrive, "Riverside Ave 12", 1828.0, 2, 0, {}, false, 0.0}};
+        {ManeuverKind::Right, "River Road", 716.0, 1, 0, {}, false, 90.0, {}},
+        {ManeuverKind::Arrive, "Riverside Ave 12", 1828.0, 2, 0, {}, false, 0.0, {}}};
     RouteAlternative quiet = fast;
     quiet.id = "quiet";
     quiet.duration = "12 min";

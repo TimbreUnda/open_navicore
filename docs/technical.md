@@ -408,9 +408,11 @@ bytes remain unbounded because static evidence proves only their byte width,
 not clock validation rules.
 
 During guidance with a position every record carries a symbol and a valid
-bar fill (the countdown, 100 from 400 m to 0 at the turn; 0 once arrived):
+bar fill (the countdown, 100 from 400 m to 0 at the turn; 0 once arrived).
+The symbol is the junction-shape picture when the junction geometry gives
+one (below), otherwise the turn-type picture:
 
-| Guidance | Symbol |
+| Guidance (turn-type picture) | Symbol |
 |---|---:|
 | straight / continue | 9 |
 | left, right | 1, 2 |
@@ -431,10 +433,78 @@ A roundabout takes the clock position nearest to OsmAnd's exit angle
 clockwise roundabout); the worker does not set OsmAnd's
 `leftSideNavigation`, so routes are calculated for right-hand traffic.
 
+Junction shapes (`backends/osmand/junction_shape.*`, pure and host-tested;
+filled in `navigation_worker.cpp`). For each non-roundabout manoeuvre the
+worker describes the junction node at the start of the segment that carries
+OsmAnd's turn (`ui::JunctionShape` in `ui::Maneuver::junction`): every angle
+is relative to the incoming direction, positive clockwise, from bearings over
+the first 10 m of each road as OsmAnd's own `getTurnInfo()` uses them
+(`RouteSegmentResult::getBearingEnd(endPointIndex, 10)` of the previous
+segment, `getBearingBegin(startPointIndex, 10)` of the turn segment,
+`degreesDiff()`):
+
+- `route_angle`: the road the route takes;
+- `branches[0..5]` / `branch_count` / `truncated`: every other road leaving
+  the node, from `getAttachedRoutes(startPointIndex)` of the turn segment
+  (filled by `prepareResult()` -> `attachRoadSegments()`: the incoming road's
+  continuation and each road the router could leave by), plus the turn road's
+  own part behind the node (`RouteDataObject::directionRoute(start, !forward,
+  10)`), which OsmAnd never attaches because it has the same way id. Arms
+  within 8 degrees of the route or of another arm are merged;
+- `through_road`: a branch within 25 degrees of straight;
+- lanes, from `TurnType::getLanes()` via `Maneuver::lanes`: `lane_count`,
+  `recommended_lanes` (bit 0 = leftmost) and `lane_change` (-1/+1 when the
+  recommended lanes are a block at the left/right edge with other lanes
+  beside them).
+
+The classifier sorts each branch into a band of |angle|: through 0..25,
+ahead diagonal 30..62, perpendicular 68..112, behind diagonal 118..160;
+above 160 is ignored (the incoming road's other carriageway). A branch in a
+gap between bands, more than six branches, missing geometry, or a geometry
+that disagrees with OsmAnd's turn type (side, or the route outside 25..75
+degrees for a slight turn / branch, 115..160 for a sharp turn) gives no
+junction picture, and the turn-type picture above is sent, so the result is
+never less specific than before. Pictures (RHT drawings; left/right mirror):
+
+| OsmAnd turn | Junction | Symbol |
+|---|---|---:|
+| left / right | through road and a road on the other side (4-way) | 1 / 2 |
+| left / right | through road only (side road) | 50 / 49 |
+| left / right | no through road, road on the other side (T, road ends) | 60 / 61 |
+| slight left / right, keep on the branch side | through road only | 11 / 12 |
+| same | through road only, recommended lanes at the branch edge | 58 / 59 |
+| same | through road and an opposite behind diagonal (diagonal crossing) | 33 / 30 |
+| same | through road and an opposite ahead diagonal (three-way split) | 55 / 53 (narrow), 46 / 45 (wide) |
+| same | no through road, an opposite ahead diagonal (Y) | 7 / 8 |
+| sharp left / right | through road and an opposite ahead diagonal (diagonal crossing) | 31 / 32 |
+| keep / straight, route within 25 degrees | perpendicular roads both sides | 56 |
+| same | one perpendicular road, left / right | 47 / 48 |
+| same | ahead diagonal right + behind diagonal left / the mirror (diagonal crossing) | 34 / 35 |
+| same | ahead diagonals on both sides (three-way, keep middle) | 54 (narrow), 44 (wide) |
+| same | one ahead diagonal, left / right (not on the side OsmAnd keeps to) | 13 / 14 |
+
+"Narrow" three-way splits have every side road within 40 degrees (drawn as the
+gradual split `\|/` 53..55); wider ones use the fan `/|\` 44..46. Which of
+the two pictures suits which geometry is a guess from the operator's
+descriptions. Roundabouts, U-turns, arrival, recalculation and off-route keep
+their mapping. 69/70 and 75..78 are not produced: the cluster uses
+`symbol & 0x3f`, so they draw 5/6 and 11..14. 29 (Y fork without arrow) and
+52 (one way) are not used. Known limits: one-way roads that only enter the
+node are not attached by OsmAnd, so such an arm is missing (a crossing with
+an inbound one-way side can be drawn as a T or side road); where a divided
+road's carriageways meet the route in separate nodes, each node is
+classified alone. For the main route the worker traces one
+`worker=junction` line per manoeuvre (first 40) to
+`/tmp/open-navicore-osmand.log`: kind, OsmAnd angle, the description, the
+junction picture (`shape`, 0 = none) and the symbol sent.
+
 Text-only change: when a new record keeps the published symbol but changes a
 road text, `apply_text_redraw()` sends it once with a neighbouring symbol of
 similar meaning (left 1 -> 50, right 2 -> 49, straight 9 -> 56, a roundabout
-exit -> the same exit of the other traffic set, ...); the next publication
+exit -> the same exit of the other traffic set; for the junction pictures the
+plain arrow or the nearest junction picture: 60/50 -> 1, 61/49 -> 2, 56 -> 9,
+47/48 -> 56, 11/12 -> 3/4, 58/59 -> 11/12, 13/14 -> 9, 30..33 -> 4/5/6/3,
+34/35 -> 14/13, 44..46 <-> 54/53/55, ...); the next publication
 (the engine publishes at most every 500 ms) carries the real symbol again,
 and both symbol changes redraw the cluster with the new text. The flash and
 its 500 ms length are not yet confirmed live. Untested alternative: the
