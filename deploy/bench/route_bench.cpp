@@ -328,6 +328,24 @@ int route_bench_main(int argc, char** argv)
                         "distance=%.0fm time=%.0fs base_edges=%zu road_runs=%zu settled=%zu\n",
                         run, memory_mb, total_ms, timing.search_ms, timing.roads_ms, timing.prepare_ms,
                         results.size(), metres, seconds, timing.base_edges, timing.road_runs, timing.settled);
+            if (std::getenv("ROUTE_BENCH_MANEUVERS")) {
+                // What the worker turns into guidance: every segment that carries a turn,
+                // with its lanes ('*' marks lanes the route uses), road name and position.
+                double at = 0.0;
+                for (std::size_t i = 0; i < results.size(); ++i) {
+                    const auto& s = results[i];
+                    if (!s) continue;
+                    if (s->turnType && s->turnType->getValue() != TurnType::C) {
+                        const std::string road = s->getStreetName("", false, results, static_cast<int>(i));
+                        std::printf("turn %7.1fkm %-6s angle=%6.1f exit=%d road=\"%s\" lanes=%s\n", at / 1000.0,
+                                    s->turnType->toString().c_str(), s->turnType->getTurnAngle(),
+                                    s->turnType->getExitOut(), road.c_str(),
+                                    s->turnType->getLanes().empty()
+                                        ? "-" : TurnType::toString(s->turnType->getLanes()).c_str());
+                    }
+                    at += s->distance;
+                }
+            }
             print_progress("progress", *context->progress);
         } else {
             std::fprintf(stderr, "unknown mode %s\n", mode.c_str());
