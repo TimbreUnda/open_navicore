@@ -24,6 +24,34 @@ g++ -O2 -std=c++17 -o ch_tool ch_tool.cpp
 | `build_graph.py` | junction graph, edge cost = length / (speed * priority) |
 | `ch_tool.cpp` | contraction, bidirectional upward query with stall-on-demand, shortcut unpacking, verification |
 
+## M1: CH route through OsmAnd's own result preparation (radio, 2026-10-19)
+
+`route_bench ch` (ROUTE_BENCH_CH=<prefix of .coords/.ch/.meta>): nearest node for start and
+end, CH query, unpack to original edges, merge consecutive edges of one road into
+(road id, start index, end index), load each `RouteDataObject` with
+`loadRouteSegment(anchor)` and the road id (as `HHRoutePlanner` does), build
+`RouteSegmentResult(road, start, end)`, then the core's `prepareResult` (distance, time,
+attached roads, turn types) and `makeStartEndPointsPrecise`. On M9304002366, all 26 maps
+open, beside the running navigation:
+
+| Route | HH | CH end to end | where the CH time goes |
+|---|---|---|---|
+| Kyiv -> Kherson | 13,836 ms, 615.0 km, 27,382 s | 2,685-3,075 ms, 614.2 km, 27,415 s | snap 106, query <1, roads 2,024-2,363 (995 tiles), prepare 554-602 |
+| Maidan -> Troieshchyna | 5,170-5,454 ms, 15.2 km, 1,597 s | 662-800 ms, 12.8 km, 1,350 s | snap 106, query <1, roads 497-622 (80 road runs), prepare 59-71 |
+
+Only the Kyiv map open: 15 km route 300-325 ms against HH 2,973 ms.
+
+* The graph search is no longer the cost: loading the route's roads from the maps is
+  (about 2 ms per tile). Next levers: a spatial grid for the start/end snap (106 ms of
+  brute force here), loading only the tiles the route needs in one pass.
+* The Kyiv-Kherson routes agree (OsmAnd's own time estimate for the CH route is 0.1% above
+  HH's). The short route does **not**: CH picks 12.8 km / 1,350 s, HH 15.2 km / 1,597 s.
+  Either the cost models differ or the CH route breaks a turn restriction or one-way
+  that the graph does not model yet; this is what M2 has to settle before the CH route
+  can be trusted.
+* One-time cost: loading the whole-country hierarchy, coordinates and edge table
+  (417 MB) from flash took 17 s; a product build must memory-map it instead.
+
 ## What is modelled, and what is not
 
 Modelled: access, oneway, speed (maxspeed or class default, clamped to the profile

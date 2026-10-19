@@ -4,7 +4,8 @@
 //
 // MAP is one .obf file or a directory of them (all are opened).
 //
-// MODE: astar (what the navigation worker does), hh (highway hierarchy),
+// MODE: astar (what the navigation worker did), hh (highway hierarchy),
+// ch (contraction hierarchy; ROUTE_BENCH_CH=<prefix> of the .coords/.ch/.meta files),
 // hhalt (hh with alternatives). Prints wall time per phase and OsmAnd's own
 // load/calculate timers and tile counters, one line per run.
 
@@ -20,12 +21,15 @@
 #include "routingConfiguration.h"
 #include "routingContext.h"
 
+#include "../../backends/osmand/ch/ch_query.h"
+
 #include <chrono>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <sys/stat.h>
 #include <vector>
@@ -60,6 +64,87 @@ void print_progress(const char* label, RouteCalculationProgress& p)
                 (unsigned long long)p.timeToCalculate.GetElapsedMs(), (unsigned long long)p.timeToFindInitialSegments.GetElapsedMs(),
                 (unsigned long long)p.timeExtra.GetElapsedMs(), p.visitedSegments, p.loadedTiles, p.unloadedTiles,
                 p.loadedPrevUnloadedTiles, p.distinctLoadedTiles, p.maxLoadedTiles);
+}
+
+// ---- contraction-hierarchy mode -------------------------------------------
+// Files (prefix in ROUTE_BENCH_CH): <prefix>.coords (graph header + node
+// coordinates), <prefix>.ch (hierarchy), <prefix>.meta (edge -> road table).
+struct ChData {
+    onc_ch::Hierarchy hierarchy;
+    std::vector<int32_t> x, y;
+    std::vector<uint32_t> from, pf, pt;
+    std::vector<int64_t> road;
+    std::vector<uint8_t> rev;
+};
+
+template <class T>
+bool read_array(std::FILE* f, std::vector<T>& v, size_t count)
+{
+    v.resize(count);
+    return count == 0 || std::fread(v.data(), sizeof(T), count, f) == count;
+}
+
+bool load_ch(const std::string& prefix, ChData& data, std::string& error)
+{
+    std::FILE* f = std::fopen((prefix + ".coords").c_str(), "rb");
+    char magic[4];
+    uint32_t nodes = 0, edges = 0;
+    if (!f || std::fread(magic, 1, 4, f) != 4 || std::memcmp(magic, "CHG1", 4) != 0 ||
+        std::fread(&nodes, 4, 1, f) != 1 || std::fread(&edges, 4, 1, f) != 1 ||
+        !read_array(f, data.x, nodes) || !read_array(f, data.y, nodes)) {
+        if (f) std::fclose(f);
+        error = "bad " + prefix + ".coords";
+        return false;
+    }
+    std::fclose(f);
+    if (!onc_ch::load_hierarchy((prefix + ".ch").c_str(), data.hierarchy, error)) return false;
+    f = std::fopen((prefix + ".meta").c_str(), "rb");
+    uint32_t meta_edges = 0;
+    if (!f || std::fread(magic, 1, 4, f) != 4 || std::memcmp(magic, "CHM1", 4) != 0 ||
+        std::fread(&meta_edges, 4, 1, f) != 1 || meta_edges != edges ||
+        !read_array(f, data.from, edges) || !read_array(f, data.road, edges) ||
+        !read_array(f, data.pf, edges) || !read_array(f, data.pt, edges) || !read_array(f, data.rev, edges)) {
+        if (f) std::fclose(f);
+        error = "bad " + prefix + ".meta";
+        return false;
+    }
+    std::fclose(f);
+    return true;
+}
+
+uint32_t nearest_node(const ChData& data, int x31, int y31)
+{
+    uint32_t best = 0;
+    int64_t best_d = INT64_MAX;
+    for (uint32_t i = 0; i < data.x.size(); ++i) {
+        const int64_t dx = (int64_t)data.x[i] - x31, dy = (int64_t)data.y[i] - y31;
+        const int64_t d = dx * dx + dy * dy;
+        if (d < best_d) { best_d = d; best = i; }
+    }
+    return best;
+}
+
+// One stretch of one road, in travel direction.
+struct RoadRun {
+    int64_t road;
+    int start, end;
+    int anchor_x, anchor_y;   // a point on the road, used to load it
+};
+
+std::vector<RoadRun> merge_edges(const ChData& data, const std::vector<uint32_t>& edges)
+{
+    std::vector<RoadRun> runs;
+    for (uint32_t e : edges) {
+        const int start = data.rev[e] ? (int)data.pt[e] : (int)data.pf[e];
+        const int end = data.rev[e] ? (int)data.pf[e] : (int)data.pt[e];
+        if (!runs.empty() && runs.back().road == data.road[e] && runs.back().end == start &&
+            ((runs.back().end > runs.back().start) == (end > start))) {
+            runs.back().end = end;
+        } else {
+            runs.push_back({data.road[e], start, end, data.x[data.from[e]], data.y[data.from[e]]});
+        }
+    }
+    return runs;
 }
 
 } // namespace
@@ -188,6 +273,67 @@ int route_bench_main(int argc, char** argv)
                             result->stats.altRoutingTime, result->stats.prepTime,
                             result->stats.loadPointsTime, result->stats.searchPointsTime);
             }
+            print_progress("progress", *context->progress);
+        } else if (mode == "ch") {
+            // CH path -> road runs -> RouteSegmentResult -> the core's own
+            // prepareResult (turns, attached roads, times), each step timed.
+            static std::unique_ptr<ChData> ch;
+            static std::unique_ptr<onc_ch::Query> query;
+            const char* prefix = std::getenv("ROUTE_BENCH_CH");
+            if (!prefix) { std::fprintf(stderr, "ROUTE_BENCH_CH=<prefix of .coords/.ch/.meta> is required\n"); return 2; }
+            if (!ch) {
+                const auto load_started = Clock::now();
+                ch.reset(new ChData);
+                std::string error;
+                if (!load_ch(prefix, *ch, error)) { std::fprintf(stderr, "ch load failed: %s\n", error.c_str()); return 1; }
+                query.reset(new onc_ch::Query(ch->hierarchy));
+                std::printf("ch: loaded %zu nodes, %zu edges in %.0fms\n", ch->x.size(), ch->road.size(),
+                            ms_since(load_started));
+            }
+            RoutePlannerFrontEnd front_end;
+            auto context = front_end.buildRoutingContext(config);
+            context->progress = std::make_shared<RouteCalculationProgress>();
+            const int sx = get31TileNumberX(lon1), sy = get31TileNumberY(lat1);
+            const int ex = get31TileNumberX(lon2), ey = get31TileNumberY(lat2);
+            auto total_started = Clock::now();
+            auto step = Clock::now();
+            const uint32_t from_node = nearest_node(*ch, sx, sy), to_node = nearest_node(*ch, ex, ey);
+            const double snap_ms = ms_since(step);
+            step = Clock::now();
+            uint32_t meet = 0;
+            const uint32_t cost = query->run(from_node, to_node, meet);
+            const double query_ms = ms_since(step);
+            std::vector<uint32_t> edges;
+            step = Clock::now();
+            if (cost == onc_ch::INF || !query->path_edges(from_node, to_node, meet, edges)) {
+                std::printf("run %d ch: no route\n", run);
+                continue;
+            }
+            const auto runs = merge_edges(*ch, edges);
+            const double unpack_ms = ms_since(step);
+            step = Clock::now();
+            std::vector<SHARED_PTR<RouteSegmentResult>> results;
+            size_t missing = 0;
+            for (const auto& r : runs) {
+                SHARED_PTR<RouteDataObject> road;
+                for (const auto& segment : context->loadRouteSegment(r.anchor_x, r.anchor_y)) {
+                    if (segment->getRoad()->getId() == r.road) { road = segment->getRoad(); break; }
+                }
+                if (!road) { ++missing; continue; }
+                results.push_back(std::make_shared<RouteSegmentResult>(road, r.start, r.end));
+            }
+            const double roads_ms = ms_since(step);
+            if (missing) std::printf("run %d ch: %zu of %zu road runs not found in the maps\n", run, missing, runs.size());
+            step = Clock::now();
+            prepareResult(context.get(), results);
+            front_end.makeStartEndPointsPrecise(context.get(), results, sx, sy, ex, ey);
+            const double prepare_ms = ms_since(step);
+            float seconds = 0.0f;
+            const double metres = route_metres(results, &seconds);
+            std::printf("run %d ch mem=%d: route=%.0fms (snap=%.0f query=%.2f unpack=%.2f roads=%.0f prepare=%.0f) "
+                        "segments=%zu distance=%.0fm time=%.0fs ch_cost=%.0fs base_edges=%zu road_runs=%zu\n",
+                        run, memory_mb, ms_since(total_started), snap_ms, query_ms, unpack_ms, roads_ms, prepare_ms,
+                        results.size(), metres, seconds, cost / 1000.0, edges.size(), runs.size());
             print_progress("progress", *context->progress);
         } else {
             std::fprintf(stderr, "unknown mode %s\n", mode.c_str());

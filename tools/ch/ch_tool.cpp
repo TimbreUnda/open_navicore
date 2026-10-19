@@ -1,14 +1,16 @@
 // Contraction hierarchy over the road graph written by build_graph.py.
 //
-//   ch_tool build  <in.graph> <out.ch>
-//   ch_tool verify <in.graph> <in.ch> <pairs>          random pairs vs Dijkstra
-//   ch_tool bench  <in.graph> <in.ch> <pairs>          batch query time (benchfull: + unpack)
-//   ch_tool route  <in.graph> <in.ch> lat lon lat lon  one route, nearest nodes
+//   ch_tool build       <in.graph> <out.ch> [settle limit]
+//   ch_tool export-meta <in.graph> <out.meta>         edge -> road table for the radio
+//   ch_tool verify      <in.graph> <in.ch> <pairs>    random pairs vs Dijkstra
+//   ch_tool bench       <in.graph> <in.ch> <pairs>    batch query time (benchfull: + unpack)
+//   ch_tool route       <in.graph> <in.ch> lat lon lat lon
+//   ch_tool leanroute   <coords>   <in.ch> lat lon lat lon [repeats]   (radio: no edge arrays)
+//   ch_tool leanbench   <coords>   <in.ch> <pairs>
 //
 // Ordering: edge difference + deleted neighbours + level, lazy updates;
-// witness searches are bounded by settled nodes.  Query: bidirectional
-// Dijkstra over upward arcs with stall-on-demand; shortcuts are unpacked
-// through their middle node down to original edges.
+// witness searches are bounded by settled nodes.  The query is
+// backends/osmand/ch/ch_query.h, the same code the radio runs.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -21,11 +23,11 @@
 #include <string>
 #include <vector>
 
-using u32 = uint32_t;
+#include "../../backends/osmand/ch/ch_query.h"
+
+using namespace onc_ch;
 using i64 = int64_t;
 using u64 = uint64_t;
-static const u32 INF = 0xFFFFFFFFu;
-static const u32 BASE = 0x80000000u;   // via flag: original edge, low bits = edge id
 
 static double now() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -44,38 +46,31 @@ struct Graph {
     std::vector<uint8_t> rev;
 };
 
-template <class T> static void read_vec(FILE* f, std::vector<T>& v, size_t count) {
-    v.resize(count);
-    if (count && std::fread(v.data(), sizeof(T), count, f) != count) die("short read");
+template <class T> static void read_vec(std::FILE* f, std::vector<T>& v, size_t count) {
+    if (!detail::read_vector(f, v, count)) die("short read");
 }
 
-static Graph load_graph(const char* path) {
-    FILE* f = std::fopen(path, "rb");
+// With coords_only just the header and node coordinates are read.
+static Graph load_graph(const char* path, bool coords_only = false) {
+    std::FILE* f = std::fopen(path, "rb");
     if (!f) die("cannot open graph");
     char magic[4];
     Graph g;
     if (std::fread(magic, 1, 4, f) != 4 || std::memcmp(magic, "CHG1", 4)) die("not a CHG1 graph");
     if (std::fread(&g.n, 4, 1, f) != 1 || std::fread(&g.m, 4, 1, f) != 1) die("short header");
     read_vec(f, g.x, g.n); read_vec(f, g.y, g.n);
-    read_vec(f, g.from, g.m); read_vec(f, g.to, g.m);
-    read_vec(f, g.cost, g.m); read_vec(f, g.time, g.m);
-    read_vec(f, g.len, g.m); read_vec(f, g.road, g.m);
-    read_vec(f, g.pf, g.m); read_vec(f, g.pt, g.m);
-    read_vec(f, g.rev, g.m);
+    if (!coords_only) {
+        read_vec(f, g.from, g.m); read_vec(f, g.to, g.m);
+        read_vec(f, g.cost, g.m); read_vec(f, g.time, g.m);
+        read_vec(f, g.len, g.m); read_vec(f, g.road, g.m);
+        read_vec(f, g.pf, g.m); read_vec(f, g.pt, g.m);
+        read_vec(f, g.rev, g.m);
+    }
     std::fclose(f);
     return g;
 }
 
-// ---------------------------------------------------------------- hierarchy
-
-struct QArc { u32 to, w, via; };   // 12 bytes
-
-struct Hierarchy {
-    u32 n = 0;
-    std::vector<u32> rank;
-    std::vector<u32> out_first, in_first;   // CSR over upward arcs
-    std::vector<QArc> out_arcs, in_arcs;    // out: x->to, in: to->x (to ranks higher)
-};
+// ---------------------------------------------------------------- contraction
 
 struct Arc { u32 to, w; u32 via; };        // via: middle node, or BASE|edge
 
@@ -217,7 +212,7 @@ struct Contractor {
 };
 
 static void save(const Hierarchy& h, const char* path) {
-    FILE* f = std::fopen(path, "wb");
+    std::FILE* f = std::fopen(path, "wb");
     if (!f) die("cannot write hierarchy");
     u32 counts[3] = {h.n, (u32)h.out_arcs.size(), (u32)h.in_arcs.size()};
     std::fwrite("CHH1", 1, 4, f);
@@ -230,109 +225,31 @@ static void save(const Hierarchy& h, const char* path) {
     std::fclose(f);
 }
 
-static Hierarchy load_hierarchy(const char* path) {
-    FILE* f = std::fopen(path, "rb");
-    if (!f) die("cannot open hierarchy");
-    char magic[4]; u32 counts[3];
-    if (std::fread(magic, 1, 4, f) != 4 || std::memcmp(magic, "CHH1", 4)) die("not a CHH1 file");
-    if (std::fread(counts, 4, 3, f) != 3) die("short header");
-    Hierarchy h; h.n = counts[0];
-    read_vec(f, h.rank, h.n);
-    read_vec(f, h.out_first, h.n + 1); read_vec(f, h.in_first, h.n + 1);
-    read_vec(f, h.out_arcs, counts[1]); read_vec(f, h.in_arcs, counts[2]);
-    std::fclose(f);
+static Hierarchy load_or_die(const char* path) {
+    Hierarchy h;
+    std::string error;
+    if (!load_hierarchy(path, h, error)) die(error.c_str());
     return h;
 }
 
-// -------------------------------------------------------------------- query
+// Edge table for the radio: which road and which stretch of it each original
+// edge is, and where to find the road (the edge's start node).
+// "CHM1", u32 edges, then from[e] u32, road_id[e] i64, point_from[e] u32,
+// point_to[e] u32, reversed[e] u8.
+static void export_meta(const Graph& g, const char* path) {
+    std::FILE* f = std::fopen(path, "wb");
+    if (!f) die("cannot write meta");
+    std::fwrite("CHM1", 1, 4, f);
+    std::fwrite(&g.m, 4, 1, f);
+    std::fwrite(g.from.data(), 4, g.m, f);
+    std::fwrite(g.road.data(), 8, g.m, f);
+    std::fwrite(g.pf.data(), 4, g.m, f);
+    std::fwrite(g.pt.data(), 4, g.m, f);
+    std::fwrite(g.rev.data(), 1, g.m, f);
+    std::fclose(f);
+}
 
-struct Query {
-    const Hierarchy& h;
-    std::vector<u32> df, db, sf, sb;   // distances and stamps, forward/backward
-    std::vector<u32> pf, pb;           // parent node in the up graphs
-    u32 clock = 0;
-    size_t settled = 0;
-
-    explicit Query(const Hierarchy& hier) : h(hier), df(h.n), db(h.n), sf(h.n, 0), sb(h.n, 0), pf(h.n), pb(h.n) {}
-
-    u32 get(const std::vector<u32>& d, const std::vector<u32>& s, u32 v) const { return s[v] == clock ? d[v] : INF; }
-
-    // Returns the cost, INF when unreachable; meeting node in meet.
-    u32 run(u32 source, u32 target, u32& meet) {
-        ++clock; settled = 0;
-        using Item = std::pair<u32, u32>;
-        std::priority_queue<Item, std::vector<Item>, std::greater<Item>> qf, qb;
-        df[source] = 0; sf[source] = clock; pf[source] = source; qf.push({0, source});
-        db[target] = 0; sb[target] = clock; pb[target] = target; qb.push({0, target});
-        u32 best = INF; meet = INF;
-        while (!qf.empty() || !qb.empty()) {
-            u32 top = std::min(qf.empty() ? INF : qf.top().first, qb.empty() ? INF : qb.top().first);
-            if (top >= best) break;
-            bool forward = !qf.empty() && (qb.empty() || qf.top().first <= qb.top().first);
-            auto& q = forward ? qf : qb;
-            auto& dist = forward ? df : db; auto& stamp = forward ? sf : sb; auto& parent = forward ? pf : pb;
-            auto& other_dist = forward ? db : df; auto& other_stamp = forward ? sb : sf;
-            auto [d, u] = q.top(); q.pop();
-            if (stamp[u] != clock || d != dist[u]) continue;
-            ++settled;
-            if (other_stamp[u] == clock && d + other_dist[u] < best) { best = d + other_dist[u]; meet = u; }
-            // stall on demand: a higher node reaches u cheaper than d
-            const auto& stall_first = forward ? h.in_first : h.out_first;
-            const auto& stall_arcs = forward ? h.in_arcs : h.out_arcs;
-            bool stalled = false;
-            for (u32 i = stall_first[u]; i < stall_first[u + 1]; ++i) {
-                const QArc& a = stall_arcs[i];
-                if (stamp[a.to] == clock && dist[a.to] + a.w < d) { stalled = true; break; }
-            }
-            if (stalled) continue;
-            const auto& first = forward ? h.out_first : h.in_first;
-            const auto& arcs = forward ? h.out_arcs : h.in_arcs;
-            for (u32 i = first[u]; i < first[u + 1]; ++i) {
-                const QArc& a = arcs[i];
-                u32 nd = d + a.w;
-                if (stamp[a.to] != clock || nd < dist[a.to]) {
-                    stamp[a.to] = clock; dist[a.to] = nd; parent[a.to] = u; q.push({nd, a.to});
-                }
-            }
-        }
-        return best;
-    }
-
-    const QArc* find(const std::vector<u32>& first, const std::vector<QArc>& arcs, u32 at, u32 to) const {
-        const QArc* hit = nullptr;
-        for (u32 i = first[at]; i < first[at + 1]; ++i)
-            if (arcs[i].to == to && (!hit || arcs[i].w < hit->w)) hit = &arcs[i];
-        return hit;
-    }
-
-    // Original edge ids of the arc a->b (an upward arc of whichever end is lower).
-    void unpack(u32 a, u32 b, u32 via, std::vector<u32>& edges) const {
-        if (via & BASE) { edges.push_back(via & ~BASE); return; }
-        const QArc* left = find(h.in_first, h.in_arcs, via, a);     // a->via, via lower
-        const QArc* right = find(h.out_first, h.out_arcs, via, b);  // via->b
-        if (!left || !right) die("shortcut unpack: missing arc");
-        unpack(a, via, left->via, edges);
-        unpack(via, b, right->via, edges);
-    }
-
-    std::vector<u32> path_edges(u32 source, u32 target, u32 meet) const {
-        std::vector<u32> up;                      // source ... meet
-        for (u32 v = meet; ; v = pf[v]) { up.push_back(v); if (v == source) break; }
-        std::reverse(up.begin(), up.end());
-        std::vector<u32> down;                    // meet ... target
-        for (u32 v = meet; ; v = pb[v]) { down.push_back(v); if (v == target) break; }
-        std::vector<u32> edges;
-        for (size_t i = 0; i + 1 < up.size(); ++i) {
-            const QArc* a = find(h.out_first, h.out_arcs, up[i], up[i + 1]);
-            unpack(up[i], up[i + 1], a->via, edges);
-        }
-        for (size_t i = 0; i + 1 < down.size(); ++i) {
-            const QArc* a = find(h.in_first, h.in_arcs, down[i + 1], down[i]);   // down[i]->down[i+1]
-            unpack(down[i], down[i + 1], a->via, edges);
-        }
-        return edges;
-    }
-};
+// ------------------------------------------------------------------- helpers
 
 // Plain Dijkstra on the original graph, for verification.
 struct Plain {
@@ -383,23 +300,15 @@ static u32 nearest(const Graph& g, double lat, double lon) {
 // coordinates are loaded (no edge arrays, no Dijkstra), so a whole-country
 // hierarchy fits in RAM.  Edge lengths are unavailable; results are cost,
 // number of base edges and timings.
-//   leanroute <graph> <ch> lat lon lat lon [repeats]
-//   leanbench <graph> <ch> <pairs>
 static int lean_main(int argc, char** argv) {
     std::string cmd = argv[1];
     double t0 = now();
-    FILE* f = std::fopen(argv[2], "rb");
-    if (!f) die("cannot open graph");
-    char magic[4];
-    Graph g;
-    if (std::fread(magic, 1, 4, f) != 4 || std::memcmp(magic, "CHG1", 4)) die("not a CHG1 graph");
-    if (std::fread(&g.n, 4, 1, f) != 1 || std::fread(&g.m, 4, 1, f) != 1) die("short header");
-    read_vec(f, g.x, g.n); read_vec(f, g.y, g.n);
-    std::fclose(f);
-    Hierarchy h = load_hierarchy(argv[3]);
+    Graph g = load_graph(argv[2], true);
+    Hierarchy h = load_or_die(argv[3]);
     std::printf("loaded %u nodes, %zu upward arcs in %.2f s\n", g.n,
                 h.out_arcs.size() + h.in_arcs.size(), now() - t0);
     Query q(h);
+    std::vector<u32> edges;
     if (cmd == "leanroute") {
         if (argc < 8) die("leanroute needs lat lon lat lon");
         double s0 = now();
@@ -411,13 +320,12 @@ static int lean_main(int argc, char** argv) {
         for (u32 i = 0; i < repeats; ++i) cost = q.run(s, t, meet);
         double query_ms = (now() - a0) * 1e3 / repeats;
         if (cost == INF) { std::printf("no route\n"); return 0; }
-        size_t edges = 0;
         double b0 = now();
-        for (u32 i = 0; i < repeats; ++i) { cost = q.run(s, t, meet); edges = q.path_edges(s, t, meet).size(); }
+        for (u32 i = 0; i < repeats; ++i) { cost = q.run(s, t, meet); q.path_edges(s, t, meet, edges); }
         double full_ms = (now() - b0) * 1e3 / repeats;
         std::printf("cost %.1fs, %zu base edges, %zu nodes settled; query %.3f ms, query+unpack %.3f ms"
                     " (avg of %u); nearest-node snap (brute force, not part of CH) %.1f ms\n",
-                    cost / 1000.0, edges, q.settled, query_ms, full_ms, repeats, snap_ms);
+                    cost / 1000.0, edges.size(), q.settled, query_ms, full_ms, repeats, snap_ms);
         return 0;
     }
     u32 pairs = argc > 4 ? std::atoi(argv[4]) : 1000;
@@ -437,7 +345,7 @@ static int lean_main(int argc, char** argv) {
         u32 cost = q.run(pr.first, pr.second, meet);
         if (cost == INF) continue;
         ++found;
-        q.path_edges(pr.first, pr.second, meet);
+        q.path_edges(pr.first, pr.second, meet, edges);
     }
     double full_s = now() - b0;
     std::printf("leanbench: %u pairs, %u reachable; query %.4f ms, query+unpack %.4f ms per pair "
@@ -447,11 +355,16 @@ static int lean_main(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 4) die("usage: ch_tool build|verify|bench|route ...");
+    if (argc < 4) die("usage: ch_tool build|export-meta|verify|bench|benchfull|route|leanroute|leanbench ...");
     std::string cmd = argv[1];
     if (cmd == "leanroute" || cmd == "leanbench") return lean_main(argc, argv);
     Graph g = load_graph(argv[2]);
     std::fprintf(stderr, "graph: %u nodes, %u edges\n", g.n, g.m);
+    if (cmd == "export-meta") {
+        export_meta(g, argv[3]);
+        std::printf("meta: %u edges, %.1f MB\n", g.m, (4.0 + g.m * 21.0) / 1e6);
+        return 0;
+    }
     if (cmd == "build") {
         double t0 = now();
         Contractor c(g, argc > 4 ? std::atoi(argv[4]) : 200);
@@ -465,9 +378,10 @@ int main(int argc, char** argv) {
                     (8.0 * h.n + 4.0 * h.n + arcs * sizeof(QArc)) / 1e6, (g.n * 8.0 + g.m * 12.0) / 1e6);
         return 0;
     }
-    Hierarchy h = load_hierarchy(argv[3]);
+    Hierarchy h = load_or_die(argv[3]);
     Query q(h);
     Plain plain(g);
+    std::vector<u32> edges;
     if (cmd == "route") {
         if (argc < 8) die("route needs lat lon lat lon");
         u32 s = nearest(g, std::atof(argv[4]), std::atof(argv[5]));
@@ -477,7 +391,7 @@ int main(int argc, char** argv) {
         u32 cost = q.run(s, t, meet);
         double t1 = now();
         if (cost == INF) { std::printf("no route\n"); return 0; }
-        std::vector<u32> edges = q.path_edges(s, t, meet);
+        if (!q.path_edges(s, t, meet, edges)) die("unpack failed");
         double t2 = now();
         double metres = 0, ms = 0;
         for (u32 e : edges) { metres += g.len[e]; ms += g.time[e]; }
@@ -493,63 +407,54 @@ int main(int argc, char** argv) {
     }
     u32 pairs = argc > 4 ? std::atoi(argv[4]) : 1000;
     std::mt19937 rng(12345);
-    u32 bad = 0, reachable = 0;
-    double total = 0, total_unpack = 0, total_plain = 0; size_t settled_ch = 0, settled_plain = 0;
     // The clock of some targets ticks in whole milliseconds, so per-query
     // timings are rounded; the batch wall time below is the reliable figure.
     std::vector<std::pair<u32, u32>> queries;
     for (u32 i = 0; i < pairs; ++i) { u32 s = rng() % g.n; queries.push_back({s, (u32)(rng() % g.n)}); }
     if (cmd == "bench" || cmd == "benchfull") {
-        u32 meet, found = 0; size_t edges_total = 0;
+        u32 meet, found = 0;
         double t0 = now();
         for (const auto& pr : queries) {
             u32 cost = q.run(pr.first, pr.second, meet);
             if (cost == INF) continue;
             ++found;
-            if (cmd == "benchfull") edges_total += q.path_edges(pr.first, pr.second, meet).size();
+            if (cmd == "benchfull") q.path_edges(pr.first, pr.second, meet, edges);
         }
         double wall = now() - t0;
         std::printf("%s: %u pairs, %u reachable; batch %.1f ms, %.4f ms per query%s\n", cmd.c_str(), pairs, found,
                     wall * 1e3, wall * 1e3 / pairs, cmd == "benchfull" ? " (query + unpack to base edges)" : "");
-        (void)edges_total;
         double d0 = now();
-        size_t ds; u32 dn = 0;
+        size_t ds;
         u32 plain_pairs = std::min<u32>(pairs, 200);
-        for (u32 i = 0; i < plain_pairs; ++i) { if (plain.run(queries[i].first, queries[i].second, ds) != INF) ++dn; }
-        double dwall = now() - d0;
-        std::printf("dijkstra: %u pairs, %.1f ms per query\n", plain_pairs, dwall * 1e3 / plain_pairs);
+        for (u32 i = 0; i < plain_pairs; ++i) plain.run(queries[i].first, queries[i].second, ds);
+        std::printf("dijkstra: %u pairs, %.1f ms per query\n", plain_pairs, (now() - d0) * 1e3 / plain_pairs);
         return 0;
     }
-    for (u32 i = 0; i < pairs; ++i) {
-        u32 s = rng() % g.n, t = rng() % g.n, meet;
+    // verify: every cost against Dijkstra and every unpacked path as an edge chain
+    u32 bad = 0, reachable = 0;
+    double total = 0, total_unpack = 0, total_plain = 0; size_t settled_ch = 0, settled_plain = 0;
+    for (const auto& pr : queries) {
+        u32 s = pr.first, t = pr.second, meet;
         double t0 = now();
         u32 cost = q.run(s, t, meet);
-        double t1 = now();
-        total += t1 - t0; settled_ch += q.settled;
-        u32 ref = INF; size_t ps = 0;
-        if (cmd == "verify") {
-            double p0 = now();
-            ref = plain.run(s, t, ps);
-            total_plain += now() - p0; settled_plain += ps;
-            if (ref != cost) { ++bad; if (bad < 5) std::printf("MISMATCH %u->%u ch=%u dijkstra=%u\n", s, t, cost, ref); }
-        }
-        if (cost != INF) {
-            ++reachable;
-            if (cmd == "verify") {
-                double u0 = now();
-                std::vector<u32> edges = q.path_edges(s, t, meet);
-                total_unpack += now() - u0;
-                u64 sum = 0; u32 at = s; bool chain = true;
-                for (u32 e : edges) { if (g.from[e] != at) chain = false; at = g.to[e]; sum += g.cost[e]; }
-                if (!chain || at != t || sum != cost) { ++bad; if (bad < 5) std::printf("BAD PATH %u->%u\n", s, t); }
-            }
-        }
+        total += now() - t0; settled_ch += q.settled;
+        size_t ps = 0;
+        double p0 = now();
+        u32 ref = plain.run(s, t, ps);
+        total_plain += now() - p0; settled_plain += ps;
+        if (ref != cost) { ++bad; if (bad < 5) std::printf("MISMATCH %u->%u ch=%u dijkstra=%u\n", s, t, cost, ref); }
+        if (cost == INF) continue;
+        ++reachable;
+        double u0 = now();
+        bool ok = q.path_edges(s, t, meet, edges);
+        total_unpack += now() - u0;
+        u64 sum = 0; u32 at = s; bool chain = ok;
+        for (u32 e : edges) { if (g.from[e] != at) chain = false; at = g.to[e]; sum += g.cost[e]; }
+        if (!chain || at != t || sum != cost) { ++bad; if (bad < 5) std::printf("BAD PATH %u->%u\n", s, t); }
     }
-    std::printf("%s: %u pairs, %u reachable, %u bad; ch avg %.3f ms (%zu settled avg)",
-                cmd.c_str(), pairs, reachable, bad, total / pairs * 1e3, settled_ch / pairs);
-    if (cmd == "verify")
-        std::printf("; dijkstra avg %.2f ms (%zu settled avg); unpack avg %.3f ms",
-                    total_plain / pairs * 1e3, settled_plain / pairs, total_unpack / std::max(1u, reachable) * 1e3);
-    std::printf("\n");
+    std::printf("verify: %u pairs, %u reachable, %u bad; ch avg %.3f ms (%zu settled avg); "
+                "dijkstra avg %.2f ms (%zu settled avg); unpack avg %.3f ms\n",
+                pairs, reachable, bad, total / pairs * 1e3, settled_ch / pairs, total_plain / pairs * 1e3,
+                settled_plain / pairs, total_unpack / std::max(1u, reachable) * 1e3);
     return bad ? 2 : 0;
 }
