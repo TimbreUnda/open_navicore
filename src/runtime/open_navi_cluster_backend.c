@@ -1,6 +1,7 @@
 #include <open_navicore/cluster.h>
 
 #include "open_navi_callback_backend.h"
+#include "open_navi_cluster_agent.h"
 
 #include <pthread.h>
 #include <string.h>
@@ -392,6 +393,13 @@ uint32_t open_navi_cluster_backend_publish(const OpenNaviClusterNavigationState 
         producer_end(lifecycle_epoch);
         return status;
     }
+    if (open_navi_cluster_agent_active() != 0) {
+        /* The cluster agent owns the output (arbitration, change masks, PAS). The validated
+         * state goes to it as a datagram; no local publication history is kept. */
+        status = open_navi_cluster_agent_publish(state);
+        producer_end(lifecycle_epoch);
+        return status;
+    }
 
     self = pthread_self();
     (void)pthread_mutex_lock(&g_cluster_lock);
@@ -462,6 +470,7 @@ uint32_t open_navi_cluster_backend_publish(const OpenNaviClusterNavigationState 
 
 void open_navi_cluster_backend_reset(void)
 {
+    open_navi_cluster_agent_release();
     (void)pthread_mutex_lock(&g_cluster_lock);
     ++g_history_epoch;
     if (g_history_epoch == 0u) {

@@ -93,7 +93,8 @@ $cc $common_flags \
     -DOPEN_NAVI_BACKEND_PLUGIN_PATH='"'"$plugin_path"'"' \
     -DEXPECT_TRACE_PATH='"'"$trace_path"'"' \
     src/compat/qr39/navicore_compat.c src/runtime/open_navi_api_telemetry.c src/runtime/open_navi_callback_backend.c \
-    src/runtime/open_navi_cluster_backend.c src/backend/open_navi_backend_loader.c \
+    src/runtime/open_navi_cluster_backend.c src/runtime/open_navi_cluster_agent.c \
+    src/backend/open_navi_backend_loader.c \
     src/compat/qr39/host_callbacks.c src/runtime/open_navi_gps_backend.c \
     src/runtime/open_navi_pointer_backend.c src/runtime/open_navi_scalar_backend.c \
     src/renderer/open_navi_renderer.c src/renderer/open_navi_screen_input.c src/backend/open_navi_default_backend.c \
