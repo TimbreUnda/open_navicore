@@ -2,7 +2,7 @@
 
 2026-10-20. Offline analysis, nothing was run on the radio for this note. It answers: how do
 spoken guidance prompts get from the OsmAnd backend to the speakers, given what the TTS work
-found about sound (`/mnt/d/contracts/native/as_audio_service_allocate_channel.md`)?
+found about sound (`contracts/native/as_audio_service_allocate_channel.md` in the radio workspace, outside this repository)?
 Roadmap item: Milestone 3, "Add voice guidance and stock audio-focus integration".
 
 Labels follow `api-ui-restrictions.md`: **recovered** (address or file cited), **inferred**,
