@@ -109,6 +109,9 @@ add_custom_target(search_fixture DEPENDS ${_search_fixture})
 onc_test(search_index_test SOURCES search_index_test.cpp LIBS navigation_ui m
          DEFINES SEARCH_FIXTURE="${_search_fixture}")
 add_dependencies(search_index_test search_fixture)
+# Contraction-hierarchy routing: query, contraction, sidecar file and snap lookup
+# (the library the navigation worker uses; pure C++, no OsmAnd).
+onc_test(ch_test SOURCES ch_test.cpp INCLUDES ${ONC_ROOT}/backends/osmand/ch ${ONC_ROOT}/tools/ch)
 # The vector style/tessellator test needs earcut.hpp from the OsmAnd tree.
 if(NOT OSMAND_QNX_ROOT AND DEFINED ENV{OSMAND_QNX_ROOT})
   set(OSMAND_QNX_ROOT $ENV{OSMAND_QNX_ROOT})
