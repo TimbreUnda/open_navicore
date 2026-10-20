@@ -18,14 +18,27 @@
 #include <unistd.h>
 
 #ifdef OPEN_NAVI_CLUSTER_AGENT
+#include <cagent/client.h>
 #include <cagent/proto.h>
 #endif
 
+#include <time.h>
+
+static void usleep_us(long us)
+{
+    struct timespec ts;
+    ts.tv_sec = us / 1000000;
+    ts.tv_nsec = (us % 1000000) * 1000;
+    nanosleep(&ts, NULL);
+}
+
 static uint32_t g_pas_calls;
+static uint8_t g_last_record[OPEN_NAVI_CLUSTER_RECORD_SIZE];
 
 uint32_t open_navi_callback_send_cluster(const void *record_0xa5c)
 {
     assert(record_0xa5c != NULL);
+    memcpy(g_last_record, record_0xa5c, sizeof(g_last_record));
     ++g_pas_calls;
     return 0u;
 }
@@ -172,6 +185,53 @@ int main(void)
     open_navi_cluster_agent_test_configure(g_marker, g_sock);
     calls = g_pas_calls;
     assert(open_navi_cluster_backend_publish(&state) == 0u && g_pas_calls == calls + 1u);
+
+    /* relay host: the agent's relay backend feeds the local PAS path, RELEASE clears it */
+    {
+        char relay_path[300];
+        struct cagent_client *agent;
+        struct cagent_state s;
+        int i;
+        snprintf(relay_path, sizeof(relay_path), "%s/relay.sock", g_dir);
+        touch(g_marker);
+        open_navi_cluster_agent_test_configure(g_marker, g_sock);
+        open_navi_cluster_relay_test_configure(relay_path);
+        open_navi_cluster_relay_start();
+        agent = cagent_client_open_at(CAGENT_SRC_AA, relay_path);
+        assert(agent != NULL);
+        memset(&s, 0, sizeof(s));
+        s.valid = CAGENT_V_SYMBOL | CAGENT_V_BAR | CAGENT_V_MAN_DIST;
+        s.symbol = 4; s.bar = 7; s.man_dist_tenths = 120; s.man_unit = 2;
+        calls = g_pas_calls;
+        assert(cagent_client_update(agent, &s) == 0);
+        for (i = 0; i < 200 && g_pas_calls == calls; ++i) usleep_us(10000);
+        assert(g_pas_calls == calls + 1u);
+        assert(g_last_record[3] == 4 && g_last_record[0xa4c] == 7 && g_last_record[0x14c] == 2);
+        assert((g_last_record[0xa58] | (g_last_record[0xa59] << 8)) == (int)s.valid);
+        assert(cagent_client_release(agent) == 0);
+        for (i = 0; i < 200 && g_pas_calls == calls + 1u; ++i) usleep_us(10000);
+        assert(g_pas_calls == calls + 2u);
+        assert(g_last_record[3] == 0 && g_last_record[0xa58] == 0 && g_last_record[0xa59] == 0);
+        /* the symbol, bar and distance bits are reported as changed (their validity went away) */
+        assert(((g_last_record[0xa56] | (g_last_record[0xa57] << 8)) & (int)s.valid) == (int)s.valid);
+        /* a malformed datagram is ignored */
+        {
+            struct sockaddr_un sa;
+            int raw = socket(AF_UNIX, SOCK_DGRAM, 0);
+            memset(&sa, 0, sizeof(sa));
+            sa.sun_family = AF_UNIX;
+            strcpy(sa.sun_path, relay_path);
+            sendto(raw, "garbage", 7, 0, (struct sockaddr *)&sa, sizeof(sa));
+            close(raw);
+            usleep_us(100000);
+            assert(g_pas_calls == calls + 2u);
+        }
+        open_navi_cluster_relay_stop();
+        assert(access(relay_path, F_OK) != 0);
+        cagent_client_close(agent);
+        unlink(g_marker);
+        open_navi_cluster_agent_test_configure(g_marker, g_sock);
+    }
 
     rmdir(g_dir);
     puts("cluster agent client smoke passed");

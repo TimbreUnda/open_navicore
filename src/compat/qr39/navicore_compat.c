@@ -3,6 +3,7 @@
 #include "open_navi.h"
 #include "open_navi_api_telemetry.h"
 #include "open_navi_callback_backend.h"
+#include "open_navi_cluster_agent.h"
 #include "open_navi_backend_loader.h"
 #include <open_navicore/cluster.h>
 #include "host_callbacks.h"
@@ -2831,6 +2832,7 @@ uint32_t panaInitialize(const void *init_record)
     open_navi_callback_backend_reset();
     open_navi_cluster_backend_reset();
     open_navi_read_guidance_status_marker();
+    open_navi_cluster_relay_start();
     /* The backend choice is process-lifetime and must be finalized while the
      * renderer is still COLD. Failure is deliberately non-fatal: bootstrap
      * leaves the built-in magenta backend selected. */
@@ -2909,6 +2911,7 @@ static void open_navi_finish_deinitialize(void)
     open_navi_api_telemetry_reset();
     open_navi_pointer_backend_reset();
     open_navi_callback_backend_reset();
+    open_navi_cluster_relay_stop();
     open_navi_cluster_backend_reset();
 }
 

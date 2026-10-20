@@ -25,7 +25,23 @@ uint32_t open_navi_cluster_agent_publish(const OpenNaviClusterNavigationState *s
 /* Tell the agent this source has nothing to show. */
 void open_navi_cluster_agent_release(void);
 
+/* The local PAS publication (validation, change masks, history, PAS callback) without the agent
+ * redirect. Used by the relay host below, and equal to open_navi_cluster_backend_publish when the
+ * agent mode is off. */
+uint32_t open_navi_cluster_backend_publish_pas(const OpenNaviClusterNavigationState *state);
+
+/*
+ * Relay host: in agent mode the agent's output backend ("relay") sends the arbitrated state to
+ * this process, because the PAS path (adapter 17 slot 3 inside nv_navigation) lives here. A thread
+ * serves the socket and publishes through the local PAS path; an agent RELEASE (nothing to show)
+ * publishes an empty state so the cluster drops its turn view. Started at provider
+ * initialization when the agent marker is present, stopped at deinitialization.
+ */
+void open_navi_cluster_relay_start(void);
+void open_navi_cluster_relay_stop(void);
+
 #if defined(OPEN_NAVI_TESTING)
+void open_navi_cluster_relay_test_configure(const char *socket_path);
 /* Override the marker path and socket path (NULL restores the defaults) and force a re-read. */
 void open_navi_cluster_agent_test_configure(const char *marker_path, const char *socket_path);
 #endif

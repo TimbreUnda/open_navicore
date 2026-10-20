@@ -532,8 +532,17 @@ after an update. Road text is passed as UTF-8, control characters become spaces 
 255 bytes is cut on a character boundary. The agent expires a silent source after its TTL
 (default 10 s), so a producer that keeps navigating should publish at least every few seconds.
 The client is compiled in when a `cluster-agent` checkout is found (`-DONC_CAGENT_DIR=`);
-otherwise the marker is ignored. Do not enable the marker while the agent has no working PAS
-backend: the cluster would stay dark.
+otherwise the marker is ignored.
+
+The PAS path (adapter 17 slot 3) exists only inside nv_navigation, where this provider is
+loaded, so the agent's output backend is `relay`: `cagentd --backend relay` forwards the
+arbitrated state as UPDATE / RELEASE datagrams to `/var/run/cluster-agent-pas.sock`. In agent
+mode the provider serves that socket from a thread started at `panaInitialize` and stopped at
+deinitialization (`open_navi_cluster_relay_*`); an UPDATE goes through the unchanged local
+publication (`open_navi_cluster_backend_publish_pas`: validation, change masks, history, PAS
+callback), a RELEASE publishes an empty state so the cluster drops its turn view. This lets
+Android Auto guidance reach the cluster while Open NaviCore itself is idle. Do not enable the
+marker unless `cagentd --backend relay` is running: the cluster would stay dark.
 
 ## Native Screen/EGL milestone
 
