@@ -5,6 +5,10 @@
 /.cache/
 /.clangd/
 
+# Radio deploy backups (IFS images, ~100 MB each) and agent worktrees
+/ifs-deploy-backups/
+/.claude/worktrees/
+
 # Python cache and coverage output
 __pycache__/
 *.py[cod]
