@@ -50,6 +50,16 @@ inline bool is_cyrillic(uint32_t cp) { return cp >= 0x400 && cp <= 0x4FF; }
 inline uint32_t fold_cp(uint32_t cp)
 {
     if (cp >= 'A' && cp <= 'Z') cp += 0x20;
+    else if (cp >= 0xC0 && cp <= 0xDE && cp != 0xD7) cp += 0x20;     // Latin-1
+    else if (cp >= 0x100 && cp <= 0x17F && cp != 0x130 && cp != 0x138 && cp != 0x149 &&
+             cp != 0x17F) {                                          // Latin Extended-A
+        // Upper/lower pairs are even/odd, except Ĺ..ň and Ź..ž (odd/even).
+        if ((cp >= 0x139 && cp <= 0x148) || cp >= 0x179) {
+            if (cp % 2) ++cp;
+        } else {
+            cp |= 1;
+        }
+    }
     else if (cp >= 0x410 && cp <= 0x42F) cp += 0x20;
     else if (cp >= 0x400 && cp <= 0x40F) cp += 0x50;
     else if (cp == 0x490) cp = 0x491;
@@ -225,6 +235,22 @@ inline const char* region_of(const std::string& folded)
     return nullptr;
 }
 
+// House number key: folded, only letters, digits and '/' ("4-Г" -> "4г",
+// "184, 4" -> "1844").
+inline std::string house_key(const std::string& number)
+{
+    std::string out;
+    const std::string folded = fold_word(number);
+    for (std::size_t i = 0; i < folded.size();) {
+        const std::size_t start = i;
+        uint32_t cp;
+        decode(folded, i, cp);
+        if ((cp >= '0' && cp <= '9') || cp == '/' || (cp >= 'a' && cp <= 'z') || is_cyrillic(cp))
+            out.append(folded, start, i - start);
+    }
+    return out;
+}
+
 struct QueryWord {
     std::string text;      // folded
     bool incomplete;       // last word while typing: prefix match only
@@ -247,7 +273,7 @@ inline Query parse(const std::string& text)
     for (std::size_t i = 0; i < parts.size(); ++i) {
         const bool last = i + 1 == parts.size();
         if (has_digit(parts[i])) {
-            query.house = fold_word(parts[i]);
+            query.house += house_key(parts[i]);  // "184, 4" arrives as two parts
             continue;
         }
         const std::size_t words_before = query.words.size();

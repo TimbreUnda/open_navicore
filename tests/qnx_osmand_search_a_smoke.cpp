@@ -175,9 +175,10 @@ private:
         for (std::size_t w = 1; w < q.words.size(); ++w)
             if (q.words[w].text.size() > q.words[longest].text.size()) longest = w;
         const std::size_t before = out.size();
+        const bool city_found = !out.empty();
         const int first_file = region >= 0 ? region : user_file_;
         for (int pass = 0; pass < 2 && out.size() == before; ++pass) {
-            if (pass == 1 && region >= 0) break;
+            if (pass == 1 && (region >= 0 || city_found)) break;  // all regions: last resort
             for (std::size_t f = 0; f < files_.size(); ++f) {
                 if ((pass == 0) != (static_cast<int>(f) == first_file)) continue;
                 files_[f].data->scanAddressesByName(
@@ -237,7 +238,7 @@ private:
             streets, nullptr, nullptr, [&](const std::shared_ptr<const OsmAnd::Building>& b) {
                 const auto p = latlon(b->position31);
                 const std::string number = utf8(b->nativeName);
-                street.houses.push_back({number, sq::fold_word(number), p.latitude, p.longitude});
+                street.houses.push_back({number, sq::house_key(number), p.latitude, p.longitude});
                 return false;
             });
     }

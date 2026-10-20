@@ -30,6 +30,13 @@ SEPARATORS = {' ', '\t', ',', ';', '.', '-', '/', '(', ')', '"', '«', '»',
 def fold_cp(cp):
     if ord('A') <= cp <= ord('Z'):
         cp += 0x20
+    elif 0xC0 <= cp <= 0xDE and cp != 0xD7:
+        cp += 0x20
+    elif 0x100 <= cp <= 0x17F and cp not in (0x130, 0x138, 0x149, 0x17F):
+        if 0x139 <= cp <= 0x148 or cp >= 0x179:
+            cp = cp + 1 if cp % 2 else cp
+        else:
+            cp |= 1
     elif 0x410 <= cp <= 0x42F:
         cp += 0x20
     elif 0x400 <= cp <= 0x40F:

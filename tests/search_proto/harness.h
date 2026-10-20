@@ -32,8 +32,11 @@ inline const char* kind_name(Kind kind)
     return kind == Kind::City ? "C" : kind == Kind::Street ? "S" : "H";
 }
 
-inline int run_queries(const char* label, const char* path, const Search& search)
+// cost, when given: the estimated radio time of the last call (model of A).
+inline int run_queries(const char* label, const char* path, const Search& search,
+                       const std::function<double()>& cost = nullptr)
 {
+    double sum_est_first = 0, max_est_first = 0, sum_est_repeat = 0;
     std::ifstream in(path);
     std::string line;
     int passed = 0, total = 0;
@@ -48,11 +51,12 @@ inline int run_queries(const char* label, const char* path, const Search& search
         std::getline(fields, kind, '\t');
         std::getline(fields, tolerance, '\t');
         std::vector<Result> results;
-        std::vector<double> times;
+        std::vector<double> times, estimates;
         for (int run = 0; run < 3; ++run) {
             const double start = now_ms();
             results = search(query);
             times.push_back(now_ms() - start);
+            if (cost) estimates.push_back(cost());
         }
         const double first = times[0];  // A: before its caches hold this city
         std::sort(times.begin(), times.end());
@@ -69,8 +73,15 @@ inline int run_queries(const char* label, const char* path, const Search& search
         max_ms = std::max(max_ms, ms);
         sum_first += first;
         max_first = std::max(max_first, first);
-        std::printf("%s %-4s first %8.1f ms median %8.1f ms  \"%s\"  -> ", label,
-                    ok ? "PASS" : "FAIL", first, ms, query.c_str());
+        std::printf("%s %-4s first %8.1f ms median %8.1f ms  ", label, ok ? "PASS" : "FAIL",
+                    first, ms);
+        if (cost) {
+            std::printf("radio_est first %7.0f ms repeat %7.0f ms  ", estimates[0], estimates[2]);
+            sum_est_first += estimates[0];
+            max_est_first = std::max(max_est_first, estimates[0]);
+            sum_est_repeat += estimates[2];
+        }
+        std::printf("\"%s\"  -> ", query.c_str());
         if (results.empty()) std::printf("(none)\n");
         for (std::size_t i = 0; i < results.size() && i < 3; ++i)
             std::printf("%s%s %s (%.4f,%.4f) %.0f\n", i ? "        " : "",
@@ -80,6 +91,9 @@ inline int run_queries(const char* label, const char* path, const Search& search
     std::printf("%s SUMMARY passed=%d/%d first_avg_ms=%.1f first_max_ms=%.1f "
                 "median_avg_ms=%.1f median_max_ms=%.1f\n", label, passed, total,
                 total ? sum_first / total : 0.0, max_first, total ? sum_ms / total : 0.0, max_ms);
+    if (cost && total)
+        std::printf("%s RADIO_EST first_avg_ms=%.0f first_max_ms=%.0f repeat_avg_ms=%.0f\n",
+                    label, sum_est_first / total, max_est_first, sum_est_repeat / total);
     return passed;
 }
 
