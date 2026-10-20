@@ -389,19 +389,23 @@ static int wait_for_event_locked(void)
 
 /* Picks the pending event with the lowest sequence number, so events are
  * delivered in the order they were posted. Returns 0 when nothing is
- * pending; *display is only meaningful for per-display event types. */
+ * pending. *display_out is written only for per-display event types
+ * (visibility, screen); the caller supplies its default. */
 static RenderEventType select_next_event_locked(unsigned int *display_out)
 {
     uint64_t selected = UINT64_MAX;
     RenderEventType type = 0;
     unsigned int display;
 
+/* Uses the locals `selected` and `type` of this function. */
 #define SELECT_IF_OLDER(slot, event_type)                    \
-    if (g_runtime.slot.pending != 0 &&                       \
-        g_runtime.slot.sequence < selected) {                \
-        selected = g_runtime.slot.sequence;                  \
-        type = (event_type);                                 \
-    }
+    do {                                                     \
+        if (g_runtime.slot.pending != 0 &&                   \
+            g_runtime.slot.sequence < selected) {            \
+            selected = g_runtime.slot.sequence;              \
+            type = (event_type);                             \
+        }                                                    \
+    } while (0)
 
     if (g_runtime.pointer_count != 0u) {
         selected = g_runtime.pointer_queue[g_runtime.pointer_head].sequence;
@@ -421,14 +425,14 @@ static RenderEventType select_next_event_locked(unsigned int *display_out)
             type = RENDER_EVENT_SCREEN;
         }
     }
-    SELECT_IF_OLDER(gps, RENDER_EVENT_GPS)
-    SELECT_IF_OLDER(vehicle, RENDER_EVENT_VEHICLE)
-    SELECT_IF_OLDER(gps_interval, RENDER_EVENT_GPS_INTERVAL)
-    SELECT_IF_OLDER(audio, RENDER_EVENT_AUDIO)
-    SELECT_IF_OLDER(internationalization, RENDER_EVENT_INTERNATIONALIZATION)
-    SELECT_IF_OLDER(cluster_display, RENDER_EVENT_CLUSTER_DISPLAY)
-    SELECT_IF_OLDER(driver_distraction, RENDER_EVENT_DRIVER_DISTRACTION)
-    SELECT_IF_OLDER(guidance_stop, RENDER_EVENT_GUIDANCE_STOP)
+    SELECT_IF_OLDER(gps, RENDER_EVENT_GPS);
+    SELECT_IF_OLDER(vehicle, RENDER_EVENT_VEHICLE);
+    SELECT_IF_OLDER(gps_interval, RENDER_EVENT_GPS_INTERVAL);
+    SELECT_IF_OLDER(audio, RENDER_EVENT_AUDIO);
+    SELECT_IF_OLDER(internationalization, RENDER_EVENT_INTERNATIONALIZATION);
+    SELECT_IF_OLDER(cluster_display, RENDER_EVENT_CLUSTER_DISPLAY);
+    SELECT_IF_OLDER(driver_distraction, RENDER_EVENT_DRIVER_DISTRACTION);
+    SELECT_IF_OLDER(guidance_stop, RENDER_EVENT_GUIDANCE_STOP);
 #undef SELECT_IF_OLDER
     if (g_runtime.frame_pending != 0 &&
         g_runtime.frame_event_sequence < selected) {
@@ -1044,8 +1048,9 @@ static int run_event_loop(uintptr_t service_token)
     }
 }
 
-/* After a failure: stop accepting input and drop everything still queued. */
-static void discard_pending_state(void)
+/* After a failure or cancel: stop the renderer, stop accepting input, drop
+ * the service token and everything still queued. */
+static void abort_running_state(void)
 {
     (void)pthread_mutex_lock(&g_runtime.lock);
     g_runtime.accepting_state = 0;
@@ -1101,7 +1106,7 @@ static void *renderer_thread(void *unused)
         (void)request_frame((void *)service_token);
         status = run_event_loop(service_token);
     }
-    if (status != 0) discard_pending_state();
+    if (status != 0) abort_running_state();
     renderer_cleanup(started, surfaced);
     return_to_cold_state();
     return NULL;
