@@ -364,21 +364,15 @@ static uint32_t service_publish_guidance_state(
     return open_navi_service_publish_guidance_state(guidance);
 }
 
-static int take_event(RenderEvent *event)
+/* Waits, with g_runtime.lock held, until an event is pending or stop is
+ * requested. Returns 1 when an event is ready, 0 when stopping, 2 when the
+ * poll interval elapsed with nothing pending and -1 on a wait failure. */
+static int wait_for_event_locked(void)
 {
-    uint64_t selected = UINT64_MAX;
-    RenderEventType type = 0;
-    unsigned int selected_display = 0u;
-    unsigned int display;
-
-    (void)pthread_mutex_lock(&g_runtime.lock);
     while (g_runtime.stop == 0 && !event_available_locked()) {
         struct timespec deadline;
         int wait_result;
-        if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) {
-            (void)pthread_mutex_unlock(&g_runtime.lock);
-            return -1;
-        }
+        if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) return -1;
         deadline.tv_nsec +=
             (long)OPEN_NAVI_PLATFORM_POLL_MILLISECONDS * 1000000L;
         if (deadline.tv_nsec >= 1000000000L) {
@@ -387,18 +381,26 @@ static int take_event(RenderEvent *event)
         }
         wait_result = pthread_cond_timedwait(&g_runtime.condition,
                                              &g_runtime.lock, &deadline);
-        if (wait_result == ETIMEDOUT && !event_available_locked()) {
-            (void)pthread_mutex_unlock(&g_runtime.lock);
-            return 2;
-        }
-        if (wait_result != 0 && wait_result != ETIMEDOUT) {
-            (void)pthread_mutex_unlock(&g_runtime.lock);
-            return -1;
-        }
+        if (wait_result == ETIMEDOUT && !event_available_locked()) return 2;
+        if (wait_result != 0 && wait_result != ETIMEDOUT) return -1;
     }
-    if (g_runtime.stop != 0) {
-        (void)pthread_mutex_unlock(&g_runtime.lock);
-        return 0;
+    return g_runtime.stop != 0 ? 0 : 1;
+}
+
+/* Picks the pending event with the lowest sequence number, so events are
+ * delivered in the order they were posted. Returns 0 when nothing is
+ * pending; *display is only meaningful for per-display event types. */
+static RenderEventType select_next_event_locked(unsigned int *display_out)
+{
+    uint64_t selected = UINT64_MAX;
+    RenderEventType type = 0;
+    unsigned int display;
+
+#define SELECT_IF_OLDER(slot, event_type)                    \
+    if (g_runtime.slot.pending != 0 &&                       \
+        g_runtime.slot.sequence < selected) {                \
+        selected = g_runtime.slot.sequence;                  \
+        type = (event_type);                                 \
     }
 
     if (g_runtime.pointer_count != 0u) {
@@ -409,60 +411,37 @@ static int take_event(RenderEvent *event)
         if (g_runtime.visibility[display].pending != 0 &&
             g_runtime.visibility[display].sequence < selected) {
             selected = g_runtime.visibility[display].sequence;
-            selected_display = display;
+            *display_out = display;
             type = RENDER_EVENT_VISIBILITY;
         }
         if (g_runtime.screen[display].pending != 0 &&
             g_runtime.screen[display].sequence < selected) {
             selected = g_runtime.screen[display].sequence;
-            selected_display = display;
+            *display_out = display;
             type = RENDER_EVENT_SCREEN;
         }
     }
-    if (g_runtime.gps.pending != 0 && g_runtime.gps.sequence < selected) {
-        selected = g_runtime.gps.sequence;
-        type = RENDER_EVENT_GPS;
-    }
-    if (g_runtime.vehicle.pending != 0 &&
-        g_runtime.vehicle.sequence < selected) {
-        selected = g_runtime.vehicle.sequence;
-        type = RENDER_EVENT_VEHICLE;
-    }
-    if (g_runtime.gps_interval.pending != 0 &&
-        g_runtime.gps_interval.sequence < selected) {
-        selected = g_runtime.gps_interval.sequence;
-        type = RENDER_EVENT_GPS_INTERVAL;
-    }
-    if (g_runtime.audio.pending != 0 &&
-        g_runtime.audio.sequence < selected) {
-        selected = g_runtime.audio.sequence;
-        type = RENDER_EVENT_AUDIO;
-    }
-    if (g_runtime.internationalization.pending != 0 &&
-        g_runtime.internationalization.sequence < selected) {
-        selected = g_runtime.internationalization.sequence;
-        type = RENDER_EVENT_INTERNATIONALIZATION;
-    }
-    if (g_runtime.cluster_display.pending != 0 &&
-        g_runtime.cluster_display.sequence < selected) {
-        selected = g_runtime.cluster_display.sequence;
-        type = RENDER_EVENT_CLUSTER_DISPLAY;
-    }
-    if (g_runtime.driver_distraction.pending != 0 &&
-        g_runtime.driver_distraction.sequence < selected) {
-        selected = g_runtime.driver_distraction.sequence;
-        type = RENDER_EVENT_DRIVER_DISTRACTION;
-    }
-    if (g_runtime.guidance_stop.pending != 0 &&
-        g_runtime.guidance_stop.sequence < selected) {
-        selected = g_runtime.guidance_stop.sequence;
-        type = RENDER_EVENT_GUIDANCE_STOP;
-    }
+    SELECT_IF_OLDER(gps, RENDER_EVENT_GPS)
+    SELECT_IF_OLDER(vehicle, RENDER_EVENT_VEHICLE)
+    SELECT_IF_OLDER(gps_interval, RENDER_EVENT_GPS_INTERVAL)
+    SELECT_IF_OLDER(audio, RENDER_EVENT_AUDIO)
+    SELECT_IF_OLDER(internationalization, RENDER_EVENT_INTERNATIONALIZATION)
+    SELECT_IF_OLDER(cluster_display, RENDER_EVENT_CLUSTER_DISPLAY)
+    SELECT_IF_OLDER(driver_distraction, RENDER_EVENT_DRIVER_DISTRACTION)
+    SELECT_IF_OLDER(guidance_stop, RENDER_EVENT_GUIDANCE_STOP)
+#undef SELECT_IF_OLDER
     if (g_runtime.frame_pending != 0 &&
         g_runtime.frame_event_sequence < selected) {
         type = RENDER_EVENT_FRAME;
     }
+    return type;
+}
 
+/* Moves the event chosen by select_next_event_locked() out of its pending
+ * slot into *event. Returns 0 for a type that is not a known event. */
+static int pop_event_locked(RenderEventType type, unsigned int display,
+                            RenderEvent *event)
+{
     memset(event, 0, sizeof(*event));
     event->type = type;
     switch (type) {
@@ -473,15 +452,14 @@ static int take_event(RenderEvent *event)
         --g_runtime.pointer_count;
         break;
     case RENDER_EVENT_VISIBILITY:
-        event->sequence = g_runtime.visibility[selected_display].sequence;
-        event->data.visibility =
-            g_runtime.visibility[selected_display].value;
-        g_runtime.visibility[selected_display].pending = 0;
+        event->sequence = g_runtime.visibility[display].sequence;
+        event->data.visibility = g_runtime.visibility[display].value;
+        g_runtime.visibility[display].pending = 0;
         break;
     case RENDER_EVENT_SCREEN:
-        event->sequence = g_runtime.screen[selected_display].sequence;
-        event->data.screen = g_runtime.screen[selected_display].value;
-        g_runtime.screen[selected_display].pending = 0;
+        event->sequence = g_runtime.screen[display].sequence;
+        event->data.screen = g_runtime.screen[display].value;
+        g_runtime.screen[display].pending = 0;
         break;
     case RENDER_EVENT_GPS:
         event->sequence = g_runtime.gps.sequence;
@@ -530,11 +508,27 @@ static int take_event(RenderEvent *event)
         g_runtime.frame_pending = 0;
         break;
     default:
-        (void)pthread_mutex_unlock(&g_runtime.lock);
         return 0;
     }
-    (void)pthread_mutex_unlock(&g_runtime.lock);
     return 1;
+}
+
+/* Blocks for the next event. Returns 1 with *event filled, 0 on stop (or an
+ * unknown event), 2 on poll timeout and -1 on error. */
+static int take_event(RenderEvent *event)
+{
+    unsigned int display = 0u;
+    RenderEventType type;
+    int result;
+
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    result = wait_for_event_locked();
+    if (result == 1) {
+        type = select_next_event_locked(&display);
+        result = pop_event_locked(type, display, event);
+    }
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+    return result;
 }
 
 static void increment_counter(uint32_t *counter)
