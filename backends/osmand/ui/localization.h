@@ -56,12 +56,20 @@ enum class Str {
     InDistance,       // printf %s: a formatted distance ("In 290 m")
     AddressPlace, AddressStreet, AddressBuilding, AddressIntersection,
     UnitMetre, UnitKilometre, UnitMinute, UnitHour,
+    Then,             // split-screen card: "Then" before the following turn
+    OpenNavigation,   // split-screen banner when no route is being guided
+    // Settlement kinds in search results (OSM place=city/town/village/...).
+    SettlementCity, SettlementTown, SettlementVillage, SettlementHamlet, SettlementSuburb,
     Count_
 };
 
 // The text for `key` in the current language (English when it has none).
 const char* tr(Str key) noexcept;
 const char* tr(Language language, Str key) noexcept;
+
+// The oblast of a map file key ("kharkiv" from Ukraine_kharkiv_europe_2.obf):
+// "Харківська обл." / "Kharkiv Oblast"; empty for an unknown key.
+std::string region_name(const std::string& file_key);
 
 const char* maneuver_action(ManeuverKind kind) noexcept;
 std::string roundabout_exit_text(int exit);

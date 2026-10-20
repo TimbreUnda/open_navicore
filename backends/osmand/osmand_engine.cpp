@@ -60,13 +60,20 @@ public:
                     std::shared_ptr<Wakeup>) override;
     FrameResult frame(const OpenNaviBackendRenderTargetV1&) override;
     int gps(const OpenNaviBackendGpsV1&) override;
-    void visibility(const OpenNaviBackendVisibilityV1& event) override;
+    void visibility(const OpenNaviBackendVisibilityV2& event) override;
+    // HMI split screen (Media screen block) from the latest visibility.
+    void apply_split();
     void screen(const OpenNaviBackendScreenV1& event) override;
     void vehicle(const OpenNaviBackendVehicleV2& event) override;
     void internationalization(const OpenNaviBackendInternationalizationV1& event) override;
     void cluster_display(const OpenNaviBackendClusterDisplayV1& event) override;
     void driver_distraction(const OpenNaviBackendDriverDistractionV1& event) override;
     void set_outbound(const OpenNaviBackendServicesV2* services) override { outbound_ = services; }
+    void set_guidance_outbound(const OpenNaviBackendServicesV3* services) override
+    {
+        guidance_outbound_ = services;
+    }
+    void guidance_stop(const OpenNaviBackendGuidanceStopV1& event) override;
     int pointer(const OpenNaviBackendPointerV2&) override;
     ReleaseResult release(ReleaseMode) override;
 
@@ -81,6 +88,11 @@ private:
     void check_off_route(const ui::GuidanceState& state, const ui::GeoPoint& position);
     bool update_guidance();
     bool ensure_navigation_worker();
+    // Where the car is, for search, routes and the map: the position the
+    // car's GPS service reports (its own last known one included), else the
+    // last one seen since start, else Kyiv.
+    ui::GeoPoint current_location() const;
+    std::chrono::milliseconds search_debounce() const;
     void advance_benchmark_autostart();
     // Drains UI map commands, advances the car camera and applies the pose to
     // the renderer. Returns true while the camera still needs frames.
@@ -134,12 +146,18 @@ private:
     // Platform inputs, raw (meanings not qualified): kept for the
     // developer menu and traced when they change; nothing acts on them.
     template <typename T> struct Raw { T value{}; bool has = false; };
-    Raw<OpenNaviBackendVisibilityV1> visibility_in_;
+    Raw<OpenNaviBackendVisibilityV2> visibility_in_;
     Raw<OpenNaviBackendScreenV1> screen_in_;
     Raw<OpenNaviBackendVehicleV2> vehicle_in_;
     Raw<OpenNaviBackendInternationalizationV1> language_in_;
     Raw<OpenNaviBackendClusterDisplayV1> cluster_display_in_;
     Raw<OpenNaviBackendDriverDistractionV1> distraction_in_;
+    // Route guidance on/off for the platform (backend V6), published when
+    // it changes; nv_navigation polls it about once a second.
+    const OpenNaviBackendServicesV3* guidance_outbound_ = nullptr;
+    void publish_guidance_state();
+    bool guidance_state_published_ = false;
+    bool guidance_state_last_ = false;
     // Instrument cluster: the guidance state in the recovered cluster
     // fields, published on change (at most twice a second).
     const OpenNaviBackendServicesV2* outbound_ = nullptr;
@@ -189,6 +207,7 @@ private:
     double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
     OpenNaviBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
+    ui::GeoPoint last_location_{50.4501, 30.5234};
     bool gps_state_observed_ = false;
     bool last_logged_gps_valid_ = false;
     bool gps_dirty_ = false;
@@ -407,7 +426,7 @@ bool OsmAndEngine::initialize(const Config& config,
     renderer_->setConfiguration(configuration);
     resize(target);
     renderer_->setTarget(OsmAnd::Utilities::convertLatLonTo31(
-        OsmAnd::LatLon(50.4501, 30.5234)));
+        OsmAnd::LatLon(last_location_.latitude, last_location_.longitude)));
     renderer_->setZoom(13.5f);
     renderer_->setAzimuth(0.0f);
     renderer_->setElevationAngle(90.0f);
@@ -449,6 +468,7 @@ bool OsmAndEngine::initialize(const Config& config,
     view_ = std::unique_ptr<ui::NavigationView>(
         new ui::NavigationView(*navigation_, target.width, target.height));
     trace("init=view");
+    apply_split();
     const QByteArray routing_xml = resources_->getResource(
         QStringLiteral("routing/routing.xml"), &resource_ok);
     if (!resource_ok || routing_xml.isEmpty())
@@ -744,6 +764,11 @@ bool OsmAndEngine::apply_camera()
         camera_.set_maneuver(turn, guidance.distance_to_maneuver_metres, tight);
     }
     const auto vehicle = motion_.predict(now_s);
+    if (!vehicle.valid) {
+        // No fix: the map rests where the car is believed to be.
+        const auto here = current_location();
+        camera_.set_resting_location(here.latitude, here.longitude);
+    }
     const auto pose = camera_.update(vehicle, dt);
     vector_view_.tile_zoom_limit = pose.tile_zoom;
     const bool changed = !pose_applied_ ||
@@ -883,10 +908,31 @@ std::string printf_string(const char* format, ...)
 }
 } // namespace
 
-void OsmAndEngine::visibility(const OpenNaviBackendVisibilityV1& event)
+void OsmAndEngine::visibility(const OpenNaviBackendVisibilityV2& event)
 {
     visibility_in_ = {event, true};
     trace_result("input=visibility", event.visibility, event.interactivity);
+    trace_result("input=visibility_area",
+                 static_cast<std::uint64_t>(static_cast<std::uint32_t>(event.area_x)) << 32 |
+                     static_cast<std::uint32_t>(event.area_y),
+                 static_cast<std::size_t>(event.area_width) << 16 | event.area_height);
+    apply_split();
+}
+
+void OsmAndEngine::apply_split()
+{
+    if (!view_ || !visibility_in_.has)
+        return;
+    const auto& event = visibility_in_.value;
+    const bool split = event.visibility == OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN &&
+                       event.area_width > 0 && event.area_height > 0;
+    ui::NavigationView::MapArea area;
+    area.x = event.area_x;
+    area.y = event.area_y;
+    area.width = static_cast<int>(std::min<std::uint32_t>(event.area_width, INT32_MAX));
+    area.height = static_cast<int>(std::min<std::uint32_t>(event.area_height, INT32_MAX));
+    if (view_->set_split_area(split, area))
+        trace_result("ui=split_layout", view_->split() ? 1u : 0u, 0u);
 }
 
 void OsmAndEngine::screen(const OpenNaviBackendScreenV1& event)
@@ -926,6 +972,34 @@ void OsmAndEngine::driver_distraction(const OpenNaviBackendDriverDistractionV1& 
         trace_result("input=driver_distraction", event.distraction_status_raw, 0u);
 }
 
+// The platform asks to end guidance (nv_navigation requestGuidanceStop, e.g.
+// when a phone projection takes navigation focus): the same transition as
+// the End button, published at once.
+void OsmAndEngine::guidance_stop(const OpenNaviBackendGuidanceStopV1& event)
+{
+    const bool ended = view_ && view_->end_guidance();
+    trace_result("input=guidance_stop", event.request_handle, ended ? 1u : 0u);
+    publish_guidance_state();
+}
+
+void OsmAndEngine::publish_guidance_state()
+{
+    if (!guidance_outbound_ || !guidance_outbound_->publish_guidance_state)
+        return;
+    const bool guiding = navigation_ && navigation_->screen() == ui::Screen::Guidance;
+    if (guidance_state_published_ && guiding == guidance_state_last_)
+        return;
+    OpenNaviBackendGuidanceStateV1 state{};
+    state.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+    state.struct_size = sizeof(state);
+    state.guiding = guiding ? OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE : OPEN_NAVI_BACKEND_GUIDANCE_IDLE;
+    const uint32_t status = guidance_outbound_->publish_guidance_state(
+        guidance_outbound_->v2.v1.runtime_context, &state);
+    guidance_state_published_ = true;
+    guidance_state_last_ = guiding;
+    trace_result("guidance=publish_state", state.guiding, status);
+}
+
 // Instrument cluster: published on change, at most twice a second
 // (payload rules in cluster_payload.cpp).
 void OsmAndEngine::publish_cluster()
@@ -947,6 +1021,12 @@ void OsmAndEngine::publish_cluster()
     ClusterPayload payload = build_cluster_payload(inputs);
     if (cluster_published_ && payload.same_as(cluster_last_))
         return;
+    // A new road text alone does not redraw the cluster: send it once with
+    // a neighbouring symbol; the next publication (500 ms on) restores the
+    // real symbol, which redraws again with the new text.
+    if (cluster_published_ && apply_text_redraw(payload, cluster_last_))
+        trace_result("cluster=text_redraw", payload.cluster.route_guidance_symbol,
+                     cluster_last_.cluster.route_guidance_symbol);
     const uint32_t status =
         outbound_->publish_cluster(outbound_->v1.runtime_context, &payload.cluster);
     cluster_last_ = std::move(payload);
@@ -1364,6 +1444,23 @@ void OsmAndEngine::update_pin_marker()
     view_->set_pin_marker(visible, screen.x, screen.y);
 }
 
+ui::GeoPoint OsmAndEngine::current_location() const
+{
+    if (has_valid_position_)
+        return {static_cast<double>(latest_gps_.latitude_e7) / 1e7,
+                static_cast<double>(latest_gps_.longitude_e7) / 1e7};
+    return last_location_;
+}
+
+
+// Quiet time after the last key before searching: the index answers in
+// milliseconds, so results follow the typing; OsmAnd's search takes seconds.
+std::chrono::milliseconds OsmAndEngine::search_debounce() const
+{
+    const bool fast = navigation_worker_ && navigation_worker_->has_search_index();
+    return std::chrono::milliseconds(fast ? 200 : 500);
+}
+
 bool OsmAndEngine::ensure_navigation_worker()
 {
     if (navigation_worker_)
@@ -1374,7 +1471,8 @@ bool OsmAndEngine::ensure_navigation_worker()
         trace("worker=create");
         navigation_worker_ = std::unique_ptr<NavigationWorker>(
             new NavigationWorker(obfs_, navigation_wakeup_, navigation_maps_,
-                                 navigation_routing_xml_));
+                                 navigation_routing_xml_, config_.search_index,
+                                 config_.ch_sidecar));
         trace("worker=ready");
         return true;
     } catch (...) {
@@ -1619,8 +1717,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
             search_revision_observed_at_ = now;
             search_revision_observed_ = true;
         } else if (revision != submitted_search_revision_ &&
-                   now - search_revision_observed_at_ >=
-                       std::chrono::milliseconds(500)) {
+                   now - search_revision_observed_at_ >= search_debounce()) {
             submitted_search_revision_ = revision;
             if (!navigation_->query().empty()) {
             trace_result("engine=search_submit", submitted_search_revision_,
@@ -1632,8 +1729,12 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
                     (void)view_->apply_search_results(
                         submitted_search_revision_, std::move(seeded));
                 } else if (ensure_navigation_worker()) {
+                std::vector<ui::GeoPoint> recent;
+                for (const auto& r : navigation_->recents())
+                    recent.push_back({r.latitude, r.longitude});
                 navigation_worker_->submit_search(submitted_search_revision_,
-                                                   navigation_->query());
+                                                   navigation_->query(), current_location(),
+                                                   std::move(recent));
                 }
             }
         }
@@ -1649,18 +1750,13 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         submitted_route_revision_ = navigation_->route_revision();
         trace_result("engine=route_submit", submitted_route_revision_, 1u);
         if (ensure_navigation_worker()) {
-            ui::GeoPoint origin{50.4501, 30.5234};
-            if (has_valid_position_) {
-                origin.latitude = static_cast<double>(latest_gps_.latitude_e7) /
-                                  10000000.0;
-                origin.longitude = static_cast<double>(latest_gps_.longitude_e7) /
-                                   10000000.0;
-            }
             navigation_worker_->submit_route(submitted_route_revision_,
-                                              *navigation_->destination(), origin, true);
+                                              *navigation_->destination(), current_location(),
+                                              true);
         }
     }
     advance_benchmark_autostart();
+    publish_guidance_state();
     publish_cluster();
     update_dev_menu();
     // Recents change only on guidance start; save outside the hot path.
@@ -1844,6 +1940,7 @@ int OsmAndEngine::gps(const OpenNaviBackendGpsV1& event)
 {
     latest_gps_ = event;
     has_valid_position_ = valid_coordinates(event);
+    if (has_valid_position_) last_location_ = current_location();
     gps_dirty_ = true;
     gps_times_[gps_time_next_] = std::chrono::steady_clock::now();
     gps_time_next_ = (gps_time_next_ + 1) % gps_times_.size();
@@ -1875,6 +1972,19 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         return ReleaseResult::Quarantined;
     }
     if (phase_ == Phase::Ready) {
+        // Guidance ends with this engine: tell the platform while the
+        // services are still current (stale after stop: ignored).
+        if (guidance_state_published_ && guidance_state_last_ && guidance_outbound_ &&
+            guidance_outbound_->publish_guidance_state) {
+            OpenNaviBackendGuidanceStateV1 state{};
+            state.abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+            state.struct_size = sizeof(state);
+            state.guiding = OPEN_NAVI_BACKEND_GUIDANCE_IDLE;
+            (void)guidance_outbound_->publish_guidance_state(
+                guidance_outbound_->v2.v1.runtime_context, &state);
+        }
+        guidance_state_published_ = false;
+        guidance_state_last_ = false;
         // Set the failure state BEFORE invoking dependency code that may throw
         // or fail after tearing down only part of the resource graph.
         phase_ = Phase::Quarantined;

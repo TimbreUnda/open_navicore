@@ -918,3 +918,10 @@ int open_navi_renderer_platform_poll_pointer(OpenNaviBackendPointerV2 *pointer_o
         return open_navi_screen_input_platform_result(decoded);
     }
 }
+
+void open_navi_renderer_platform_window_origin(int32_t *x, int32_t *y)
+{
+    /* NAV_main is placed at the content origin between the HMI chrome. */
+    if (x != NULL) *x = OPEN_NAVI_CONTENT_X;
+    if (y != NULL) *y = OPEN_NAVI_CONTENT_Y;
+}

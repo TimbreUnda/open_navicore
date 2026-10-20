@@ -31,14 +31,15 @@ typedef enum {
     RENDER_EVENT_CLUSTER_DISPLAY = 8,
     RENDER_EVENT_DRIVER_DISTRACTION = 9,
     RENDER_EVENT_POINTER = 10,
-    RENDER_EVENT_FRAME = 11
+    RENDER_EVENT_FRAME = 11,
+    RENDER_EVENT_GUIDANCE_STOP = 12
 } RenderEventType;
 
 typedef struct {
     uint64_t sequence;
     RenderEventType type;
     union {
-        OpenNaviBackendVisibilityV1 visibility;
+        OpenNaviBackendVisibilityV2 visibility;  /* V1 prefix unless window area */
         OpenNaviBackendScreenV1 screen;
         OpenNaviBackendGpsV1 gps;
         OpenNaviBackendVehicleV2 vehicle;
@@ -47,6 +48,7 @@ typedef struct {
         OpenNaviBackendInternationalizationV1 internationalization;
         OpenNaviBackendClusterDisplayV1 cluster_display;
         OpenNaviBackendDriverDistractionV1 driver_distraction;
+        OpenNaviBackendGuidanceStopV1 guidance_stop;
         OpenNaviBackendPointerV2 pointer;  /* V1 backends get a V1 copy */
     } data;
 } RenderEvent;
@@ -61,7 +63,7 @@ typedef enum {
 typedef struct {
     int pending;
     uint64_t sequence;
-    OpenNaviBackendVisibilityV1 value;
+    OpenNaviBackendVisibilityV2 value;  /* V1 header; area for V2 plugins */
 } VisibilitySlot;
 
 typedef struct {
@@ -113,6 +115,12 @@ typedef struct {
 } DriverDistractionSlot;
 
 typedef struct {
+    int pending;
+    uint64_t sequence;
+    OpenNaviBackendGuidanceStopV1 value;
+} GuidanceStopSlot;
+
+typedef struct {
     pthread_mutex_t lock;
     pthread_cond_t condition;
     pthread_t thread;
@@ -136,12 +144,14 @@ typedef struct {
     OpenNaviBackendV3 installed_v3;
     OpenNaviBackendV4 installed_v4;
     OpenNaviBackendV5 installed_v5;
+    OpenNaviBackendV6 installed_v6;
     uint32_t installed_version;
     OpenNaviBackendV1 active;
     OpenNaviBackendV2 active_v2;
     OpenNaviBackendV3 active_v3;
     OpenNaviBackendV4 active_v4;
     OpenNaviBackendV5 active_v5;
+    OpenNaviBackendV6 active_v6;
     uint32_t active_version;
     OpenNaviBackendRenderTargetV1 target;
     VisibilitySlot visibility[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
@@ -153,6 +163,7 @@ typedef struct {
     InternationalizationSlot internationalization;
     ClusterDisplaySlot cluster_display;
     DriverDistractionSlot driver_distraction;
+    GuidanceStopSlot guidance_stop;
     RenderEvent pointer_queue[OPEN_NAVI_POINTER_QUEUE_CAPACITY];
     unsigned int pointer_head;
     unsigned int pointer_count;
@@ -164,6 +175,7 @@ typedef struct {
     uint32_t pointer_move_evicted;
     uint32_t pointer_gesture_pairs_evicted;
     int pointer_contacts;
+    int window_area;
     uint32_t platform_ignored;
     uint32_t platform_errors;
     uint32_t platform_window_lost;
@@ -186,6 +198,8 @@ extern uint32_t open_navi_service_publish_audio_availability(
     const OpenNaviBackendAudioAvailabilityV1 *audio) __attribute__((weak));
 extern uint32_t open_navi_service_publish_thread_status(
     const OpenNaviBackendThreadStatusV1 *thread_status) __attribute__((weak));
+extern uint32_t open_navi_service_publish_guidance_state(
+    const OpenNaviBackendGuidanceStateV1 *guidance) __attribute__((weak));
 #else
 extern uint32_t open_navi_service_publish_cluster(
     const OpenNaviBackendClusterV1 *cluster);
@@ -193,6 +207,8 @@ extern uint32_t open_navi_service_publish_audio_availability(
     const OpenNaviBackendAudioAvailabilityV1 *audio);
 extern uint32_t open_navi_service_publish_thread_status(
     const OpenNaviBackendThreadStatusV1 *thread_status);
+extern uint32_t open_navi_service_publish_guidance_state(
+    const OpenNaviBackendGuidanceStateV1 *guidance);
 #endif
 
 static void initialize_condition(void)
@@ -262,6 +278,7 @@ static int event_available_locked(void)
         g_runtime.internationalization.pending != 0 ||
         g_runtime.cluster_display.pending != 0 ||
         g_runtime.driver_distraction.pending != 0 ||
+        g_runtime.guidance_stop.pending != 0 ||
         g_runtime.frame_pending != 0) return 1;
     for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
         if (g_runtime.visibility[display].pending != 0 ||
@@ -335,6 +352,16 @@ static uint32_t service_publish_thread_status(
     if (open_navi_service_publish_thread_status == NULL)
         return OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
     return open_navi_service_publish_thread_status(thread_status);
+}
+
+static uint32_t service_publish_guidance_state(
+    void *runtime_context, const OpenNaviBackendGuidanceStateV1 *guidance)
+{
+    if (!outbound_service_current(runtime_context))
+        return OPEN_NAVI_BACKEND_SERVICE_STALE;
+    if (open_navi_service_publish_guidance_state == NULL)
+        return OPEN_NAVI_BACKEND_SERVICE_UNAVAILABLE;
+    return open_navi_service_publish_guidance_state(guidance);
 }
 
 static int take_event(RenderEvent *event)
@@ -426,6 +453,11 @@ static int take_event(RenderEvent *event)
         selected = g_runtime.driver_distraction.sequence;
         type = RENDER_EVENT_DRIVER_DISTRACTION;
     }
+    if (g_runtime.guidance_stop.pending != 0 &&
+        g_runtime.guidance_stop.sequence < selected) {
+        selected = g_runtime.guidance_stop.sequence;
+        type = RENDER_EVENT_GUIDANCE_STOP;
+    }
     if (g_runtime.frame_pending != 0 &&
         g_runtime.frame_event_sequence < selected) {
         type = RENDER_EVENT_FRAME;
@@ -487,6 +519,11 @@ static int take_event(RenderEvent *event)
         event->sequence = g_runtime.driver_distraction.sequence;
         event->data.driver_distraction = g_runtime.driver_distraction.value;
         g_runtime.driver_distraction.pending = 0;
+        break;
+    case RENDER_EVENT_GUIDANCE_STOP:
+        event->sequence = g_runtime.guidance_stop.sequence;
+        event->data.guidance_stop = g_runtime.guidance_stop.value;
+        g_runtime.guidance_stop.pending = 0;
         break;
     case RENDER_EVENT_FRAME:
         event->sequence = g_runtime.frame_event_sequence;
@@ -668,13 +705,21 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
     OpenNaviBackendV2 backend_v2 = g_runtime.active_v2;
     OpenNaviBackendV4 backend_v4 = g_runtime.active_v4;
     OpenNaviBackendV5 backend_v5 = g_runtime.active_v5;
+    OpenNaviBackendV6 backend_v6 = g_runtime.active_v6;
     int request_render = event->type != RENDER_EVENT_FRAME;
 
     switch (event->type) {
     case RENDER_EVENT_VISIBILITY:
-        if (backend.visibility_changed != NULL)
-            (void)backend.visibility_changed(backend.backend_context,
-                                             &event->data.visibility);
+        if (backend.visibility_changed != NULL) {
+            OpenNaviBackendVisibilityV2 visibility = event->data.visibility;
+            if (g_runtime.window_area != 0) {
+                visibility.abi_version = OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2;
+                visibility.struct_size = sizeof(visibility);
+            }
+            (void)backend.visibility_changed(
+                backend.backend_context,
+                (const OpenNaviBackendVisibilityV1 *)&visibility);
+        }
         break;
     case RENDER_EVENT_SCREEN:
         if (backend.screen_changed != NULL)
@@ -690,7 +735,8 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
         if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
+             (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6)) &&
             backend_v2.vehicle_changed != NULL) {
             (void)backend_v2.vehicle_changed(
                 backend.backend_context, &event->data.vehicle);
@@ -700,7 +746,8 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
         if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
+             (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6)) &&
             backend_v2.gps_interval_changed != NULL) {
             (void)backend_v2.gps_interval_changed(
                 backend.backend_context, &event->data.gps_interval);
@@ -710,7 +757,8 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
         if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
+             (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6)) &&
             backend_v2.audio_changed != NULL) {
             (void)backend_v2.audio_changed(
                 backend.backend_context, &event->data.audio);
@@ -718,7 +766,8 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
         break;
     case RENDER_EVENT_INTERNATIONALIZATION:
         if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
+             (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6)) &&
             backend_v4.internationalization_changed != NULL) {
             (void)backend_v4.internationalization_changed(
                 backend.backend_context,
@@ -727,18 +776,27 @@ static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
         break;
     case RENDER_EVENT_CLUSTER_DISPLAY:
         if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5) &&
+             (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+              g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6)) &&
             backend_v4.cluster_display_changed != NULL) {
             (void)backend_v4.cluster_display_changed(
                 backend.backend_context, &event->data.cluster_display);
         }
         break;
     case RENDER_EVENT_DRIVER_DISTRACTION:
-        if (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 &&
+        if ((g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6) &&
             backend_v5.driver_distraction_changed != NULL) {
             (void)backend_v5.driver_distraction_changed(
                 backend.backend_context,
                 &event->data.driver_distraction);
+        }
+        break;
+    case RENDER_EVENT_GUIDANCE_STOP:
+        if (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6 &&
+            backend_v6.guidance_stop_requested != NULL) {
+            (void)backend_v6.guidance_stop_requested(
+                backend.backend_context, &event->data.guidance_stop);
         }
         break;
     case RENDER_EVENT_POINTER:
@@ -820,6 +878,7 @@ static void *renderer_thread(void *unused)
 {
     OpenNaviBackendServicesV1 services;
     OpenNaviBackendServicesV2 services_v2;
+    OpenNaviBackendServicesV3 services_v3;
     RenderEvent event;
     uintptr_t service_token;
     int status;
@@ -845,10 +904,20 @@ static void *renderer_thread(void *unused)
         service_publish_audio_availability;
     services_v2.publish_thread_status = service_publish_thread_status;
 
+    services_v3.v2 = services_v2;
+    services_v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V3;
+    services_v3.v2.v1.struct_size = sizeof(services_v3);
+    services_v3.publish_guidance_state = service_publish_guidance_state;
+
     status = open_navi_renderer_platform_create(&g_runtime.target,
                                            g_runtime.diagnostic,
                                            sizeof(g_runtime.diagnostic));
     if (status == 0 &&
+        g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6) {
+        status = g_runtime.active_v6.start_v3(
+            g_runtime.active.backend_context, &services_v3);
+        if (status == 0) started = 1;
+    } else if (status == 0 &&
         (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
          g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
          g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5)) {
@@ -865,7 +934,8 @@ static void *renderer_thread(void *unused)
     if (status == 0 &&
         (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
          g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5)) {
+         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6)) {
         (void)pthread_mutex_lock(&g_runtime.lock);
         if (g_runtime.state == RENDERER_STARTING && g_runtime.stop == 0)
             g_runtime.outbound_services_active = 1;
@@ -898,7 +968,8 @@ static void *renderer_thread(void *unused)
         g_runtime.outbound_services_active =
             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
             g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5;
+            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
     } else {
         if (status == 0) status = OPEN_NAVI_RENDERER_CANCELLED;
         g_runtime.stop = 1;
@@ -962,6 +1033,8 @@ static void *renderer_thread(void *unused)
                sizeof(g_runtime.cluster_display));
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
+        memset(&g_runtime.guidance_stop, 0,
+               sizeof(g_runtime.guidance_stop));
         g_runtime.pointer_head = 0u;
         g_runtime.pointer_count = 0u;
         g_runtime.frame_pending = 0;
@@ -985,6 +1058,18 @@ static void *renderer_thread(void *unused)
     (void)pthread_cond_broadcast(&g_runtime.condition);
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return NULL;
+}
+
+int open_navi_renderer_set_window_area(int enabled)
+{
+    int result = 0;
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    if (g_runtime.state != RENDERER_COLD)
+        result = -1;
+    else
+        g_runtime.window_area = enabled != 0;
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+    return result;
 }
 
 int open_navi_renderer_set_pointer_contacts(int enabled)
@@ -1110,6 +1195,8 @@ int open_navi_backend_install_v4(const OpenNaviBackendV4 *backend)
                sizeof(g_runtime.cluster_display));
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
+        memset(&g_runtime.guidance_stop, 0,
+               sizeof(g_runtime.guidance_stop));
         g_runtime.installed_version = 0u;
     } else if (backend->v3.v2.v1.abi_version != OPEN_NAVI_BACKEND_ABI_V4 ||
                backend->v3.v2.v1.struct_size < sizeof(OpenNaviBackendV4) ||
@@ -1129,6 +1216,8 @@ int open_navi_backend_install_v4(const OpenNaviBackendV4 *backend)
                sizeof(g_runtime.cluster_display));
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
+        memset(&g_runtime.guidance_stop, 0,
+               sizeof(g_runtime.guidance_stop));
         g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V4;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
@@ -1156,6 +1245,8 @@ int open_navi_backend_install_v5(const OpenNaviBackendV5 *backend)
                sizeof(g_runtime.cluster_display));
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
+        memset(&g_runtime.guidance_stop, 0,
+               sizeof(g_runtime.guidance_stop));
         g_runtime.installed_version = 0u;
     } else if (backend->v4.v3.v2.v1.abi_version !=
                    OPEN_NAVI_BACKEND_ABI_V5 ||
@@ -1177,7 +1268,53 @@ int open_navi_backend_install_v5(const OpenNaviBackendV5 *backend)
                sizeof(g_runtime.cluster_display));
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
+        memset(&g_runtime.guidance_stop, 0,
+               sizeof(g_runtime.guidance_stop));
         g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V5;
+    }
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+    return result;
+}
+
+int open_navi_backend_install_v6(const OpenNaviBackendV6 *backend)
+{
+    int result;
+    if (backend != NULL &&
+        (backend->v5.v4.v3.v2.v1.abi_version != OPEN_NAVI_BACKEND_ABI_V6 ||
+         backend->v5.v4.v3.v2.v1.struct_size < sizeof(OpenNaviBackendV6) ||
+         backend->start_v3 == NULL))
+        return -2;
+    if (backend == NULL) {
+        result = open_navi_backend_install_v5(NULL);
+        if (result == 0) {
+            (void)pthread_mutex_lock(&g_runtime.lock);
+            memset(&g_runtime.installed_v6, 0, sizeof(g_runtime.installed_v6));
+            (void)pthread_mutex_unlock(&g_runtime.lock);
+        }
+        return result;
+    }
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    if (g_runtime.state != RENDERER_COLD) {
+        result = -1;
+    } else {
+        g_runtime.installed = backend->v5.v4.v3.v2.v1;
+        g_runtime.installed_v2 = backend->v5.v4.v3.v2;
+        g_runtime.installed_v3 = backend->v5.v4.v3;
+        g_runtime.installed_v4 = backend->v5.v4;
+        g_runtime.installed_v5 = backend->v5;
+        g_runtime.installed_v6 = *backend;
+        memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
+        memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
+        memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
+        memset(&g_runtime.internationalization, 0,
+               sizeof(g_runtime.internationalization));
+        memset(&g_runtime.cluster_display, 0,
+               sizeof(g_runtime.cluster_display));
+        memset(&g_runtime.driver_distraction, 0,
+               sizeof(g_runtime.driver_distraction));
+        memset(&g_runtime.guidance_stop, 0, sizeof(g_runtime.guidance_stop));
+        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V6;
+        result = 0;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
@@ -1203,6 +1340,8 @@ void open_navi_renderer_prepare_lifecycle(void)
            sizeof(g_runtime.cluster_display));
     memset(&g_runtime.driver_distraction, 0,
            sizeof(g_runtime.driver_distraction));
+    memset(&g_runtime.guidance_stop, 0,
+           sizeof(g_runtime.guidance_stop));
     g_runtime.pointer_head = 0u;
     g_runtime.pointer_count = 0u;
     g_runtime.pointer_accepted = 0u;
@@ -1240,6 +1379,8 @@ void open_navi_renderer_end_lifecycle(void)
            sizeof(g_runtime.cluster_display));
     memset(&g_runtime.driver_distraction, 0,
            sizeof(g_runtime.driver_distraction));
+    memset(&g_runtime.guidance_stop, 0,
+           sizeof(g_runtime.guidance_stop));
     g_runtime.pointer_head = 0u;
     g_runtime.pointer_count = 0u;
     g_runtime.frame_pending = 0;
@@ -1287,6 +1428,8 @@ int open_navi_renderer_create(char *diagnostic, size_t diagnostic_capacity)
                sizeof(g_runtime.cluster_display));
         memset(&g_runtime.driver_distraction, 0,
                sizeof(g_runtime.driver_distraction));
+        memset(&g_runtime.guidance_stop, 0,
+               sizeof(g_runtime.guidance_stop));
         g_runtime.pointer_head = 0u;
         g_runtime.pointer_count = 0u;
     }
@@ -1303,8 +1446,17 @@ int open_navi_renderer_create(char *diagnostic, size_t diagnostic_capacity)
     memset(&g_runtime.active_v3, 0, sizeof(g_runtime.active_v3));
     memset(&g_runtime.active_v4, 0, sizeof(g_runtime.active_v4));
     memset(&g_runtime.active_v5, 0, sizeof(g_runtime.active_v5));
+    memset(&g_runtime.active_v6, 0, sizeof(g_runtime.active_v6));
     g_runtime.outbound_services_active = 0;
-    if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5) {
+    if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6) {
+        g_runtime.active = g_runtime.installed_v6.v5.v4.v3.v2.v1;
+        g_runtime.active_v2 = g_runtime.installed_v6.v5.v4.v3.v2;
+        g_runtime.active_v3 = g_runtime.installed_v6.v5.v4.v3;
+        g_runtime.active_v4 = g_runtime.installed_v6.v5.v4;
+        g_runtime.active_v5 = g_runtime.installed_v6.v5;
+        g_runtime.active_v6 = g_runtime.installed_v6;
+        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V6;
+    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5) {
         g_runtime.active = g_runtime.installed_v5.v4.v3.v2.v1;
         g_runtime.active_v2 = g_runtime.installed_v5.v4.v3.v2;
         g_runtime.active_v3 = g_runtime.installed_v5.v4.v3;
@@ -1427,6 +1579,56 @@ void open_navi_renderer_destroy(void)
 int open_navi_renderer_notify_visibility(uint32_t display, uint32_t visibility,
                                     uint32_t interactivity)
 {
+    return open_navi_renderer_notify_visibility_area(display, visibility,
+                                                     interactivity, NULL);
+}
+
+/* points: the native window attribute, four (x, y) float pairs in window
+ * pixels (corner order not recovered, so only their bounding box is used);
+ * NULL or a non-finite / empty box leaves the area empty. */
+/* Nearest integer without libm (the provider links no math library). */
+static int32_t round_to_int(float value)
+{
+    return (int32_t)(value >= 0.0f ? value + 0.5f : value - 0.5f);
+}
+
+static void window_area_from_points(const float *points,
+                                    OpenNaviBackendVisibilityV2 *value)
+{
+    float min_x, min_y, max_x, max_y;
+    int32_t origin_x = 0, origin_y = 0;
+    unsigned int index;
+
+    value->area_x = 0;
+    value->area_y = 0;
+    value->area_width = 0u;
+    value->area_height = 0u;
+    if (points == NULL) return;
+    min_x = max_x = points[0];
+    min_y = max_y = points[1];
+    for (index = 0u; index < 4u; ++index) {
+        const float x = points[index * 2u];
+        const float y = points[index * 2u + 1u];
+        if (!(x > -65536.0f && x < 65536.0f && y > -65536.0f && y < 65536.0f))
+            return;
+        if (x < min_x) min_x = x;
+        if (x > max_x) max_x = x;
+        if (y < min_y) min_y = y;
+        if (y > max_y) max_y = y;
+    }
+    if (max_x - min_x < 1.0f || max_y - min_y < 1.0f) return;
+    open_navi_renderer_platform_window_origin(&origin_x, &origin_y);
+    value->area_x = round_to_int(min_x) - origin_x;
+    value->area_y = round_to_int(min_y) - origin_y;
+    value->area_width = (uint32_t)round_to_int(max_x - min_x);
+    value->area_height = (uint32_t)round_to_int(max_y - min_y);
+}
+
+int open_navi_renderer_notify_visibility_area(uint32_t display,
+                                              uint32_t visibility,
+                                              uint32_t interactivity,
+                                              const float *points)
+{
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (display >= OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
@@ -1439,10 +1641,11 @@ int open_navi_renderer_notify_visibility(uint32_t display, uint32_t visibility,
     } else {
         VisibilitySlot *slot = &g_runtime.visibility[display];
         slot->value.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
-        slot->value.struct_size = sizeof(slot->value);
+        slot->value.struct_size = sizeof(OpenNaviBackendVisibilityV1);
         slot->value.display = display;
         slot->value.visibility = visibility;
         slot->value.interactivity = interactivity;
+        window_area_from_points(points, &slot->value);
         slot->sequence = next_event_sequence_locked();
         slot->pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
@@ -1527,12 +1730,14 @@ static int renderer_v2_enabled_locked(void)
         return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
                g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
                g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5;
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
     }
     return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V2 ||
            g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V3 ||
            g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5;
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6;
 }
 
 static int renderer_v4_enabled_locked(void)
@@ -1540,17 +1745,29 @@ static int renderer_v4_enabled_locked(void)
     if (g_runtime.state == RENDERER_STARTING ||
         g_runtime.state == RENDERER_RUNNING)
         return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5;
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
     return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5;
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6;
 }
 
 static int renderer_v5_enabled_locked(void)
 {
     if (g_runtime.state == RENDERER_STARTING ||
         g_runtime.state == RENDERER_RUNNING)
-        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5;
-    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5;
+        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
+    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5 ||
+           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6;
+}
+
+static int renderer_v6_enabled_locked(void)
+{
+    if (g_runtime.state == RENDERER_STARTING ||
+        g_runtime.state == RENDERER_RUNNING)
+        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
+    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6;
 }
 
 static int notify_vehicle(uint32_t source_slot,
@@ -1764,6 +1981,32 @@ int open_navi_renderer_notify_driver_distraction(uint32_t source_slot,
     return result;
 }
 
+int open_navi_renderer_notify_guidance_stop(uint32_t source_slot,
+                                            uint32_t request_handle)
+{
+    OpenNaviBackendGuidanceStopV1 *event;
+    int result = 0;
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    if (g_runtime.accepting_state == 0 ||
+        g_runtime.state == RENDERER_STOPPING) {
+        result = -1;
+    } else if (renderer_v6_enabled_locked() == 0) {
+        result = 1;
+    } else {
+        event = &g_runtime.guidance_stop.value;
+        memset(event, 0, sizeof(*event));
+        event->abi_version = OPEN_NAVI_BACKEND_PAYLOAD_ABI_V1;
+        event->struct_size = sizeof(*event);
+        event->source_slot = source_slot;
+        event->request_handle = request_handle;
+        g_runtime.guidance_stop.sequence = next_event_sequence_locked();
+        g_runtime.guidance_stop.pending = 1;
+        (void)pthread_cond_signal(&g_runtime.condition);
+    }
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+    return result;
+}
+
 #if defined(OPEN_NAVI_TESTING)
 int open_navi_renderer_test_submit_pointer(uint32_t action, int32_t x, int32_t y,
                                       uint32_t buttons)
@@ -1850,7 +2093,8 @@ int open_navi_renderer_test_pending_visibility(
     if (display < OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
         pending = g_runtime.visibility[display].pending;
         if (pending != 0 && value_out != NULL)
-            *value_out = g_runtime.visibility[display].value;
+            memcpy(value_out, &g_runtime.visibility[display].value,
+                   sizeof(*value_out));
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return pending;

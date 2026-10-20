@@ -132,9 +132,10 @@ validates them. The OsmAnd plugin is backend V5 (query V4) and publishes the
 fields with recovered meanings from guidance (`cluster_payload.cpp`): route
 guidance state, navigation status, destination and manoeuvre distances with
 units, ETA and remaining time, the turn countdown bar, compass, speed limit
-and current/next road. It publishes no maneuver symbol and no lanes (not in
-the semantic mask). What the dashboard shows is still to be checked on the
-bus and the cluster.
+and current/next road, plus the maneuver symbol (live symbol table,
+2026-10-19; mapping in `docs/technical.md`). It publishes no lanes (not in
+the semantic mask). Live, the cluster's turn view draws only the symbol, the
+maneuver distance and one road text.
 
 ### Vehicle state, localization and distraction
 
@@ -201,7 +202,7 @@ architecture and resource-budget decision.
 | Route search and guidance in our canvas | Implemented; live qualification in progress | Complete bench and driven/simulated-route qualification |
 | Stock UI starts or edits our route | Hard restriction | Recover and qualify destination/route request contracts |
 | Spoken maneuver prompts | Hard restriction | Qualify PCM/TTS, audio focus and ducking contracts |
-| Cluster maneuver fields | Published (V5): recovered fields only, no symbol/lanes | Verify on the bus and the cluster |
+| Cluster maneuver fields | Published (V5): recovered fields and the live-mapped symbol, no lanes | Drive check of the OsmAnd mapping and the text-only redraw |
 | Arbitrary cluster graphics or map | Hard restriction | A different cluster graphics contract |
 | Automatic localization | API available, plugin gap | Upgrade to V4 and qualify raw locale mappings/fonts |
 | Driver-distraction lockouts | Received raw (V5), not acted on | Qualify the raw status live |

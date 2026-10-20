@@ -15,8 +15,8 @@ endif()
 
 # Navigation UI and guidance logic without OsmAnd (host-testable).
 add_library(navigation_ui STATIC
-  diagnostics.cpp guidance_tracker.cpp cluster_payload.cpp camera_controller.cpp
-  route_check.cpp label_geometry.cpp ui/compact_text.cpp ui/localization.cpp ui/navigation_model.cpp
+  diagnostics.cpp guidance_tracker.cpp cluster_payload.cpp junction_shape.cpp camera_controller.cpp
+  route_check.cpp label_geometry.cpp search/search_index.cpp ui/compact_text.cpp ui/localization.cpp ui/navigation_model.cpp
   ui/navigation_view.cpp ui/overlay_occupancy.cpp ui/recents_store.cpp)
 target_include_directories(navigation_ui PUBLIC ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(navigation_ui PUBLIC lvgl)
@@ -68,7 +68,7 @@ add_custom_target(build_info_git
   BYPRODUCTS ${_build_info} VERBATIM)
 
 add_library(osmand_backend SHARED
-  osmand_backend.cpp config.cpp session.cpp osmand_engine.cpp navigation_worker.cpp
+  osmand_backend.cpp config.cpp session.cpp osmand_engine.cpp navigation_worker.cpp ch_planner.cpp
   thread_priority.cpp crash_reporter.cpp frame_metrics.cpp build_info.cpp
   gpu_upload_context.cpp
   ui/gl_overlay_compositor.cpp
@@ -97,7 +97,7 @@ add_custom_command(TARGET osmand_backend POST_BUILD
 # link the core with a static libgcc) plus a dlopen launcher; both run from
 # /tmp on the radio against the /open-navicore libraries.
 add_library(route_bench SHARED ${ONC_ROOT}/deploy/bench/route_bench.cpp
-  ${ONC_ROOT}/deploy/bench/map_tags.cpp)
+  ${ONC_ROOT}/deploy/bench/map_tags.cpp ${ONC_ROOT}/backends/osmand/ch_planner.cpp)
 target_include_directories(route_bench PRIVATE ${ONC_OSMAND_INCLUDES})
 target_compile_definitions(route_bench PRIVATE ${ONC_OSMAND_DEFINES})
 target_compile_options(route_bench PRIVATE ${ONC_OSMAND_FLAGS} -w)

@@ -20,6 +20,7 @@ enum {
     OPEN_NAVI_BACKEND_ABI_V3 = 3u,
     OPEN_NAVI_BACKEND_ABI_V4 = 4u,
     OPEN_NAVI_BACKEND_ABI_V5 = 5u,
+    OPEN_NAVI_BACKEND_ABI_V6 = 6u,
     OPEN_NAVI_BACKEND_POINTER_PRESS = 1u,
     OPEN_NAVI_BACKEND_POINTER_RELEASE = 2u,
     OPEN_NAVI_BACKEND_POINTER_MOVE = 3u,
@@ -93,6 +94,33 @@ typedef struct {
     uint32_t interactivity;
 } OpenNaviBackendVisibilityV1;
 
+/* Visibility with the part of the window the HMI shows: the exact V1
+ * fields, then the bounding box of the four points of the native window
+ * attribute (SI_HMIIntegration slot 5, NAV +0x4c). Delivered through
+ * visibility_changed (abi_version OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2,
+ * struct_size the V2 size) only to a plugin that declares
+ * OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA; every other backend receives V1.
+ * The area is in window pixels (the attribute's display pixels less the
+ * window origin); area_width/area_height are 0 when the HMI gave no
+ * attribute. Seen on the bench: VISIBLE_SPLIT_SCREEN (19) on the Media
+ * screen with display 129,160 to 894,483, i.e. window 129,88 765x323 for
+ * NAV_main at 0,72. */
+enum {
+    OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2 = 2u,
+    OPEN_NAVI_BACKEND_HMI_VISIBLE_SPLIT_SCREEN = 19u
+};
+typedef struct {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t display;
+    uint32_t visibility;
+    uint32_t interactivity;
+    int32_t area_x;
+    int32_t area_y;
+    uint32_t area_width;
+    uint32_t area_height;
+} OpenNaviBackendVisibilityV2;
+
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;
@@ -165,7 +193,11 @@ typedef struct {
     uint8_t speed_unit;
     uint8_t legal_speed_limit;
     uint8_t legal_speed_unit;
-    uint8_t reserved0[2];
+    /* Former reserved byte: route-guidance symbol (cluster.h
+     * OpenNaviClusterRouteSymbol), read only when valid bit 2 is set; zero
+     * otherwise. The layout and size are unchanged. */
+    uint8_t route_guidance_symbol;
+    uint8_t reserved0[1];
     OpenNaviBackendUtf8SpanV1 current_road;
     OpenNaviBackendUtf8SpanV1 next_road;
 } OpenNaviBackendClusterV1;
@@ -359,6 +391,55 @@ typedef struct {
         const OpenNaviBackendDriverDistractionV1 *distraction);
 } OpenNaviBackendV5;
 
+/* Route guidance, backend to provider: guiding is 1 while the backend is in
+ * route guidance (from start until the user, arrival or a stop request ends
+ * it) and 0 otherwise.  Publish on every change; the provider assumes 0
+ * until the first publication and after each lifecycle.  The provider
+ * reports it to nv_navigation in the SI_VoiceRecognition route-guidance
+ * status replies (adapter 25 slot 19 / callback 23). */
+enum {
+    OPEN_NAVI_BACKEND_GUIDANCE_IDLE = 0u,
+    OPEN_NAVI_BACKEND_GUIDANCE_ACTIVE = 1u
+};
+typedef struct {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t guiding;
+} OpenNaviBackendGuidanceStateV1;
+
+/* Provider to backend: end route guidance now, as the user's Stop does.
+ * Sent when nv_navigation asks the native navigation to stop guidance
+ * (SI_VoiceRecognition requestGuidanceStop, adapter 25 slot 13), e.g. when
+ * a phone projection takes navigation focus.  The backend publishes the
+ * resulting guidance state; a request outside guidance is a no-op. */
+typedef struct {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t source_slot;
+    uint32_t request_handle;
+} OpenNaviBackendGuidanceStopV1;
+
+/* Outbound services for a V6 backend: the exact V2 services (v2.v1
+ * abi_version is OPEN_NAVI_BACKEND_ABI_V3, struct_size the V3 size), then
+ * the guidance state.  Same borrowing and lifetime rules as V2. */
+typedef struct {
+    OpenNaviBackendServicesV2 v2;
+    uint32_t (*publish_guidance_state)(
+        void *runtime_context,
+        const OpenNaviBackendGuidanceStateV1 *guidance);
+} OpenNaviBackendServicesV3;
+
+/* V6 preserves the complete V5 prefix.  A V6 backend is started through
+ * start_v3 (start_v2 is not called) and receives guidance stop requests. */
+typedef struct {
+    OpenNaviBackendV5 v5;
+    int (*start_v3)(void *backend_context,
+                    const OpenNaviBackendServicesV3 *services);
+    int (*guidance_stop_requested)(
+        void *backend_context,
+        const OpenNaviBackendGuidanceStopV1 *request);
+} OpenNaviBackendV6;
+
 /* Installs a copied backend descriptor for the next renderer lifecycle.
  * Registration is rejected while a renderer lifecycle exists. Passing NULL
  * restores the built-in magenta backend. */
@@ -372,6 +453,8 @@ OPEN_NAVI_BACKEND_EXPORT int open_navi_backend_install_v4(
     const OpenNaviBackendV4 *backend);
 OPEN_NAVI_BACKEND_EXPORT int open_navi_backend_install_v5(
     const OpenNaviBackendV5 *backend);
+OPEN_NAVI_BACKEND_EXPORT int open_navi_backend_install_v6(
+    const OpenNaviBackendV6 *backend);
 
 #ifdef __cplusplus
 }

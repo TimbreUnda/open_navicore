@@ -877,8 +877,10 @@ int main(void)
     TEST_3(nc_host_voice_reply_destination_status, 11u, 1u, 2u, 3u);
     TEST_3(nc_host_voice_reply_file_from_dbid_get, 12u, 1u, 2u, 3u);
     TEST_2(nc_host_voice_reply_guidance_instructions_repeat, 15u, 1u, 2u);
-    TEST_2(nc_host_voice_reply_guidance_stop, 16u, 1u, 2u);
-    TEST_2(nc_host_voice_reply_guidance_start, 17u, 1u, 2u);
+    /* nv_navigation callback vtable 0x081ef688: 16 replyGuidanceStart,
+     * 17 replyGuidanceStop (entry 0x081ef6cc -> 0x080eb29c). */
+    TEST_2(nc_host_voice_reply_guidance_start, 16u, 1u, 2u);
+    TEST_2(nc_host_voice_reply_guidance_stop, 17u, 1u, 2u);
     TEST_3(nc_host_voice_reply_location_check, 18u, 1u, 2u, 3u);
     prepare(19u, (GenericCallback)callback_location_get);
     g_return_status = 11u;

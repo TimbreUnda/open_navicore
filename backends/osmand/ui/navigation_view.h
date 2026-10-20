@@ -63,6 +63,8 @@ public:
                       std::vector<RouteAlternative> routes);
     bool apply_guidance(GuidanceState guidance);
     bool start_guidance(std::size_t route);
+    // Ends guidance as the End button does (also a platform stop request).
+    bool end_guidance();
     std::uint64_t select_recent(std::size_t index);
     // Routes to a place picked on the map (e.g. a POI).
     std::uint64_t select_place(Destination place);
@@ -76,6 +78,13 @@ public:
     // map (and the vehicle marker) is visible beyond this area there.
     struct MapArea { int x = 0; int y = 0; int width = 0; int height = 0; };
     MapArea map_area() const noexcept;
+    // HMI split screen (Media screen block, HMI_STATE_VISIBLE_SPLIT_SCREEN):
+    // only `area` of the window is shown. Guidance shows the turn card
+    // there, everything else an "open navigation" banner; the navigation
+    // takes no input there (all touches are dropped). Returns whether the
+    // layout changed.
+    bool set_split_area(bool active, MapArea area);
+    bool split() const noexcept { return split_; }
     // Re-reads model.map_view() into the map control buttons.
     void apply_map_view();
     // Driver-distraction state; rebuilds the search screen when it changes.
@@ -116,6 +125,9 @@ private:
     void build_place_card();
     void build_arrival_card();
     void build_dev_menu();
+    // Turn card filling the split area (or the map when not guiding).
+    void build_split();
+    void refresh_split();
     // Arrival countdown: returns to free drive when it runs out.
     void update_arrival();
     void refresh_guidance();
@@ -201,6 +213,22 @@ private:
     lv_obj_t* guidance_remaining_ = nullptr;
     lv_obj_t* guidance_next_glyph_ = nullptr;
     lv_obj_t* guidance_instruction_ = nullptr;
+    bool split_ = false;
+    MapArea split_area_{};
+    lv_obj_t* split_glyph_ = nullptr;
+    lv_obj_t* split_exit_ = nullptr;
+    lv_obj_t* split_number_ = nullptr;
+    lv_obj_t* split_unit_ = nullptr;
+    lv_obj_t* split_road_ = nullptr;
+    lv_obj_t* split_then_ = nullptr;
+    lv_obj_t* split_then_glyph_ = nullptr;
+    lv_obj_t* split_then_road_ = nullptr;
+    lv_obj_t* split_eta_ = nullptr;
+    lv_obj_t* split_remaining_ = nullptr;
+    lv_obj_t* split_speed_ = nullptr;
+    lv_obj_t* split_speed_label_ = nullptr;
+    int split_text_x_ = 0;      // text column inside the right panel
+    int split_text_width_ = 0;
     lv_obj_t* control_recenter_ = nullptr;
     lv_obj_t* control_heading_ = nullptr;
     lv_obj_t* control_north_ = nullptr;

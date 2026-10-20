@@ -160,12 +160,44 @@ static void make_valid_v4(OpenNaviBackendPluginV4 *plugin)
         (int (*)(void *, const OpenNaviBackendDriverDistractionV1 *))callback;
 }
 
+static int start_v3_callback(void *context,
+                             const OpenNaviBackendServicesV3 *services)
+{
+    return callback(context, services);
+}
+
+static void make_valid_v5(OpenNaviBackendPluginV5 *plugin)
+{
+    static const uint8_t build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
+        OPEN_NAVI_PLUGIN_V5_EXPECTED_BUILD_ID_INITIALIZER;
+    OpenNaviBackendPluginV4 legacy;
+    make_valid_v4(&legacy);
+    memset(plugin, 0, sizeof(*plugin));
+    plugin->v4 = legacy;
+    plugin->v4.v3.v2.v1.query_abi_version = OPEN_NAVI_PLUGIN_QUERY_ABI_V5;
+    plugin->v4.v3.v2.v1.struct_size = sizeof(*plugin);
+    plugin->v4.v3.v2.v1.backend_abi_version = OPEN_NAVI_BACKEND_ABI_V6;
+    memcpy(plugin->v4.v3.v2.v1.build_id, build_id, sizeof(build_id));
+    plugin->services_v3_size = sizeof(OpenNaviBackendServicesV3);
+    plugin->guidance_state_v1_size = sizeof(OpenNaviBackendGuidanceStateV1);
+    plugin->guidance_stop_v1_size = sizeof(OpenNaviBackendGuidanceStopV1);
+    plugin->backend_v6_size = sizeof(OpenNaviBackendV6);
+    plugin->capabilities_v5 = OPEN_NAVI_PLUGIN_V5_REQUIRED_CAPABILITIES;
+    plugin->backend_v6.v5 = legacy.backend_v5;
+    plugin->backend_v6.v5.v4.v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V6;
+    plugin->backend_v6.v5.v4.v3.v2.v1.struct_size = sizeof(OpenNaviBackendV6);
+    plugin->backend_v6.start_v3 = start_v3_callback;
+    plugin->backend_v6.guidance_stop_requested =
+        (int (*)(void *, const OpenNaviBackendGuidanceStopV1 *))callback;
+}
+
 int main(void)
 {
     OpenNaviBackendPluginV1 plugin;
     OpenNaviBackendPluginV2 plugin_v2;
     OpenNaviBackendPluginV3 plugin_v3;
     OpenNaviBackendPluginV4 plugin_v4;
+    OpenNaviBackendPluginV5 plugin_v5;
     char diagnostic[128];
 
 #define REJECT(statement)                                                     \
@@ -284,5 +316,37 @@ int main(void)
     REJECT_V4(--plugin_v4.backend_v5.v4.v3.v2.v1.struct_size);
     REJECT_V4(plugin_v4.backend_v5.driver_distraction_changed = NULL);
 #undef REJECT_V4
+
+#define REJECT_V5(statement)                                                  \
+    do { make_valid_v5(&plugin_v5); statement;                               \
+         assert(open_navi_backend_plugin_validate_v5(                             \
+                    &plugin_v5, diagnostic, sizeof(diagnostic)) != 0); }     \
+    while (0)
+    make_valid_v5(&plugin_v5);
+    assert(open_navi_backend_plugin_validate_v5(
+               &plugin_v5, diagnostic, sizeof(diagnostic)) == 0);
+    REJECT_V5(plugin_v5.v4.v3.v2.v1.query_abi_version =
+              OPEN_NAVI_PLUGIN_QUERY_ABI_V4);
+    REJECT_V5(--plugin_v5.v4.v3.v2.v1.struct_size);
+    REJECT_V5(plugin_v5.v4.v3.v2.v1.backend_abi_version =
+              OPEN_NAVI_BACKEND_ABI_V5);
+    REJECT_V5(plugin_v5.v4.v3.v2.v1.build_id[0] ^= 1u);
+    REJECT_V5(plugin_v5.v4.v3.v2.v1.magic0 = 0u);
+    REJECT_V5(--plugin_v5.v4.driver_distraction_v1_size);
+    REJECT_V5(plugin_v5.backend_v6.v5.driver_distraction_changed = NULL);
+    REJECT_V5(plugin_v5.backend_v6.v5.v4.v3.start_v2 = NULL);
+    REJECT_V5(--plugin_v5.services_v3_size);
+    REJECT_V5(--plugin_v5.guidance_state_v1_size);
+    REJECT_V5(--plugin_v5.guidance_stop_v1_size);
+    REJECT_V5(--plugin_v5.backend_v6_size);
+    REJECT_V5(plugin_v5.capabilities_v5 &=
+              ~(uint32_t)OPEN_NAVI_PLUGIN_CAP_INPUT_GUIDANCE_STOP);
+    REJECT_V5(plugin_v5.capabilities_v5 |= UINT32_C(0x80000000));
+    REJECT_V5(plugin_v5.backend_v6.v5.v4.v3.v2.v1.abi_version =
+              OPEN_NAVI_BACKEND_ABI_V5);
+    REJECT_V5(--plugin_v5.backend_v6.v5.v4.v3.v2.v1.struct_size);
+    REJECT_V5(plugin_v5.backend_v6.start_v3 = NULL);
+    REJECT_V5(plugin_v5.backend_v6.guidance_stop_requested = NULL);
+#undef REJECT_V5
     return 0;
 }

@@ -36,15 +36,24 @@ public:
         std::string address;
     };
 
+    // search_index: the address index file (search/search_index.h); when it
+    // is missing or unreadable, search falls back to OsmAnd's name search.
     NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
                      std::shared_ptr<Wakeup> wakeup,
                      std::vector<std::string> map_paths,
-                     std::string routing_xml);
+                     std::string routing_xml,
+                     std::string search_index,
+                     std::string ch_sidecar = std::string());
     ~NavigationWorker();
     NavigationWorker(const NavigationWorker&) = delete;
     NavigationWorker& operator=(const NavigationWorker&) = delete;
 
-    void submit_search(std::uint64_t revision, std::string query);
+    // origin: where "near" is (the car, or the map centre without a fix);
+    // recent: destinations picked before, which rank higher.
+    void submit_search(std::uint64_t revision, std::string query, ui::GeoPoint origin,
+                       std::vector<ui::GeoPoint> recent);
+    // Searches take milliseconds with the index, seconds without.
+    bool has_search_index() const;
     // alternatives: also offer up to two other routes (route preview; a
     // reroute during guidance takes the fastest only).
     void submit_route(std::uint64_t revision, ui::Destination destination,

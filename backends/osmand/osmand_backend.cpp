@@ -101,6 +101,28 @@ int backend_start_v2(void* context, const OpenNaviBackendServicesV2* services) n
     }
 }
 
+// Backend V6: started with the guidance state service as well.
+int backend_start_v3(void* context, const OpenNaviBackendServicesV3* services) noexcept
+{
+    if (!context || !services || services->v2.v1.abi_version != OPEN_NAVI_BACKEND_ABI_V3 ||
+        services->v2.v1.struct_size < sizeof(*services) || !services->v2.v1.request_frame ||
+        !services->publish_guidance_state)
+        return -1;
+    try {
+        return static_cast<Session*>(context)->start_v3(*services, Config::from_environment());
+    } catch (...) {
+        trace("error=exception_start");
+        return -1;
+    }
+}
+
+int backend_guidance_stop(void* context, const OpenNaviBackendGuidanceStopV1* event) noexcept
+{
+    if (!context || !valid(event))
+        return -1;
+    return static_cast<Session*>(context)->guidance_stop(*event);
+}
+
 // V2 payloads carry the touch contact (we declare the contacts capability);
 // a V1 payload is the first contact.
 int backend_pointer(void* context, const OpenNaviBackendPointerV1* event) noexcept
@@ -119,6 +141,24 @@ int backend_pointer(void* context, const OpenNaviBackendPointerV1* event) noexce
         return -1;
     }
     return static_cast<Session*>(context)->pointer(pointer);
+}
+
+// V2 payloads carry the window area the HMI shows (we declare the window
+// area capability); a V1 payload has no area.
+int backend_visibility(void* context, const OpenNaviBackendVisibilityV1* event) noexcept
+{
+    if (!context || !event)
+        return -1;
+    OpenNaviBackendVisibilityV2 visibility{};
+    if (event->abi_version == OPEN_NAVI_BACKEND_VISIBILITY_ABI_V2 &&
+        event->struct_size >= sizeof(OpenNaviBackendVisibilityV2)) {
+        std::memcpy(&visibility, event, sizeof(visibility));
+    } else if (valid(event)) {
+        std::memcpy(&visibility, event, sizeof(*event));
+    } else {
+        return -1;
+    }
+    return static_cast<Session*>(context)->input(visibility);
 }
 
 int backend_gps(void* context, const OpenNaviBackendGpsV1* event) noexcept
@@ -165,7 +205,8 @@ void fill_v1_query(OpenNaviBackendPluginV1* output)
     output->gps_interval_v2_size = sizeof(OpenNaviBackendGpsIntervalV2);
     output->audio_v2_size = sizeof(OpenNaviBackendAudioV2);
     output->capabilities = OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES |
-                           OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS;
+                           OPEN_NAVI_PLUGIN_CAP_POINTER_CONTACTS |
+                           OPEN_NAVI_PLUGIN_CAP_WINDOW_AREA;
     std::memcpy(output->build_id, build_id, sizeof(build_id));
     output->backend.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
     output->backend.v1.struct_size = sizeof(OpenNaviBackendV2);
@@ -174,7 +215,7 @@ void fill_v1_query(OpenNaviBackendPluginV1* output)
     output->backend.v1.stop = backend_stop;
     output->backend.v1.surface_created = backend_surface_created;
     output->backend.v1.surface_destroyed = backend_surface_destroyed;
-    output->backend.v1.visibility_changed = forward_event<OpenNaviBackendVisibilityV1>;
+    output->backend.v1.visibility_changed = backend_visibility;
     output->backend.v1.screen_changed = forward_event<OpenNaviBackendScreenV1>;
     output->backend.v1.gps_changed = backend_gps;
     output->backend.v1.pointer_changed = backend_pointer;
@@ -226,9 +267,38 @@ void fill_v4_query(OpenNaviBackendPluginV4* output)
     backend.driver_distraction_changed = forward_event<OpenNaviBackendDriverDistractionV1>;
 }
 
+// Query V5 selects backend V6: the complete query V4 (backend V5 prefix),
+// then the guidance state service and the guidance stop input.
+void fill_v5_query(OpenNaviBackendPluginV5* output)
+{
+    static const uint8_t build_id[OPEN_NAVI_PLUGIN_BUILD_ID_BYTES] =
+        OPEN_NAVI_PLUGIN_V5_EXPECTED_BUILD_ID_INITIALIZER;
+    OpenNaviBackendPluginV4 prefix;
+    fill_v4_query(&prefix);
+    std::memset(output, 0, sizeof(*output));
+    output->v4 = prefix;
+    OpenNaviBackendPluginV1& v1 = output->v4.v3.v2.v1;
+    v1.query_abi_version = OPEN_NAVI_PLUGIN_QUERY_ABI_V5;
+    v1.struct_size = sizeof(*output);
+    v1.backend_abi_version = OPEN_NAVI_BACKEND_ABI_V6;
+    std::memcpy(v1.build_id, build_id, sizeof(build_id));
+    output->services_v3_size = sizeof(OpenNaviBackendServicesV3);
+    output->guidance_state_v1_size = sizeof(OpenNaviBackendGuidanceStateV1);
+    output->guidance_stop_v1_size = sizeof(OpenNaviBackendGuidanceStopV1);
+    output->backend_v6_size = sizeof(OpenNaviBackendV6);
+    output->capabilities_v5 = OPEN_NAVI_PLUGIN_V5_REQUIRED_CAPABILITIES;
+    OpenNaviBackendV6& backend = output->backend_v6;
+    backend.v5 = prefix.backend_v5;
+    backend.v5.v4.v3.v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V6;
+    backend.v5.v4.v3.v2.v1.struct_size = sizeof(OpenNaviBackendV6);
+    backend.start_v3 = backend_start_v3;
+    backend.guidance_stop_requested = backend_guidance_stop;
+}
+
 }  // namespace
 
-// The loader asks for query V4 first (backend V5), then older queries.
+// The loader asks for query V5 first (backend V6), then V4 (backend V5),
+// then older queries.
 extern "C" OPEN_NAVI_PLUGIN_EXPORT int open_navi_backend_query_v1(
     uint32_t requested_query_abi, uint32_t output_size,
     OpenNaviBackendPluginV1* output)
@@ -236,6 +306,11 @@ extern "C" OPEN_NAVI_PLUGIN_EXPORT int open_navi_backend_query_v1(
     if (output == nullptr)
         return -1;
     try {
+        if (requested_query_abi == OPEN_NAVI_PLUGIN_QUERY_ABI_V5 &&
+            output_size == sizeof(OpenNaviBackendPluginV5)) {
+            fill_v5_query(reinterpret_cast<OpenNaviBackendPluginV5*>(output));
+            return 0;
+        }
         if (requested_query_abi == OPEN_NAVI_PLUGIN_QUERY_ABI_V4 &&
             output_size == sizeof(OpenNaviBackendPluginV4)) {
             fill_v4_query(reinterpret_cast<OpenNaviBackendPluginV4*>(output));

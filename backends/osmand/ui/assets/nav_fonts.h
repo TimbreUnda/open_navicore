@@ -24,6 +24,7 @@ LV_FONT_DECLARE(nav_font_24_700);
 LV_FONT_DECLARE(nav_font_24_800);
 LV_FONT_DECLARE(nav_font_28_700);
 LV_FONT_DECLARE(nav_font_28_800);
+LV_FONT_DECLARE(nav_font_72_800);
 
 #ifdef __cplusplus
 }

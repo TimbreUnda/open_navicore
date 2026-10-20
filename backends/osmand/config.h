@@ -16,6 +16,10 @@ struct Config {
     std::string map = "/navi_map/osm";
     std::string fonts = "/datastore/navicore-backend/fonts";
     std::string recents = "/datastore/navicore-backend/recents.tsv";
+    // Address search index built from the maps (search/search_index.h);
+    // without it search uses OsmAnd's slower name search.
+    // Lives with the maps it is built from.
+    std::string search_index = "/navi_map/osm/search.idx";
     // UI language: the marker holds "uk", "en", "fr-CA" or "es-MX" (bench
     // override, also OPEN_NAVICORE_OSMAND_LANGUAGE); without one the radio's
     // own HMI language file is read ("english.cfg"); English otherwise.
@@ -23,6 +27,12 @@ struct Config {
     std::string hmi_language_file = "/datastore/dc_hmi_language.txt";
     // Built vector tiles, per map file; empty disables the disk cache.
     std::string vector_cache = "/datastore/navicore-backend/vectorcache";
+    // Contraction-hierarchy routing sidecar built from the maps (tools/ch):
+    // "car.chr" in the map directory, or "<map file>.chr" next to a single
+    // map file. Routing falls back to HH and A* when it is absent, stale or
+    // cannot serve a route. Empty when disabled (marker
+    // /datastore/navicore-backend/disable-ch, or OPEN_NAVICORE_OSMAND_CH_DISABLE=1).
+    std::string ch_sidecar = "";
 
     // Bench tools (markers in /datastore/navicore-backend, see README).
     bool simulate_route = false;       // enable-route-simulation

@@ -73,6 +73,19 @@ int main()
                         stopped.azimuth_degrees, 10.0), 0.0, 0.5));
     }
     {
+        // Without a vehicle a follow mode rests at the given location, and a
+        // free camera ignores it.
+        auto camera = controller();
+        camera.set_resting_location(48.47, 35.04);
+        const auto resting = camera.update(CameraController::Vehicle{}, 0.016);
+        assert(!resting.following);
+        assert(near(resting.latitude, 48.47, 1e-9) && near(resting.longitude, 35.04, 1e-9));
+        camera.begin_free(50.0, 30.0);
+        camera.set_resting_location(48.47, 35.04);
+        const auto free = camera.update(CameraController::Vehicle{}, 0.016);
+        assert(near(free.latitude, 50.0, 1e-9));
+    }
+    {
         // North-up centres the vehicle; tilt applies only to heading-up.
         auto camera = controller();
         camera.toggle_orientation();

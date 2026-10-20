@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Independently guard the 30 contracts recovered from owned dense thunks."""
+"""Independently guard the 35 contracts recovered from owned dense thunks.
+
+All are typed and dormant except the reviewed EMITTED set, which the
+provider calls (replyGuidanceStop, 25/17, from requestGuidanceStop; 25/16
+is replyGuidanceStart and stays dormant)."""
 
 import copy
 import csv
@@ -29,6 +33,7 @@ WORDS = {
 }
 
 FAIL_CLOSED = set()
+EMITTED = {("25", "15"), ("25", "17")}
 
 
 def validate(rows, header_text, source_text, provider_text=""):
@@ -41,6 +46,16 @@ def validate(rows, header_text, source_text, provider_text=""):
             raise ValueError("AAPCS word mismatch for %r" % (key,))
         if not row["producer_evidence"] or not row["consumer_evidence"]:
             raise ValueError("missing two-sided provenance for %r" % (key,))
+        if key in EMITTED:
+            symbol = row["implementation_symbol"]
+            if (row["state"] != "static_typed_emitted" or row["emitted"] != "yes"
+                    or not symbol):
+                raise ValueError("emitted static contract misclassified for %r" % (key,))
+            if symbol not in header_text or symbol not in source_text:
+                raise ValueError("typed seam is not declared and defined: %s" % symbol)
+            if symbol + "(" not in provider_text:
+                raise ValueError("emitted static contract has no provider emitter: %s" % symbol)
+            continue
         if row["emitted"] != "no":
             raise ValueError("static contract unexpectedly emits for %r" % (key,))
         if key in FAIL_CLOSED:
@@ -104,9 +119,14 @@ def negative_tests(rows, header_text, source_text, provider_text):
     row = next(r for r in missing_symbol if r["implementation_symbol"])
     row["implementation_symbol"] = "open_navi_pas_missing_contract"
     mutations.append(missing_symbol)
+    dormant_emitted = copy.deepcopy(rows)
+    row = next(r for r in dormant_emitted if (r["adapter"], r["slot"]) in EMITTED)
+    row["state"] = "static_typed_not_emitted"
+    row["emitted"] = "no"
+    mutations.append(dormant_emitted)
     for mutation in mutations:
         try:
-            validate(mutation, header_text, source_text)
+            validate(mutation, header_text, source_text, provider_text)
         except ValueError:
             continue
         raise ValueError("negative callback-contract mutation unexpectedly passed")
@@ -128,7 +148,8 @@ def main():
     validate(rows, header_text, source_text, provider_text)
     reconcile(rows, sys.argv[2], sys.argv[3])
     negative_tests(rows, header_text, source_text, provider_text)
-    print("Static callback contracts passed: 35 typed dormant + 0 pointer fail-closed")
+    print("Static callback contracts passed: 34 typed dormant + 1 typed emitted"
+          " + 0 pointer fail-closed")
     print("Callback reconciliation passed: 61 runtime + 7 prior static + 35 recovered")
     print("Static callback contract negative-mutation self-test passed")
 

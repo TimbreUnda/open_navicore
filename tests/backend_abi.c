@@ -97,6 +97,28 @@ typedef char plugin_v4_prefix_must_start_at_zero[
     offsetof(OpenNaviBackendPluginV4, v3) == 0u ? 1 : -1];
 typedef char plugin_v4_backend_v5_offset[
     offsetof(OpenNaviBackendPluginV4, backend_v5) == 364u ? 1 : -1];
+typedef char guidance_state_v1_must_be_12[
+    sizeof(OpenNaviBackendGuidanceStateV1) == 12u ? 1 : -1];
+typedef char guidance_stop_v1_must_be_16[
+    sizeof(OpenNaviBackendGuidanceStopV1) == 16u ? 1 : -1];
+typedef char services_v3_must_be_32[
+    sizeof(OpenNaviBackendServicesV3) == 32u ? 1 : -1];
+typedef char services_v3_guidance_offset[
+    offsetof(OpenNaviBackendServicesV3, publish_guidance_state) == 28u ? 1 : -1];
+typedef char backend_v6_must_be_84[
+    sizeof(OpenNaviBackendV6) == 84u ? 1 : -1];
+typedef char backend_v6_prefix_must_start_at_zero[
+    offsetof(OpenNaviBackendV6, v5) == 0u ? 1 : -1];
+typedef char backend_v6_start_v3_offset[
+    offsetof(OpenNaviBackendV6, start_v3) == 76u ? 1 : -1];
+typedef char backend_v6_guidance_stop_offset[
+    offsetof(OpenNaviBackendV6, guidance_stop_requested) == 80u ? 1 : -1];
+typedef char plugin_v5_must_be_544[
+    sizeof(OpenNaviBackendPluginV5) == 544u ? 1 : -1];
+typedef char plugin_v5_prefix_must_start_at_zero[
+    offsetof(OpenNaviBackendPluginV5, v4) == 0u ? 1 : -1];
+typedef char plugin_v5_backend_v6_offset[
+    offsetof(OpenNaviBackendPluginV5, backend_v6) == 460u ? 1 : -1];
 #endif
 
 int open_navi_backend_abi_compile_probe(void)
@@ -106,5 +128,6 @@ int open_navi_backend_abi_compile_probe(void)
            OPEN_NAVI_BACKEND_ABI_V3 == 3u &&
            OPEN_NAVI_BACKEND_ABI_V4 == 4u &&
            OPEN_NAVI_BACKEND_ABI_V5 == 5u &&
+           OPEN_NAVI_BACKEND_ABI_V6 == 6u &&
            OPEN_NAVI_BACKEND_POINTER_MOVE == 3u ? 0 : 1;
 }

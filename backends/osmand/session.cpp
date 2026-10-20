@@ -55,6 +55,35 @@ int Session::start_v2(const OpenNaviBackendServicesV2& services, Config config) 
     return result;
 }
 
+int Session::start_v3(const OpenNaviBackendServicesV3& services, Config config) noexcept
+{
+    OpenNaviBackendServicesV2 v2 = services.v2;
+    v2.v1.abi_version = OPEN_NAVI_BACKEND_ABI_V2;
+    v2.v1.struct_size = sizeof(v2);
+    const int result = start_v2(v2, std::move(config));
+    if (result == 0) {
+        services_v3_ = services;
+        has_services_v3_ = true;
+    }
+    return result;
+}
+
+int Session::guidance_stop(const OpenNaviBackendGuidanceStopV1& event) noexcept
+{
+    if (state_ != State::Started && state_ != State::Attached)
+        return -1;
+    trace("input=guidance_stop");
+    if (state_ != State::Attached || !engine_)
+        return 0;
+    try {
+        engine_->guidance_stop(event);
+    } catch (...) {
+        trace("error=exception_input");
+        return -1;
+    }
+    return 0;
+}
+
 template <typename T>
 int Session::record(Latest<T>& latest, const T& event,
                     void (Engine::*forward)(const T&)) noexcept
@@ -74,7 +103,7 @@ int Session::record(Latest<T>& latest, const T& event,
     return 0;
 }
 
-int Session::input(const OpenNaviBackendVisibilityV1& event) noexcept
+int Session::input(const OpenNaviBackendVisibilityV2& event) noexcept
 {
     return record(visibility_, event, &Engine::visibility);
 }
@@ -103,6 +132,7 @@ int Session::input(const OpenNaviBackendDriverDistractionV1& event) noexcept
 void Session::replay_inputs()
 {
     engine_->set_outbound(has_services_v2_ ? &services_v2_ : nullptr);
+    engine_->set_guidance_outbound(has_services_v3_ ? &services_v3_ : nullptr);
     if (visibility_.has) engine_->visibility(visibility_.value);
     if (screen_.has) engine_->screen(screen_.value);
     if (vehicle_.has) engine_->vehicle(vehicle_.value);
@@ -268,6 +298,8 @@ void Session::stop() noexcept
     has_gps_ = false;
     services_v2_ = {};
     has_services_v2_ = false;
+    services_v3_ = {};
+    has_services_v3_ = false;
     visibility_ = {};
     screen_ = {};
     vehicle_ = {};

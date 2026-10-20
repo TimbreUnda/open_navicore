@@ -1,8 +1,13 @@
 #include "navigation_worker.h"
 
 
+#include "ch_planner.h"
+#include "cluster_payload.h"
+#include "config.h"
 #include "diagnostics.h"
+#include "junction_shape.h"
 #include "route_check.h"
+#include "search/search_index.h"
 #include "session.h"
 #include "ui/localization.h"
 
@@ -62,7 +67,10 @@ constexpr std::size_t kMaxRoutes = 3;  // the fastest and up to two alternatives
 // Alternatives are off: finding them costs routing time, and the route preview
 // then offers only the fastest route. Set to true to bring them back.
 constexpr bool kAlternativeRoutes = false;
-const OsmAnd::LatLon kDemoOrigin(50.4501, 30.5234);
+// Places (amenities) are searched this far around the origin, in degrees
+// (about 33 km): the whole country takes seconds.
+constexpr double kAmenityRadiusLatitude = 0.3;
+constexpr double kAmenityRadiusLongitude = 0.45;
 
 std::string utf8(const QString& value)
 {
@@ -70,11 +78,9 @@ std::string utf8(const QString& value)
     return std::string(bytes.constData(), static_cast<std::size_t>(bytes.size()));
 }
 
-std::string distance_text(const OsmAnd::PointI& point)
+std::string distance_text(const OsmAnd::LatLon& origin, const OsmAnd::LatLon& point)
 {
-    const auto destination = OsmAnd::Utilities::convert31ToLatLon(point);
-    const double metres = OsmAnd::Utilities::distance(kDemoOrigin, destination);
-    return ui::loc::format_distance(metres);
+    return ui::loc::format_distance(OsmAnd::Utilities::distance(origin, point));
 }
 
 std::string address_kind(OsmAnd::AddressType type)
@@ -100,18 +106,49 @@ std::string localized_name(const Object& object)
     return utf8(object.nativeName);
 }
 
-ui::Destination destination(const OsmAnd::Address& address)
+ui::Destination destination(const OsmAnd::Address& address, const OsmAnd::LatLon& origin)
 {
     const auto coordinates = OsmAnd::Utilities::convert31ToLatLon(address.position31);
     std::string title = localized_name(address);
     return {"address:" + std::to_string(address.position31.x) + ":" +
                 std::to_string(address.position31.y),
             std::move(title), address_kind(address.addressType),
-            distance_text(address.position31), coordinates.latitude,
+            distance_text(origin, coordinates), coordinates.latitude,
             coordinates.longitude};
 }
 
-ui::Destination destination(const OsmAnd::Amenity& amenity)
+const char* settlement_kind(int subtype)
+{
+    using ui::loc::Str;
+    switch (subtype) {
+    case 0: return ui::loc::tr(Str::SettlementCity);
+    case 1: return ui::loc::tr(Str::SettlementTown);
+    case 2: return ui::loc::tr(Str::SettlementVillage);
+    case 3: return ui::loc::tr(Str::SettlementHamlet);
+    case 4: return ui::loc::tr(Str::SettlementSuburb);
+    default: return ui::loc::tr(Str::AddressPlace);
+    }
+}
+
+// A search index hit. The subtitle tells same-named places apart: a
+// settlement's kind and oblast ("Хутір · Миколаївська обл."), a street's or
+// house's settlement and oblast ("Дніпро · Дніпропетровська обл.").
+ui::Destination destination(const search::SearchIndex::Hit& hit, const OsmAnd::LatLon& origin)
+{
+    const OsmAnd::LatLon coordinates(hit.latitude, hit.longitude);
+    const auto point = OsmAnd::Utilities::convertLatLonTo31(coordinates);
+    const std::string region = ui::loc::region_name(hit.region);
+    std::string subtitle = hit.context.empty() ? settlement_kind(hit.settlement_type) : hit.context;
+    // Kyiv is a region of its own: "Київ · Kyiv" under its streets says nothing.
+    const bool city_region = hit.region == "kyiv-city" && !hit.context.empty();
+    if (!region.empty() && !city_region && region != hit.context && region != hit.title)
+        subtitle += " · " + region;
+    return {"address:" + std::to_string(point.x) + ":" + std::to_string(point.y), hit.title,
+            std::move(subtitle), distance_text(origin, coordinates), hit.latitude,
+            hit.longitude};
+}
+
+ui::Destination destination(const OsmAnd::Amenity& amenity, const OsmAnd::LatLon& origin)
 {
     const auto coordinates = OsmAnd::Utilities::convert31ToLatLon(amenity.position31);
     std::string title = localized_name(amenity);
@@ -121,7 +158,7 @@ ui::Destination destination(const OsmAnd::Amenity& amenity)
     return {"amenity:" + std::to_string(amenity.position31.x) + ":" +
                 std::to_string(amenity.position31.y),
             std::move(title), std::move(subtitle),
-            distance_text(amenity.position31), coordinates.latitude,
+            distance_text(origin, coordinates), coordinates.latitude,
             coordinates.longitude};
 }
 
@@ -250,6 +287,75 @@ void place_worker_thread()
 
 using Segments = std::vector<SHARED_PTR<RouteSegmentResult>>;
 
+// Bearings over the first 10 m of each road, as OsmAnd's own turn decision
+// (getTurnInfo, DIST_BEARING_DETECT).
+constexpr float kJunctionBearingMetres = 10.0f;
+
+// The junction at the start of segments[index] (where OsmAnd puts the
+// turn): the route's and every other road's direction, relative to the
+// incoming direction (positive clockwise). Other roads: the segment's
+// attached roads at its start point (prepareResult /
+// attachRoadSegments: the incoming road's continuation and each road the
+// router could leave the node by; one-way roads that only enter the node
+// are not attached), plus the route's own road behind the node, which
+// OsmAnd does not attach (same way id).
+ui::JunctionShape junction_of(Segments& segments, std::size_t index)
+{
+    if (index == 0 || index >= segments.size()) return {};
+    const auto& previous = segments[index - 1];
+    const auto& current = segments[index];
+    if (!previous || !current || !previous->object || !current->object) return {};
+    const double incoming =
+        previous->getBearingEnd(previous->getEndPointIndex(), kJunctionBearingMetres);
+    const int start = current->getStartPointIndex();
+    const double route = current->getBearingBegin(start, kJunctionBearingMetres);
+    std::vector<double> arms;
+    for (const auto& attached : current->getAttachedRoutes(start)) {
+        if (!attached || !attached->object) continue;
+        arms.push_back(degreesDiff(attached->getBearingBegin(), incoming));
+    }
+    const bool forward = current->getEndPointIndex() > start;
+    const int points = static_cast<int>(current->object->getPointsLength());
+    if (current->object->getId() != previous->object->getId() &&
+        (forward ? start > 0 : start < points - 1)) {
+        const double behind =
+            current->object->directionRoute(start, !forward, kJunctionBearingMetres) / M_PI *
+            180.0;
+        arms.push_back(degreesDiff(behind, incoming));
+    }
+    return make_junction_shape(degreesDiff(route, incoming), arms);
+}
+
+// One trace line per manoeuvre of the main route (bounded), so that a live
+// drive can be checked against the cluster picture: the junction
+// description, the junction picture (0: none) and the symbol sent.
+constexpr std::size_t kJunctionTraceMax = 40;
+
+void trace_junction(std::size_t number, const ui::Maneuver& maneuver)
+{
+    const auto& j = maneuver.junction;
+    char arms[64] = "";
+    std::size_t used = 0;
+    for (std::size_t i = 0; i < j.branch_count && used < sizeof(arms); ++i) {
+        const int n = std::snprintf(arms + used, sizeof(arms) - used, "%s%.0f", i ? "," : "",
+                                    static_cast<double>(j.branches[i]));
+        if (n < 0) break;
+        used += static_cast<std::size_t>(n);
+    }
+    char line[200];
+    std::snprintf(line, sizeof(line),
+                  "worker=junction n=%zu kind=%d osmand_angle=%.0f valid=%d route=%.0f "
+                  "arms=%s%s through=%d lanes=%u rec=0x%x change=%d shape=%u symbol=%u",
+                  number, static_cast<int>(maneuver.kind), maneuver.turn_angle_degrees,
+                  j.valid ? 1 : 0, static_cast<double>(j.route_angle), arms,
+                  j.truncated ? "+" : "", j.through_road ? 1 : 0,
+                  static_cast<unsigned>(j.lane_count), static_cast<unsigned>(j.recommended_lanes),
+                  static_cast<int>(j.lane_change),
+                  static_cast<unsigned>(junction_symbol(maneuver)),
+                  static_cast<unsigned>(maneuver_symbol(maneuver)));
+    trace(line);
+}
+
 // What the router returned, as plain legs for the geometry check.
 RouteCheck check_segments(const Segments& segments)
 {
@@ -279,10 +385,15 @@ public:
     Impl(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
          std::shared_ptr<Wakeup> wakeup,
          std::vector<std::string> map_paths,
-         std::string routing_xml)
+         std::string routing_xml,
+         const std::string& search_index,
+         std::string ch_sidecar)
         : obfs_(std::move(obfs)), wakeup_(std::move(wakeup)),
-          map_paths_(std::move(map_paths)), routing_xml_(std::move(routing_xml))
+          map_paths_(std::move(map_paths)), routing_xml_(std::move(routing_xml)),
+          ch_sidecar_(std::move(ch_sidecar))
     {
+        // Opened here, read only by the worker thread started below.
+        trace(index_.open(search_index) ? "worker=search_index" : "worker=no_search_index");
         // Start only after every request/result flag below has completed
         // construction. Starting in the member initializer races run()
         // against later members such as has_pending_ and stopping_.
@@ -292,12 +403,17 @@ public:
 
     ~Impl() { stop(); }
 
-    void submit(std::uint64_t revision, std::string query)
+    bool has_index() const { return index_.is_open(); }
+
+    void submit(std::uint64_t revision, std::string query, ui::GeoPoint origin,
+                std::vector<ui::GeoPoint> recent)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) return;
         if (active_) active_->cancel();
         pending_ = Request::search(revision, std::move(query));
+        pending_.origin = origin;
+        pending_.recent = std::move(recent);
         has_pending_ = true;
         trace_result("worker=search_queued", revision, pending_.query.size());
         condition_.notify_one();
@@ -377,7 +493,8 @@ private:
         std::uint64_t revision = 0;
         std::string query;
         ui::Destination destination;
-        ui::GeoPoint origin;
+        ui::GeoPoint origin;               // route start; search: "near"
+        std::vector<ui::GeoPoint> recent;  // search: destinations picked before
         bool alternatives = false;  // route: also look for alternatives
 
         static Request search(std::uint64_t revision, std::string query)
@@ -437,16 +554,55 @@ private:
         if (request.query.empty()) return output;
         const QString query = QString::fromUtf8(request.query.data(),
                                                 static_cast<int>(request.query.size()));
+        const OsmAnd::LatLon origin(request.origin.latitude, request.origin.longitude);
+
+        if (index_.is_open()) {
+            std::vector<search::SearchIndex::Point> recent;
+            for (const auto& point : request.recent)
+                recent.push_back({point.latitude, point.longitude});
+            const auto hits = index_.search(request.query,
+                                            {origin.latitude, origin.longitude}, recent,
+                                            kMaxAddressResults);
+            for (const auto& hit : hits) output.push_back(destination(hit, origin));
+            trace_result("worker=index_hits", request.revision, output.size());
+            // An address with a house number needs no places; otherwise the
+            // addresses show now and nearby places follow.
+            if (!search::parse(request.query).house.empty() || cancel->isAborted())
+                return output;
+            publish_early(request, cancel, output);
+            const auto centre = OsmAnd::Utilities::convertLatLonTo31(origin);
+            const OsmAnd::AreaI area(
+                OsmAnd::Utilities::get31TileNumberY(origin.latitude + kAmenityRadiusLatitude),
+                OsmAnd::Utilities::get31TileNumberX(origin.longitude - kAmenityRadiusLongitude),
+                OsmAnd::Utilities::get31TileNumberY(origin.latitude - kAmenityRadiusLatitude),
+                OsmAnd::Utilities::get31TileNumberX(origin.longitude + kAmenityRadiusLongitude));
+            const std::size_t limit = output.size() + kMaxAmenityResults;
+            OsmAnd::AmenitiesByNameSearch amenities(obfs_);
+            OsmAnd::AmenitiesByNameSearch::Criteria criteria;
+            criteria.name = query;
+            criteria.xy31 = centre;
+            criteria.bbox31 = area;
+            criteria.obfInfoAreaFilter = area;
+            amenities.performSearch(criteria,
+                [&output, &origin, cancel, limit](const OsmAnd::ISearch::Criteria&,
+                                                  const OsmAnd::ISearch::IResultEntry& entry) {
+                    const auto& result = static_cast<const OsmAnd::AmenitiesByNameSearch::ResultEntry&>(entry);
+                    if (result.amenity && output.size() < limit)
+                        output.push_back(destination(*result.amenity, origin));
+                    if (output.size() >= limit) cancel->stop_at_limit();
+                }, cancel);
+            return output;
+        }
 
         OsmAnd::AddressesByNameSearch addresses(obfs_);
         OsmAnd::AddressesByNameSearch::Criteria address_criteria;
         address_criteria.name = query;
         addresses.performSearch(address_criteria,
-            [&output, cancel](const OsmAnd::ISearch::Criteria&,
-                              const OsmAnd::ISearch::IResultEntry& entry) {
+            [&output, &origin, cancel](const OsmAnd::ISearch::Criteria&,
+                                       const OsmAnd::ISearch::IResultEntry& entry) {
                 const auto& result = static_cast<const OsmAnd::AddressesByNameSearch::ResultEntry&>(entry);
                 if (result.address && output.size() < kMaxAddressResults)
-                    output.push_back(destination(*result.address));
+                    output.push_back(destination(*result.address, origin));
                 if (output.size() >= kMaxAddressResults) cancel->stop_at_limit();
             }, cancel);
 
@@ -454,13 +610,13 @@ private:
         OsmAnd::AmenitiesByNameSearch amenities(obfs_);
         OsmAnd::AmenitiesByNameSearch::Criteria amenity_criteria;
         amenity_criteria.name = query;
-        amenity_criteria.xy31 = OsmAnd::Utilities::convertLatLonTo31(kDemoOrigin);
+        amenity_criteria.xy31 = OsmAnd::Utilities::convertLatLonTo31(origin);
         amenities.performSearch(amenity_criteria,
-            [&output, cancel](const OsmAnd::ISearch::Criteria&,
-                              const OsmAnd::ISearch::IResultEntry& entry) {
+            [&output, &origin, cancel](const OsmAnd::ISearch::Criteria&,
+                                       const OsmAnd::ISearch::IResultEntry& entry) {
                 const auto& result = static_cast<const OsmAnd::AmenitiesByNameSearch::ResultEntry&>(entry);
                 if (result.amenity && output.size() < kMaxAddressResults + kMaxAmenityResults)
-                    output.push_back(destination(*result.amenity));
+                    output.push_back(destination(*result.amenity, origin));
                 if (output.size() >= kMaxAddressResults + kMaxAmenityResults)
                     cancel->stop_at_limit();
             }, cancel);
@@ -491,10 +647,12 @@ private:
         // a route may cross regions. Files without a routing index are closed.
         std::size_t routable = 0;
         std::size_t with_hh = 0;
+        std::vector<std::string> routable_maps;
         for (const std::string& path : map_paths_) {
             const auto map = initBinaryMapFile(path, false, true);
             if (map && !map->routingIndexes.empty()) {
                 ++routable;
+                if (!is_basemap(path)) routable_maps.push_back(path);   // a world basemap is never routed on
                 const bool car_hh = std::any_of(map->hhIndexes.begin(), map->hhIndexes.end(),
                     [](const SHARED_PTR<HHRouteIndex>& index) { return index->profile == "car"; });
                 if (car_hh) ++with_hh;
@@ -515,17 +673,24 @@ private:
                           has_hh_ ? 1 : 0, routable, with_hh);
             trace(line);
         }
+        // Contraction-hierarchy routing: only with a sidecar built from exactly these maps.
+        if (!ch_sidecar_.empty()) {
+            std::string error;
+            ch_ = ChPlanner::open(ch_sidecar_, routable_maps, error);
+            trace(ch_ ? ("worker=ch " + ch_->describe()).c_str()
+                      : ("worker=ch_off why=" + error).c_str());
+        }
         router_ready_ = true;
         return true;
     }
 
-    bool accept_hh_route(const Segments& segments, const char* which)
+    bool accept_route(const Segments& segments, const char* which)
     {
         const RouteCheck check = check_segments(segments);
         if (check.ok()) return true;
         char line[160];
         std::snprintf(line, sizeof(line),
-                      "worker=hh_rejected route=%s why=straight_legs legs=%zu filler=%zu gaps=%zu "
+                      "worker=route_rejected route=%s why=straight_legs legs=%zu filler=%zu gaps=%zu "
                       "max_gap_m=%.0f",
                       which, check.legs, check.filler_legs, check.gaps, check.max_gap_metres);
         trace(line);
@@ -570,13 +735,13 @@ private:
         // network nodes with a straight line; such a route crosses water and
         // forest. A bad main route fails HH (the caller runs A*); a bad
         // alternative is dropped.
-        if (!accept_hh_route(main->detailed, "main")) return routes;
+        if (!accept_route(main->detailed, "main")) return routes;
         routes.push_back(std::move(main->detailed));
         for (auto& alt : others) {
             if (alt->detailed.empty()) continue;
             prepareResult(context.get(), alt->detailed);
             front_end.makeStartEndPointsPrecise(context.get(), alt->detailed, sx, sy, ex, ey);
-            if (!accept_hh_route(alt->detailed, "alternative")) continue;
+            if (!accept_route(alt->detailed, "alternative")) continue;
             routes.push_back(std::move(alt->detailed));
         }
         return routes;
@@ -593,8 +758,27 @@ private:
         const int ey = get31TileNumberY(request.destination.latitude);
         RoutePlannerFrontEnd front_end;
         std::vector<Segments> found;
-        const char* method = "hh";
-        if (has_hh_) {
+        const char* method = "ch";
+        if (ch_) {
+            auto context = front_end.buildRoutingContext(routing_config_);
+            context->progress = std::make_shared<RouteProgress>(cancel);
+            std::string why;
+            Segments segments = ch_->route(front_end, context, sx, sy, ex, ey, why);
+            if (!segments.empty() && accept_route(segments, "ch")) {
+                const ChPlanner::Timing& timing = ch_->last_timing();
+                char line[160];
+                std::snprintf(line, sizeof(line),
+                              "worker=ch_route search_ms=%.1f roads_ms=%.0f prepare_ms=%.0f runs=%zu edges=%zu settled=%zu",
+                              timing.search_ms, timing.roads_ms, timing.prepare_ms, timing.road_runs,
+                              timing.base_edges, timing.settled);
+                trace(line);
+                found.push_back(std::move(segments));
+            } else if (!cancel->isAborted()) {
+                trace(("worker=ch_fallback why=" + (why.empty() ? std::string("route_rejected") : why)).c_str());
+            }
+        }
+        if (found.empty() && !cancel->isAborted()) method = "hh";
+        if (found.empty() && has_hh_) {
             auto context = front_end.buildRoutingContext(routing_config_);
             context->progress = std::make_shared<RouteProgress>(cancel);
             found = route_hh(front_end, context, sx, sy, ex, ey,
@@ -684,6 +868,14 @@ private:
                 maneuver.geometry_index = geometry_at_start;
                 maneuver.roundabout_exit = segment->turnType->getExitOut();
                 maneuver.lanes = lanes_of(segment->turnType);
+                maneuver.left_side = segment->turnType->isLeftSide();
+                maneuver.turn_angle_degrees = segment->turnType->getTurnAngle();
+                if (!segment->turnType->isRoundAbout()) {
+                    maneuver.junction = junction_of(segments, segment_index);
+                    summarize_lanes(maneuver.lanes, maneuver.junction);
+                }
+                if (route_index == 0 && alternative.maneuvers.size() < kJunctionTraceMax)
+                    trace_junction(alternative.maneuvers.size(), maneuver);
                 alternative.maneuvers.push_back(std::move(maneuver));
             }
             alternative.distance_metres += segment->distance;
@@ -703,10 +895,28 @@ private:
         alternative.duration = duration_label(alternative.duration_seconds);
         alternative.distance = distance_label(alternative.distance_metres);
         if (alternative.geometry.size() < 2) return alternative;
-        alternative.maneuvers.push_back({
-            ui::ManeuverKind::Arrive, request.destination.title,
-            alternative.distance_metres, alternative.geometry.size() - 1u, 0, {}});
+        ui::Maneuver arrive;
+        arrive.kind = ui::ManeuverKind::Arrive;
+        arrive.road = request.destination.title;
+        arrive.distance_from_start_metres = alternative.distance_metres;
+        arrive.geometry_index = alternative.geometry.size() - 1u;
+        alternative.maneuvers.push_back(std::move(arrive));
         return alternative;
+    }
+
+    // Search results before the request is done (index addresses ahead of
+    // the slower place search); the final publish replaces them.
+    void publish_early(const Request& request, const std::shared_ptr<Cancellation>& cancel,
+                       const std::vector<ui::Destination>& destinations)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (stopping_ || active_ != cancel || cancel->superseded()) return;
+            result_ = {request.revision, destinations};
+            has_result_ = true;
+        }
+        trace_result("worker=search_published_early", request.revision, destinations.size());
+        if (wakeup_) (void)wakeup_->request();
     }
 
     void run()
@@ -783,10 +993,13 @@ private:
         }
     }
 
+    search::SearchIndex index_;  // read by the worker thread only, after open
     std::shared_ptr<OsmAnd::ObfsCollection> obfs_;
     std::shared_ptr<Wakeup> wakeup_;
     std::vector<std::string> map_paths_;
     std::string routing_xml_;
+    std::string ch_sidecar_;  // empty: contraction-hierarchy routing is off
+    std::unique_ptr<ChPlanner> ch_;
     SHARED_PTR<RoutingConfiguration> routing_config_;
     std::mutex mutex_;
     std::condition_variable condition_;
@@ -809,10 +1022,17 @@ private:
 NavigationWorker::NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
                                    std::shared_ptr<Wakeup> wakeup,
                                    std::vector<std::string> map_paths,
-                                   std::string routing_xml)
+                                   std::string routing_xml,
+                                   std::string search_index,
+                                   std::string ch_sidecar)
     : impl_(new Impl(std::move(obfs), std::move(wakeup), std::move(map_paths),
-                     std::move(routing_xml)))
+                     std::move(routing_xml), search_index, std::move(ch_sidecar)))
 {
+}
+
+bool NavigationWorker::has_search_index() const
+{
+    return impl_->has_index();
 }
 
 void NavigationWorker::submit_route(std::uint64_t revision,
@@ -824,9 +1044,10 @@ void NavigationWorker::submit_route(std::uint64_t revision,
 
 NavigationWorker::~NavigationWorker() = default;
 
-void NavigationWorker::submit_search(std::uint64_t revision, std::string query)
+void NavigationWorker::submit_search(std::uint64_t revision, std::string query,
+                                     ui::GeoPoint origin, std::vector<ui::GeoPoint> recent)
 {
-    impl_->submit(revision, std::move(query));
+    impl_->submit(revision, std::move(query), origin, std::move(recent));
 }
 
 bool NavigationWorker::take_route_result(RouteResult& output)

@@ -8,9 +8,10 @@ if(ONC_QNX)
     target_compile_options(${t} PRIVATE ${ONC_WARNINGS} ${ONC_THUMB})
     target_link_libraries(${t} PRIVATE c)
   endforeach()
-  foreach(t obf route)
+  foreach(t obf route search address_dump search_a)
     add_executable(osmand_${t}_smoke qnx_osmand_${t}_smoke.cpp)
-    target_include_directories(osmand_${t}_smoke PRIVATE ${ONC_ROOT}/include ${ONC_OSMAND_INCLUDES})
+    target_include_directories(osmand_${t}_smoke PRIVATE ${ONC_ROOT}/include ${ONC_OSMAND_INCLUDES}
+                               ${ONC_ROOT}/backends/osmand)
     target_compile_definitions(osmand_${t}_smoke PRIVATE ${ONC_OSMAND_DEFINES})
     target_compile_options(osmand_${t}_smoke PRIVATE ${ONC_WARNINGS} ${ONC_OSMAND_FLAGS})
     target_link_options(osmand_${t}_smoke PRIVATE -static-libstdc++ -static-libgcc
@@ -18,6 +19,19 @@ if(ONC_QNX)
     target_link_libraries(osmand_${t}_smoke PRIVATE osmand_core socket slog2 z pps EGL GLESv2 m c)
     set_target_properties(osmand_${t}_smoke PROPERTIES SKIP_BUILD_RPATH ON)
   endforeach()
+  # Search option B: the prebuilt index (search_proto/), no OsmAnd.
+  # The navigation's index search (backends/osmand/search) on a query set.
+  add_executable(search_index_bench search_index_bench.cpp
+                 ${ONC_ROOT}/backends/osmand/search/search_index.cpp)
+  target_include_directories(search_index_bench PRIVATE ${ONC_ROOT}/backends/osmand)
+  target_compile_options(search_index_bench PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})
+  target_link_options(search_index_bench PRIVATE -static-libstdc++ -static-libgcc)
+  target_link_libraries(search_index_bench PRIVATE m c)
+  add_executable(search_b search_proto/search_b.cpp)
+  target_include_directories(search_b PRIVATE ${ONC_ROOT}/backends/osmand)
+  target_compile_options(search_b PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})
+  target_link_options(search_b PRIVATE -static-libstdc++ -static-libgcc)
+  target_link_libraries(search_b PRIVATE m c)
   # The plugin ABI headers compile for the target (static layout asserts).
   add_library(backend_abi OBJECT backend_abi.c)
   target_include_directories(backend_abi PRIVATE ${ONC_ROOT}/include)
@@ -84,6 +98,20 @@ onc_test(localization_test SOURCES localization_test.cpp LIBS navigation_ui m)
 onc_test(camera_controller_test SOURCES camera_controller_test.cpp LIBS navigation_ui)
 onc_test(labels_test SOURCES labels_test.cpp LIBS navigation_ui)
 onc_test(route_check_test SOURCES route_check_test.cpp LIBS navigation_ui m)
+# Address search index: built from a small dump fixture by the real builder.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(_search_fixture ${CMAKE_CURRENT_BINARY_DIR}/search_fixture.idx)
+add_custom_command(OUTPUT ${_search_fixture}
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/search_proto/build_index.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/search_index.tsv ${_search_fixture}
+  DEPENDS search_proto/build_index.py fixtures/search_index.tsv VERBATIM)
+add_custom_target(search_fixture DEPENDS ${_search_fixture})
+onc_test(search_index_test SOURCES search_index_test.cpp LIBS navigation_ui m
+         DEFINES SEARCH_FIXTURE="${_search_fixture}")
+add_dependencies(search_index_test search_fixture)
+# Contraction-hierarchy routing: query, contraction, sidecar file and snap lookup
+# (the library the navigation worker uses; pure C++, no OsmAnd).
+onc_test(ch_test SOURCES ch_test.cpp INCLUDES ${ONC_ROOT}/backends/osmand/ch ${ONC_ROOT}/tools/ch)
 # The vector style/tessellator test needs earcut.hpp from the OsmAnd tree.
 if(NOT OSMAND_QNX_ROOT AND DEFINED ENV{OSMAND_QNX_ROOT})
   set(OSMAND_QNX_ROOT $ENV{OSMAND_QNX_ROOT})

@@ -106,6 +106,9 @@ public:
     // keeps the current zoom and tilt. set_free_location moves it.
     void begin_free(double latitude, double longitude) noexcept;
     void set_free_location(double latitude, double longitude) noexcept;
+    // Where a follow mode without a vehicle rests: the last known location
+    // (otherwise the view stays at 0,0 until the first fix).
+    void set_resting_location(double latitude, double longitude) noexcept;
     // Two-finger gesture (free camera): zoom and rotation follow the
     // fingers directly, with no easing, from the next update.
     void set_free_view(float zoom, float azimuth_degrees) noexcept;
