@@ -874,6 +874,29 @@ static void renderer_cleanup(int started, int surfaced)
     open_navi_renderer_platform_destroy();
 }
 
+static void clear_pending_notifications_locked(void)
+{
+    unsigned int display;
+    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
+        g_runtime.visibility[display].pending = 0;
+        g_runtime.screen[display].pending = 0;
+    }
+    g_runtime.gps.pending = 0;
+    memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
+    memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
+    memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
+    memset(&g_runtime.internationalization, 0,
+           sizeof(g_runtime.internationalization));
+    memset(&g_runtime.cluster_display, 0,
+           sizeof(g_runtime.cluster_display));
+    memset(&g_runtime.driver_distraction, 0,
+           sizeof(g_runtime.driver_distraction));
+    memset(&g_runtime.guidance_stop, 0,
+           sizeof(g_runtime.guidance_stop));
+    g_runtime.pointer_head = 0u;
+    g_runtime.pointer_count = 0u;
+}
+
 /* Outbound services (V3 and later) are offered to the backend from start. */
 static int active_abi_has_outbound_services(void)
 {
@@ -1024,31 +1047,12 @@ static int run_event_loop(uintptr_t service_token)
 /* After a failure: stop accepting input and drop everything still queued. */
 static void discard_pending_state(void)
 {
-    unsigned int display;
-
     (void)pthread_mutex_lock(&g_runtime.lock);
     g_runtime.accepting_state = 0;
     g_runtime.stop = 1;
     g_runtime.active_service_token = (uintptr_t)0u;
     g_runtime.outbound_services_active = 0;
-    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
-        g_runtime.visibility[display].pending = 0;
-        g_runtime.screen[display].pending = 0;
-    }
-    g_runtime.gps.pending = 0;
-    memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
-    memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
-    memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
-    memset(&g_runtime.internationalization, 0,
-           sizeof(g_runtime.internationalization));
-    memset(&g_runtime.cluster_display, 0,
-           sizeof(g_runtime.cluster_display));
-    memset(&g_runtime.driver_distraction, 0,
-           sizeof(g_runtime.driver_distraction));
-    memset(&g_runtime.guidance_stop, 0,
-           sizeof(g_runtime.guidance_stop));
-    g_runtime.pointer_head = 0u;
-    g_runtime.pointer_count = 0u;
+    clear_pending_notifications_locked();
     g_runtime.frame_pending = 0;
     if (g_runtime.state != RENDERER_COLD)
         g_runtime.state = RENDERER_STOPPING;
@@ -1365,28 +1369,10 @@ int open_navi_backend_install_v6(const OpenNaviBackendV6 *backend)
 
 void open_navi_renderer_prepare_lifecycle(void)
 {
-    unsigned int display;
     if (ensure_condition() != 0) return;
     (void)pthread_mutex_lock(&g_runtime.lock);
     g_runtime.accepting_state = 1;
-    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
-        g_runtime.visibility[display].pending = 0;
-        g_runtime.screen[display].pending = 0;
-    }
-    g_runtime.gps.pending = 0;
-    memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
-    memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
-    memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
-    memset(&g_runtime.internationalization, 0,
-           sizeof(g_runtime.internationalization));
-    memset(&g_runtime.cluster_display, 0,
-           sizeof(g_runtime.cluster_display));
-    memset(&g_runtime.driver_distraction, 0,
-           sizeof(g_runtime.driver_distraction));
-    memset(&g_runtime.guidance_stop, 0,
-           sizeof(g_runtime.guidance_stop));
-    g_runtime.pointer_head = 0u;
-    g_runtime.pointer_count = 0u;
+    clear_pending_notifications_locked();
     g_runtime.pointer_accepted = 0u;
     g_runtime.pointer_dropped = 0u;
     g_runtime.pointer_move_coalesced = 0u;
@@ -1405,92 +1391,16 @@ void open_navi_renderer_prepare_lifecycle(void)
 
 void open_navi_renderer_end_lifecycle(void)
 {
-    unsigned int display;
     (void)pthread_mutex_lock(&g_runtime.lock);
     g_runtime.accepting_state = 0;
-    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
-        g_runtime.visibility[display].pending = 0;
-        g_runtime.screen[display].pending = 0;
-    }
-    g_runtime.gps.pending = 0;
-    memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
-    memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
-    memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
-    memset(&g_runtime.internationalization, 0,
-           sizeof(g_runtime.internationalization));
-    memset(&g_runtime.cluster_display, 0,
-           sizeof(g_runtime.cluster_display));
-    memset(&g_runtime.driver_distraction, 0,
-           sizeof(g_runtime.driver_distraction));
-    memset(&g_runtime.guidance_stop, 0,
-           sizeof(g_runtime.guidance_stop));
-    g_runtime.pointer_head = 0u;
-    g_runtime.pointer_count = 0u;
+    clear_pending_notifications_locked();
     g_runtime.frame_pending = 0;
     (void)pthread_mutex_unlock(&g_runtime.lock);
 }
 
-int open_navi_renderer_create(char *diagnostic, size_t diagnostic_capacity)
+/* Copies the installed backend, at its ABI level, into the active slots. */
+static void activate_installed_backend_locked(void)
 {
-    int create_result;
-    int start_result;
-    unsigned int display;
-    if (ensure_condition() != 0) {
-        set_diagnostic(diagnostic, diagnostic_capacity,
-                       "renderer condition initialization failed");
-        return -1;
-    }
-    (void)pthread_mutex_lock(&g_runtime.lock);
-    while (g_runtime.state == RENDERER_STOPPING ||
-           (g_runtime.state == RENDERER_COLD &&
-            g_runtime.thread_created != 0))
-        (void)pthread_cond_wait(&g_runtime.condition, &g_runtime.lock);
-    if (g_runtime.state == RENDERER_RUNNING) {
-        set_diagnostic(diagnostic, diagnostic_capacity,
-                       "backend renderer already live");
-        (void)pthread_mutex_unlock(&g_runtime.lock);
-        return 0;
-    }
-    if (g_runtime.state != RENDERER_COLD) {
-        (void)pthread_mutex_unlock(&g_runtime.lock);
-        return -1;
-    }
-    if (g_runtime.accepting_state == 0) {
-        g_runtime.accepting_state = 1;
-        for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
-            g_runtime.visibility[display].pending = 0;
-            g_runtime.screen[display].pending = 0;
-        }
-        g_runtime.gps.pending = 0;
-        memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
-        memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
-        memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
-        memset(&g_runtime.internationalization, 0,
-               sizeof(g_runtime.internationalization));
-        memset(&g_runtime.cluster_display, 0,
-               sizeof(g_runtime.cluster_display));
-        memset(&g_runtime.driver_distraction, 0,
-               sizeof(g_runtime.driver_distraction));
-        memset(&g_runtime.guidance_stop, 0,
-               sizeof(g_runtime.guidance_stop));
-        g_runtime.pointer_head = 0u;
-        g_runtime.pointer_count = 0u;
-    }
-    g_runtime.state = RENDERER_STARTING;
-    g_runtime.stop = 0;
-    g_runtime.startup_done = 0;
-    g_runtime.join_claimed = 0;
-    g_runtime.thread_detached = 0;
-    g_runtime.start_result = -1;
-    g_runtime.frame_sequence = 0u;
-    g_runtime.frame_pending = 0;
-    g_runtime.diagnostic[0] = '\0';
-    memset(&g_runtime.active_v2, 0, sizeof(g_runtime.active_v2));
-    memset(&g_runtime.active_v3, 0, sizeof(g_runtime.active_v3));
-    memset(&g_runtime.active_v4, 0, sizeof(g_runtime.active_v4));
-    memset(&g_runtime.active_v5, 0, sizeof(g_runtime.active_v5));
-    memset(&g_runtime.active_v6, 0, sizeof(g_runtime.active_v6));
-    g_runtime.outbound_services_active = 0;
     if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6) {
         g_runtime.active = g_runtime.installed_v6.v5.v4.v3.v2.v1;
         g_runtime.active_v2 = g_runtime.installed_v6.v5.v4.v3.v2;
@@ -1528,6 +1438,52 @@ int open_navi_renderer_create(char *diagnostic, size_t diagnostic_capacity)
         g_runtime.active = *open_navi_default_backend_v1();
         g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V1;
     }
+}
+
+int open_navi_renderer_create(char *diagnostic, size_t diagnostic_capacity)
+{
+    int create_result;
+    int start_result;
+    if (ensure_condition() != 0) {
+        set_diagnostic(diagnostic, diagnostic_capacity,
+                       "renderer condition initialization failed");
+        return -1;
+    }
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    while (g_runtime.state == RENDERER_STOPPING ||
+           (g_runtime.state == RENDERER_COLD &&
+            g_runtime.thread_created != 0))
+        (void)pthread_cond_wait(&g_runtime.condition, &g_runtime.lock);
+    if (g_runtime.state == RENDERER_RUNNING) {
+        set_diagnostic(diagnostic, diagnostic_capacity,
+                       "backend renderer already live");
+        (void)pthread_mutex_unlock(&g_runtime.lock);
+        return 0;
+    }
+    if (g_runtime.state != RENDERER_COLD) {
+        (void)pthread_mutex_unlock(&g_runtime.lock);
+        return -1;
+    }
+    if (g_runtime.accepting_state == 0) {
+        g_runtime.accepting_state = 1;
+        clear_pending_notifications_locked();
+    }
+    g_runtime.state = RENDERER_STARTING;
+    g_runtime.stop = 0;
+    g_runtime.startup_done = 0;
+    g_runtime.join_claimed = 0;
+    g_runtime.thread_detached = 0;
+    g_runtime.start_result = -1;
+    g_runtime.frame_sequence = 0u;
+    g_runtime.frame_pending = 0;
+    g_runtime.diagnostic[0] = '\0';
+    memset(&g_runtime.active_v2, 0, sizeof(g_runtime.active_v2));
+    memset(&g_runtime.active_v3, 0, sizeof(g_runtime.active_v3));
+    memset(&g_runtime.active_v4, 0, sizeof(g_runtime.active_v4));
+    memset(&g_runtime.active_v5, 0, sizeof(g_runtime.active_v5));
+    memset(&g_runtime.active_v6, 0, sizeof(g_runtime.active_v6));
+    g_runtime.outbound_services_active = 0;
+    activate_installed_backend_locked();
     g_runtime.active_service_token = next_service_token_locked();
     if (g_runtime.active_service_token == (uintptr_t)0u) {
         g_runtime.state = RENDERER_COLD;
