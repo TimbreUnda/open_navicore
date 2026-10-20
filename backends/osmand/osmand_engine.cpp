@@ -88,7 +88,10 @@ private:
     void check_off_route(const ui::GuidanceState& state, const ui::GeoPoint& position);
     bool update_guidance();
     bool ensure_navigation_worker();
-    ui::GeoPoint search_origin() const;
+    // Where the car is, for search, routes and the map: the position the
+    // car's GPS service reports (its own last known one included), else the
+    // last one seen since start, else Kyiv.
+    ui::GeoPoint current_location() const;
     std::chrono::milliseconds search_debounce() const;
     void advance_benchmark_autostart();
     // Drains UI map commands, advances the car camera and applies the pose to
@@ -204,6 +207,7 @@ private:
     double overview_box_[4] = {0.0, 0.0, 0.0, 0.0};
     OpenNaviBackendGpsV1 latest_gps_{};
     bool has_valid_position_ = false;
+    ui::GeoPoint last_location_{50.4501, 30.5234};
     bool gps_state_observed_ = false;
     bool last_logged_gps_valid_ = false;
     bool gps_dirty_ = false;
@@ -422,7 +426,7 @@ bool OsmAndEngine::initialize(const Config& config,
     renderer_->setConfiguration(configuration);
     resize(target);
     renderer_->setTarget(OsmAnd::Utilities::convertLatLonTo31(
-        OsmAnd::LatLon(50.4501, 30.5234)));
+        OsmAnd::LatLon(last_location_.latitude, last_location_.longitude)));
     renderer_->setZoom(13.5f);
     renderer_->setAzimuth(0.0f);
     renderer_->setElevationAngle(90.0f);
@@ -759,7 +763,13 @@ bool OsmAndEngine::apply_camera()
                            kind == ui::ManeuverKind::UTurn;
         camera_.set_maneuver(turn, guidance.distance_to_maneuver_metres, tight);
     }
-    const auto vehicle = motion_.predict(now_s);
+    auto vehicle = motion_.predict(now_s);
+    if (!vehicle.valid) {
+        // No fix: the map stays where the car was last (the marker is hidden).
+        const auto here = current_location();
+        vehicle.latitude = here.latitude;
+        vehicle.longitude = here.longitude;
+    }
     const auto pose = camera_.update(vehicle, dt);
     vector_view_.tile_zoom_limit = pose.tile_zoom;
     const bool changed = !pose_applied_ ||
@@ -1435,19 +1445,14 @@ void OsmAndEngine::update_pin_marker()
     view_->set_pin_marker(visible, screen.x, screen.y);
 }
 
-// "Near" for search: the car, or the map centre without a position fix.
-ui::GeoPoint OsmAndEngine::search_origin() const
+ui::GeoPoint OsmAndEngine::current_location() const
 {
     if (has_valid_position_)
         return {static_cast<double>(latest_gps_.latitude_e7) / 1e7,
                 static_cast<double>(latest_gps_.longitude_e7) / 1e7};
-    // Without any position the camera sits at 0,0 (the empty map of the
-    // bench): no better than the default.
-    if (pose_applied_ && (std::fabs(applied_pose_.latitude) > 0.01 ||
-                          std::fabs(applied_pose_.longitude) > 0.01))
-        return {applied_pose_.latitude, applied_pose_.longitude};
-    return {50.4501, 30.5234};
+    return last_location_;
 }
+
 
 // Quiet time after the last key before searching: the index answers in
 // milliseconds, so results follow the typing; OsmAnd's search takes seconds.
@@ -1728,7 +1733,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
                 for (const auto& r : navigation_->recents())
                     recent.push_back({r.latitude, r.longitude});
                 navigation_worker_->submit_search(submitted_search_revision_,
-                                                   navigation_->query(), search_origin(),
+                                                   navigation_->query(), current_location(),
                                                    std::move(recent));
                 }
             }
@@ -1745,15 +1750,9 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         submitted_route_revision_ = navigation_->route_revision();
         trace_result("engine=route_submit", submitted_route_revision_, 1u);
         if (ensure_navigation_worker()) {
-            ui::GeoPoint origin{50.4501, 30.5234};
-            if (has_valid_position_) {
-                origin.latitude = static_cast<double>(latest_gps_.latitude_e7) /
-                                  10000000.0;
-                origin.longitude = static_cast<double>(latest_gps_.longitude_e7) /
-                                   10000000.0;
-            }
             navigation_worker_->submit_route(submitted_route_revision_,
-                                              *navigation_->destination(), origin, true);
+                                              *navigation_->destination(), current_location(),
+                                              true);
         }
     }
     advance_benchmark_autostart();
@@ -1941,6 +1940,7 @@ int OsmAndEngine::gps(const OpenNaviBackendGpsV1& event)
 {
     latest_gps_ = event;
     has_valid_position_ = valid_coordinates(event);
+    if (has_valid_position_) last_location_ = current_location();
     gps_dirty_ = true;
     gps_times_[gps_time_next_] = std::chrono::steady_clock::now();
     gps_time_next_ = (gps_time_next_ + 1) % gps_times_.size();

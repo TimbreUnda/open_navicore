@@ -113,6 +113,11 @@ const Row kStrings[] = {
     /* OpenNavigation */ {"Open navigation to proceed", "Відкрийте навігацію, щоб продовжити",
                           "Ouvrez la navigation pour continuer",
                           "Abra la navegación para continuar"},
+    /* SettlementCity */ {"City", "Місто", "Ville", "Ciudad"},
+    /* SettlementTown */ {"Town", "Місто", "Ville", "Pueblo"},
+    /* SettlementVillage */ {"Village", "Село", "Village", "Pueblo"},
+    /* SettlementHamlet */ {"Hamlet", "Хутір", "Hameau", "Caserío"},
+    /* SettlementSuburb */ {"District", "Район", "Quartier", "Colonia"},
 };
 static_assert(sizeof(kStrings) / sizeof(kStrings[0]) == static_cast<std::size_t>(Str::Count_),
               "one row per Str");
@@ -363,6 +368,43 @@ const char* tr(Language value, Str key) noexcept
 }
 
 const char* tr(Str key) noexcept { return tr(language(), key); }
+
+std::string region_name(const std::string& file_key)
+{
+    struct Region { const char* key; const char* uk; const char* en; };
+    static const Region regions[] = {
+        {"cherkasy", "Черкаська обл.", "Cherkasy Oblast"},
+        {"chernihiv", "Чернігівська обл.", "Chernihiv Oblast"},
+        {"chernivtsi", "Чернівецька обл.", "Chernivtsi Oblast"},
+        {"crimea", "АР Крим", "Crimea"},
+        {"dnipro", "Дніпропетровська обл.", "Dnipropetrovsk Oblast"},
+        {"donetsk", "Донецька обл.", "Donetsk Oblast"},
+        {"ivano-frankivsk", "Івано-Франківська обл.", "Ivano-Frankivsk Oblast"},
+        {"kharkiv", "Харківська обл.", "Kharkiv Oblast"},
+        {"kherson", "Херсонська обл.", "Kherson Oblast"},
+        {"khmelnytskyy", "Хмельницька обл.", "Khmelnytskyi Oblast"},
+        {"kropyvnytskyi", "Кіровоградська обл.", "Kirovohrad Oblast"},
+        {"kyiv-city", "Київ", "Kyiv"},
+        {"kyiv", "Київська обл.", "Kyiv Oblast"},
+        {"luhansk", "Луганська обл.", "Luhansk Oblast"},
+        {"lviv", "Львівська обл.", "Lviv Oblast"},
+        {"mykolayiv", "Миколаївська обл.", "Mykolaiv Oblast"},
+        {"odesa", "Одеська обл.", "Odesa Oblast"},
+        {"poltava", "Полтавська обл.", "Poltava Oblast"},
+        {"rivne", "Рівненська обл.", "Rivne Oblast"},
+        {"sumy", "Сумська обл.", "Sumy Oblast"},
+        {"ternopil", "Тернопільська обл.", "Ternopil Oblast"},
+        {"transcarpathia", "Закарпатська обл.", "Zakarpattia Oblast"},
+        {"vinnytsya", "Вінницька обл.", "Vinnytsia Oblast"},
+        {"volyn", "Волинська обл.", "Volyn Oblast"},
+        {"zaporizhzhya", "Запорізька обл.", "Zaporizhzhia Oblast"},
+        {"zhytomyr", "Житомирська обл.", "Zhytomyr Oblast"},
+    };
+    for (const auto& region : regions)
+        if (file_key == region.key)
+            return language() == Language::Ukrainian ? region.uk : region.en;
+    return std::string();
+}
 
 const char* maneuver_action(ManeuverKind kind) noexcept
 {

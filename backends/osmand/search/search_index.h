@@ -24,6 +24,9 @@ public:
         std::string context;  // the settlement of a street or house, else empty
         double latitude = 0.0, longitude = 0.0;
         double score = 0.0;
+        int settlement_type = -1;  // OsmAnd subtype of the (street's) settlement
+        std::string region;        // map file key: "kharkiv", "kyiv-city", ...
+        bool prefix_only = false;  // a settlement named only by a word's start
     };
 
     SearchIndex() = default;
@@ -57,6 +60,7 @@ private:
     struct Context;  // one query: words, origin, recents, results
 
     std::string str(uint32_t off, uint32_t len) const { return std::string(pool_ + off, len); }
+    std::string region_key(uint16_t file) const;
     std::pair<uint32_t, uint32_t> token_range(const TokenRow* table, uint32_t n,
                                               const QueryWord& word) const;
     bool correct(QueryWord& word) const;

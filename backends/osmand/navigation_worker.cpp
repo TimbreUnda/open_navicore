@@ -115,13 +115,30 @@ ui::Destination destination(const OsmAnd::Address& address, const OsmAnd::LatLon
             coordinates.longitude};
 }
 
-// A search index hit: the settlement is the subtitle of a street or house.
+const char* settlement_kind(int subtype)
+{
+    using ui::loc::Str;
+    switch (subtype) {
+    case 0: return ui::loc::tr(Str::SettlementCity);
+    case 1: return ui::loc::tr(Str::SettlementTown);
+    case 2: return ui::loc::tr(Str::SettlementVillage);
+    case 3: return ui::loc::tr(Str::SettlementHamlet);
+    case 4: return ui::loc::tr(Str::SettlementSuburb);
+    default: return ui::loc::tr(Str::AddressPlace);
+    }
+}
+
+// A search index hit. The subtitle tells same-named places apart: a
+// settlement's kind and oblast ("Хутір · Миколаївська обл."), a street's or
+// house's settlement and oblast ("Дніпро · Дніпропетровська обл.").
 ui::Destination destination(const search::SearchIndex::Hit& hit, const OsmAnd::LatLon& origin)
 {
     const OsmAnd::LatLon coordinates(hit.latitude, hit.longitude);
     const auto point = OsmAnd::Utilities::convertLatLonTo31(coordinates);
-    std::string subtitle = hit.context;
-    if (subtitle.empty()) subtitle = ui::loc::tr(ui::loc::Str::AddressPlace);
+    const std::string region = ui::loc::region_name(hit.region);
+    std::string subtitle = hit.context.empty() ? settlement_kind(hit.settlement_type) : hit.context;
+    if (!region.empty() && region != hit.context && region != hit.title)
+        subtitle += " · " + region;
     return {"address:" + std::to_string(point.x) + ":" + std::to_string(point.y), hit.title,
             std::move(subtitle), distance_text(origin, coordinates), hit.latitude,
             hit.longitude};

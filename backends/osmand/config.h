@@ -18,7 +18,8 @@ struct Config {
     std::string recents = "/datastore/navicore-backend/recents.tsv";
     // Address search index built from the maps (search/search_index.h);
     // without it search uses OsmAnd's slower name search.
-    std::string search_index = "/datastore/navicore-backend/search.idx";
+    // Lives with the maps it is built from.
+    std::string search_index = "/navi_map/osm/search.idx";
     // UI language: the marker holds "uk", "en", "fr-CA" or "es-MX" (bench
     // override, also OPEN_NAVICORE_OSMAND_LANGUAGE); without one the radio's
     // own HMI language file is read ("english.cfg"); English otherwise.

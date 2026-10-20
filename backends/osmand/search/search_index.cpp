@@ -103,6 +103,7 @@ struct SearchIndex::Context {
     const std::vector<Point>* recent;
     int user_file = -1;
     std::vector<Hit> hits;
+    bool exact_settlement = false;  // a settlement matched its whole name
 
     double km_to(double lat, double lon) const
     {
@@ -230,7 +231,7 @@ std::vector<SearchIndex::Hit> SearchIndex::search(const std::string& text, Point
                                                   const std::vector<Point>& recent,
                                                   std::size_t limit) const
 {
-    Context ctx{origin, &recent, -1, {}};
+    Context ctx{origin, &recent, -1, {}, false};
     if (!base_) return {};
     double best_area = 1e30;  // the user's region: the smallest file box around them
     const int32_t lat = static_cast<int32_t>(origin.latitude * 1e6);
@@ -270,6 +271,11 @@ std::vector<SearchIndex::Hit> SearchIndex::search(const std::string& text, Point
         for (const auto& reading : readings(fixed)) search_reading(reading, 1, false, ctx);
     }
 
+    // "Київ" names Kyiv; the villages Київське only start with it, so they
+    // follow everything else (they lead again once "київс" is typed).
+    if (ctx.exact_settlement)
+        for (auto& hit : ctx.hits)
+            if (hit.prefix_only) hit.score -= 100;
     std::stable_sort(ctx.hits.begin(), ctx.hits.end(),
                      [](const Hit& a, const Hit& b) { return a.score > b.score; });
     // One entry per place: OSM repeats a house per entrance, a street per way.
@@ -351,13 +357,27 @@ void SearchIndex::search_reading(Query q, int typos, bool fix_in_city, Context& 
         }
 }
 
+// "Ukraine_kharkiv_europe_2.obf" -> "kharkiv".
+std::string SearchIndex::region_key(uint16_t file) const
+{
+    if (file >= count_[0]) return std::string();
+    std::string name = str(files_[file].name_off, files_[file].name_len);
+    const std::size_t start = name.find('_');
+    const std::size_t end = name.find("_europe");
+    if (start == std::string::npos || end == std::string::npos || end <= start) return name;
+    return name.substr(start + 1, end - start - 1);
+}
+
 void SearchIndex::add_city(uint32_t c, const Query& q, int exact, int typos, Context& ctx) const
 {
     const auto& city = cities_[c];
     const double lat = city.lat / 1e6, lon = city.lon / 1e6;
+    const bool prefix_only = exact < static_cast<int>(tokens_of(str(city.tok_off, city.tok_len)).size());
+    if (!prefix_only) ctx.exact_settlement = true;
     ctx.hits.push_back({Kind::City, str(city.title_off, city.title_len), std::string(), lat, lon,
-                        score(Kind::City, q, exact, 0, city.subtype, ctx.km_to(lat, lon), 0, typos,
-                              city.file == ctx.user_file, ctx.is_recent(lat, lon))});
+                        score(Kind::City, q, exact, 0, city.subtype, ctx.km_to(lat, lon), 0,
+                              typos, city.file == ctx.user_file, ctx.is_recent(lat, lon)),
+                        city.subtype, region_key(city.file), prefix_only});
 }
 
 void SearchIndex::add_street(uint32_t s, const Query& q, uint32_t mask, int city_exact, int typos,
@@ -373,9 +393,11 @@ void SearchIndex::add_street(uint32_t s, const Query& q, uint32_t mask, int city
     const std::string place = str(city.title_off, city.title_len);
     const bool home = city.file == ctx.user_file;
     const double lat = street.lat / 1e6, lon = street.lon / 1e6;
+    const std::string region = region_key(city.file);
     ctx.hits.push_back({Kind::Street, name, place, lat, lon,
                         score(Kind::Street, q, exact + city_exact, unmatched, city.subtype,
-                              ctx.km_to(lat, lon), 0, typos, home, ctx.is_recent(lat, lon))});
+                              ctx.km_to(lat, lon), 0, typos, home, ctx.is_recent(lat, lon)),
+                        city.subtype, region, false});
     if (q.house.empty()) return;
     for (uint32_t h = street.house_first; h < street.house_first + street.house_count; ++h) {
         const auto& house = houses_[h];
@@ -385,7 +407,8 @@ void SearchIndex::add_street(uint32_t s, const Query& q, uint32_t mask, int city
         const double hl = house.lat / 1e6, ho = house.lon / 1e6;
         ctx.hits.push_back({Kind::House, name + ", " + number, place, hl, ho,
                             score(Kind::House, q, exact + city_exact, unmatched, city.subtype,
-                                  ctx.km_to(hl, ho), quality, typos, home, ctx.is_recent(hl, ho))});
+                                  ctx.km_to(hl, ho), quality, typos, home, ctx.is_recent(hl, ho)),
+                            city.subtype, region, false});
     }
 }
 
