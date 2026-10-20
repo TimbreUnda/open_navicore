@@ -874,21 +874,21 @@ static void renderer_cleanup(int started, int surfaced)
     open_navi_renderer_platform_destroy();
 }
 
-static void *renderer_thread(void *unused)
+/* Outbound services (V3 and later) are offered to the backend from start. */
+static int active_abi_has_outbound_services(void)
+{
+    return active_abi_at_least(OPEN_NAVI_BACKEND_ABI_V3);
+}
+
+/* Creates the platform target and starts the backend with the services
+ * table matching its ABI. *started is set once the backend is running. */
+static int start_backend(uintptr_t service_token, int *started)
 {
     OpenNaviBackendServicesV1 services;
     OpenNaviBackendServicesV2 services_v2;
     OpenNaviBackendServicesV3 services_v3;
-    RenderEvent event;
-    uintptr_t service_token;
     int status;
-    int started = 0;
-    int surfaced = 0;
-    (void)unused;
 
-    (void)pthread_mutex_lock(&g_runtime.lock);
-    service_token = g_runtime.active_service_token;
-    (void)pthread_mutex_unlock(&g_runtime.lock);
     memset(&services, 0, sizeof(services));
     services.abi_version = OPEN_NAVI_BACKEND_ABI_V1;
     services.struct_size = sizeof(services);
@@ -916,34 +916,39 @@ static void *renderer_thread(void *unused)
         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6) {
         status = g_runtime.active_v6.start_v3(
             g_runtime.active.backend_context, &services_v3);
-        if (status == 0) started = 1;
+        if (status == 0) *started = 1;
     } else if (status == 0 &&
         (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
          g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
          g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5)) {
         status = g_runtime.active_v3.start_v2(
             g_runtime.active.backend_context, &services_v2);
-        if (status == 0) started = 1;
+        if (status == 0) *started = 1;
     } else if (status == 0 && g_runtime.active.start != NULL) {
         status = g_runtime.active.start(g_runtime.active.backend_context,
                                         &services);
-        if (status == 0) started = 1;
+        if (status == 0) *started = 1;
     } else if (status == 0) {
-        started = 1;
+        *started = 1;
     }
-    if (status == 0 &&
-        (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
-         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
-         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6)) {
-        (void)pthread_mutex_lock(&g_runtime.lock);
-        if (g_runtime.state == RENDERER_STARTING && g_runtime.stop == 0)
-            g_runtime.outbound_services_active = 1;
-        (void)pthread_mutex_unlock(&g_runtime.lock);
-    }
-    if (status == 0 && stop_requested()) status = OPEN_NAVI_RENDERER_CANCELLED;
+    return status;
+}
 
-    if (status == 0 && g_runtime.active.surface_created != NULL) {
+static void enable_outbound_services_while_starting(void)
+{
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    if (g_runtime.state == RENDERER_STARTING && g_runtime.stop == 0)
+        g_runtime.outbound_services_active = 1;
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+}
+
+/* Gives the backend its drawing surface inside a platform frame. *surfaced
+ * is set once the backend holds the surface. */
+static int create_backend_surface(int *surfaced)
+{
+    int status = 0;
+
+    if (g_runtime.active.surface_created != NULL) {
         char diagnostic[257];
         diagnostic[0] = '\0';
         if (open_navi_renderer_platform_begin_frame(
@@ -954,22 +959,24 @@ static void *renderer_thread(void *unused)
                 g_runtime.active.backend_context, &g_runtime.target);
             (void)open_navi_renderer_platform_end_frame(
                 0, diagnostic, sizeof(diagnostic));
-            if (status == 0) surfaced = 1;
+            if (status == 0) *surfaced = 1;
         }
-    } else if (status == 0) {
-        surfaced = 1;
+    } else {
+        *surfaced = 1;
     }
-    if (status == 0 && stop_requested()) status = OPEN_NAVI_RENDERER_CANCELLED;
+    return status;
+}
 
+/* Moves to RUNNING, or to stopping when startup failed or was cancelled,
+ * then wakes whoever waits for the start result. Returns the final status. */
+static int publish_start_result(int status)
+{
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (status == 0 && g_runtime.stop == 0 &&
         g_runtime.state == RENDERER_STARTING) {
         g_runtime.state = RENDERER_RUNNING;
         g_runtime.outbound_services_active =
-            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
-            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
-            g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
+            active_abi_has_outbound_services();
     } else {
         if (status == 0) status = OPEN_NAVI_RENDERER_CANCELLED;
         g_runtime.stop = 1;
@@ -982,21 +989,24 @@ static void *renderer_thread(void *unused)
     g_runtime.startup_done = 1;
     (void)pthread_cond_broadcast(&g_runtime.condition);
     (void)pthread_mutex_unlock(&g_runtime.lock);
+    return status;
+}
 
-    if (status == 0) (void)request_frame((void *)service_token);
-    while (status == 0) {
+/* Runs until stop is requested (0) or the queue or platform fails (-1). */
+static int run_event_loop(uintptr_t service_token)
+{
+    RenderEvent event;
+
+    for (;;) {
         int drain_result;
         int take_result;
         drain_result = open_navi_renderer_platform_input_pending()
                            ? drain_platform_pointer() : 0;
-        if (drain_result < 0) {
-            status = -1;
-            break;
-        }
+        if (drain_result < 0) return -1;
         /* A full bounded drain can be followed by another full batch forever.
          * Observe teardown between every batch rather than relying on a
          * condition wait that a perpetual unrelated-event flood bypasses. */
-        if (stop_requested()) break;
+        if (stop_requested()) return 0;
         if (drain_result > 0) {
             int available;
             (void)pthread_mutex_lock(&g_runtime.lock);
@@ -1005,45 +1015,48 @@ static void *renderer_thread(void *unused)
             if (!available) continue;
         }
         take_result = take_event(&event);
-        if (take_result == 0) break;
-        if (take_result < 0) {
-            status = -1;
-            break;
-        }
+        if (take_result == 0) return 0;
+        if (take_result < 0) return -1;
         if (take_result == 1) dispatch_event(&event, service_token);
     }
-    if (status != 0) {
-        unsigned int display;
-        (void)pthread_mutex_lock(&g_runtime.lock);
-        g_runtime.accepting_state = 0;
-        g_runtime.stop = 1;
-        g_runtime.active_service_token = (uintptr_t)0u;
-        g_runtime.outbound_services_active = 0;
-        for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
-            g_runtime.visibility[display].pending = 0;
-            g_runtime.screen[display].pending = 0;
-        }
-        g_runtime.gps.pending = 0;
-        memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
-        memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
-        memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
-        memset(&g_runtime.internationalization, 0,
-               sizeof(g_runtime.internationalization));
-        memset(&g_runtime.cluster_display, 0,
-               sizeof(g_runtime.cluster_display));
-        memset(&g_runtime.driver_distraction, 0,
-               sizeof(g_runtime.driver_distraction));
-        memset(&g_runtime.guidance_stop, 0,
-               sizeof(g_runtime.guidance_stop));
-        g_runtime.pointer_head = 0u;
-        g_runtime.pointer_count = 0u;
-        g_runtime.frame_pending = 0;
-        if (g_runtime.state != RENDERER_COLD)
-            g_runtime.state = RENDERER_STOPPING;
-        (void)pthread_mutex_unlock(&g_runtime.lock);
-    }
-    renderer_cleanup(started, surfaced);
+}
 
+/* After a failure: stop accepting input and drop everything still queued. */
+static void discard_pending_state(void)
+{
+    unsigned int display;
+
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    g_runtime.accepting_state = 0;
+    g_runtime.stop = 1;
+    g_runtime.active_service_token = (uintptr_t)0u;
+    g_runtime.outbound_services_active = 0;
+    for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
+        g_runtime.visibility[display].pending = 0;
+        g_runtime.screen[display].pending = 0;
+    }
+    g_runtime.gps.pending = 0;
+    memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
+    memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
+    memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
+    memset(&g_runtime.internationalization, 0,
+           sizeof(g_runtime.internationalization));
+    memset(&g_runtime.cluster_display, 0,
+           sizeof(g_runtime.cluster_display));
+    memset(&g_runtime.driver_distraction, 0,
+           sizeof(g_runtime.driver_distraction));
+    memset(&g_runtime.guidance_stop, 0,
+           sizeof(g_runtime.guidance_stop));
+    g_runtime.pointer_head = 0u;
+    g_runtime.pointer_count = 0u;
+    g_runtime.frame_pending = 0;
+    if (g_runtime.state != RENDERER_COLD)
+        g_runtime.state = RENDERER_STOPPING;
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+}
+
+static void return_to_cold_state(void)
+{
     (void)pthread_mutex_lock(&g_runtime.lock);
     g_runtime.active_service_token = (uintptr_t)0u;
     g_runtime.outbound_services_active = 0;
@@ -1057,6 +1070,36 @@ static void *renderer_thread(void *unused)
     memset(&g_runtime.target, 0, sizeof(g_runtime.target));
     (void)pthread_cond_broadcast(&g_runtime.condition);
     (void)pthread_mutex_unlock(&g_runtime.lock);
+}
+
+static void *renderer_thread(void *unused)
+{
+    uintptr_t service_token;
+    int status;
+    int started = 0;
+    int surfaced = 0;
+    (void)unused;
+
+    (void)pthread_mutex_lock(&g_runtime.lock);
+    service_token = g_runtime.active_service_token;
+    (void)pthread_mutex_unlock(&g_runtime.lock);
+
+    status = start_backend(service_token, &started);
+    if (status == 0 && active_abi_has_outbound_services())
+        enable_outbound_services_while_starting();
+    if (status == 0 && stop_requested()) status = OPEN_NAVI_RENDERER_CANCELLED;
+
+    if (status == 0) status = create_backend_surface(&surfaced);
+    if (status == 0 && stop_requested()) status = OPEN_NAVI_RENDERER_CANCELLED;
+
+    status = publish_start_result(status);
+    if (status == 0) {
+        (void)request_frame((void *)service_token);
+        status = run_event_loop(service_token);
+    }
+    if (status != 0) discard_pending_state();
+    renderer_cleanup(started, surfaced);
+    return_to_cold_state();
     return NULL;
 }
 
