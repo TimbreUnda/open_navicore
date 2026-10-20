@@ -94,6 +94,10 @@ Config Config::from_environment()
     config.performance_metrics = marker_or_environment(
         "OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS",
         "/datastore/navicore-backend/enable-performance-metrics");
+    config.voice = marker_or_environment(
+        "OPEN_NAVICORE_OSMAND_VOICE",
+        "/datastore/navicore-backend/enable-voice");
+    config.voice_queue = path("OPEN_NAVICORE_OSMAND_VOICE_QUEUE", config.voice_queue);
 
     return config;
 }

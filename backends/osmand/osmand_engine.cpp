@@ -8,6 +8,8 @@
 #include "frame_metrics.h"
 #include "guidance_tracker.h"
 #include "navigation_worker.h"
+#include "voice_link.h"
+#include "voice_prompts.h"
 #include "ui/gl_overlay_compositor.h"
 #include "ui/localization.h"
 #include "ui/navigation_model.h"
@@ -87,6 +89,8 @@ private:
     // position stays off the route.
     void check_off_route(const ui::GuidanceState& state, const ui::GeoPoint& position);
     bool update_guidance();
+    void speak_guidance(const ui::GuidanceState& state);
+    void reset_voice();
     bool ensure_navigation_worker();
     // Where the car is, for search, routes and the map: the position the
     // car's GPS service reports (its own last known one included), else the
@@ -129,6 +133,9 @@ private:
     std::chrono::steady_clock::time_point search_revision_observed_at_{};
     bool search_revision_observed_ = false;
     GuidanceTracker guidance_tracker_;
+    // Spoken guidance: the planner decides what to say, the client hands it to navi_voiced.
+    PromptPlanner prompt_planner_;
+    std::unique_ptr<VoiceClient> voice_;
     CameraController camera_;
     MotionEstimator motion_;
     std::vector<ui::MapCommand> map_commands_;
@@ -329,6 +336,10 @@ bool OsmAndEngine::initialize(const Config& config,
     }
     simulation_enabled_ = config.simulate_route;
     simulate_detour_ = config.simulate_detour;
+    if (config.voice) {
+        voice_.reset(new VoiceClient(config.voice_queue));
+        trace(("voice=enabled queue=" + config.voice_queue).c_str());
+    }
     if (simulate_detour_)
         trace("simulation=detour_enabled");
     autostart_ = config.benchmark_autostart && config.simulate_route
@@ -526,6 +537,7 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
     overview_box_[3] = max_longitude;
     overview_pending_ = fit;
     guidance_tracker_.reset();
+    reset_voice();
     off_route_ = false;
     guidance_active_ = false;
     simulation_running_ = false;
@@ -548,6 +560,24 @@ bool OsmAndEngine::clear_route()
         camera_.recenter();
     trace("route=cleared");
     return true;
+}
+
+// Spoken guidance runs in navi_voiced; here only the decision of what to say and a
+// non-blocking hand-over (voice_link.h). A route change drops what is queued.
+void OsmAndEngine::speak_guidance(const ui::GuidanceState& state)
+{
+    if (!voice_)
+        return;
+    const ui::loc::Language language = ui::loc::language();
+    for (const SpokenPrompt& prompt : prompt_planner_.update(state, language))
+        voice_->send(prompt, language);
+}
+
+void OsmAndEngine::reset_voice()
+{
+    prompt_planner_.reset();
+    if (voice_)
+        voice_->cancel();
 }
 
 bool OsmAndEngine::update_guidance()
@@ -627,6 +657,7 @@ bool OsmAndEngine::update_guidance()
         state = guidance_tracker_.unavailable(route);
     }
     state.recalculating = navigation_->rerouting();
+    speak_guidance(state);
     gps_dirty_ = false;
     guidance_active_ = true;
     guidance_tracker_us_ += since_us(tracker_started);
@@ -1585,6 +1616,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         guidance_active_ = false;
         sync_vector_guidance(nullptr);
         guidance_tracker_.reset();
+        reset_voice();
         simulation_running_ = false;
         // Simulated motion ends with guidance; real GPS keeps following.
         if (!has_valid_position_) motion_.reset();
@@ -1690,6 +1722,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
              guidance_active_) {
         guidance_active_ = false;
         guidance_tracker_.reset();
+        reset_voice();
         simulation_running_ = false;
         // Simulated motion ends with guidance; real GPS keeps following.
         if (!has_valid_position_) motion_.reset();
@@ -2011,6 +2044,7 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
         autostart_ = Autostart::Off;
         simulation_arrival_reported_ = false;
         guidance_tracker_.reset();
+        reset_voice();
         compositor_.release(mode == ReleaseMode::ContextLost);
         overlay_occupancy_ = ui::OverlayOccupancy();
         view_.reset();
