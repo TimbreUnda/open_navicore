@@ -132,7 +132,8 @@ larger milestone containing it is complete.
 - [ ] Apply the approved visual system to home, search, results, route preview,
   active guidance, maneuvers, and arrival states.
 - [ ] Connect meaningful maneuver, distance, ETA, reroute, and arrival semantics.
-- [ ] Add voice guidance and stock audio-focus integration.
+- [ ] Add voice guidance and stock audio-focus integration (wiring analysis:
+  `docs/design/voice-guidance-wiring.md`).
 - [ ] Add cluster guidance using recovered typed callbacks.
 - [ ] Define and test degraded states for missing GPS, missing map data, route
   failure, storage failure, and renderer recovery.

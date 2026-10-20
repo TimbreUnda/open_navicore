@@ -29,6 +29,11 @@ struct Config {
     bool benchmark_autostart = false;  // enable-benchmark-autostart
     bool simulate_detour = false;      // simulate-detour
     bool performance_metrics = false;  // enable-performance-metrics
+    // Spoken guidance through the voice daemon (navi_voiced). Off unless the
+    // marker or OPEN_NAVICORE_OSMAND_VOICE=1 is present; the prompts go to the
+    // POSIX message queue /dev/mq/navicore-voice and are dropped when nobody listens.
+    bool voice = false;                // enable-voice
+    std::string voice_queue = "/navicore-voice";
 
     double simulation_speed_metres_per_second = 20.0;
 

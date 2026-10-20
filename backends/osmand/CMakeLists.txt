@@ -16,16 +16,44 @@ endif()
 # Navigation UI and guidance logic without OsmAnd (host-testable).
 add_library(navigation_ui STATIC
   diagnostics.cpp guidance_tracker.cpp cluster_payload.cpp camera_controller.cpp
-  route_check.cpp label_geometry.cpp ui/compact_text.cpp ui/localization.cpp ui/navigation_model.cpp
+  route_check.cpp label_geometry.cpp voice_prompts.cpp voice_worker.cpp voice_link.cpp qnx_pcm_out.cpp ui/compact_text.cpp ui/localization.cpp ui/navigation_model.cpp
   ui/navigation_view.cpp ui/overlay_occupancy.cpp ui/recents_store.cpp)
 target_include_directories(navigation_ui PUBLIC ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(navigation_ui PUBLIC lvgl)
+find_package(Threads REQUIRED)
+target_link_libraries(navigation_ui PUBLIC lvgl Threads::Threads)
 target_compile_options(navigation_ui PRIVATE ${ONC_WARNINGS})
 set_target_properties(navigation_ui PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(ONC_QNX)
   target_compile_options(navigation_ui PRIVATE ${ONC_TARGET_FLAGS} -fvisibility=hidden)
+endif()
+
+# Voice daemon pieces that the plugin does not link (it keeps an exact, reviewed
+# dependency set): the process-backed audio focus. Host-testable.
+add_library(voice_daemon STATIC process_focus.cpp)
+target_include_directories(voice_daemon PUBLIC ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(voice_daemon PUBLIC navigation_ui)
+target_compile_options(voice_daemon PRIVATE ${ONC_WARNINGS})
+set_target_properties(voice_daemon PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(ONC_QNX)
+  target_compile_options(voice_daemon PRIVATE ${ONC_TARGET_FLAGS})
 else()
   return()
+endif()
+
+# navi_voiced: the speech daemon (docs/design/voice-guidance-wiring.md). It needs
+# RHVoice built for QNX by uk-voice/tts/build.sh; pass the build tree and headers:
+#   -DRHVOICE_BUILD=<tts-qnx>/build/rhvoice-qnx -DRHVOICE_INCLUDE=<tts-qnx>/dl/RHVoice/src/include
+if(RHVOICE_BUILD AND RHVOICE_INCLUDE)
+  file(GLOB_RECURSE ONC_RHVOICE_OBJECTS CONFIGURE_DEPENDS
+    ${RHVOICE_BUILD}/src/core/*.o ${RHVOICE_BUILD}/src/hts_engine/*.o ${RHVOICE_BUILD}/src/lib/*.o)
+  set_source_files_properties(${ONC_RHVOICE_OBJECTS} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+  add_executable(navi_voiced navi_voiced.cpp rhvoice_engine.cpp ${ONC_RHVOICE_OBJECTS})
+  target_include_directories(navi_voiced PRIVATE ${RHVOICE_INCLUDE})
+  target_compile_options(navi_voiced PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})
+  target_link_libraries(navi_voiced PRIVATE voice_daemon navigation_ui asound m)
+  target_link_options(navi_voiced PRIVATE -static-libstdc++ -static-libgcc)
+  set_target_properties(navi_voiced PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    SKIP_BUILD_RPATH ON)
 endif()
 
 # ---- QNX: the plugin ------------------------------------------------------
