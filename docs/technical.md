@@ -517,6 +517,24 @@ cluster ignores bits 6..7 (`n + 64` draws `n`), which might redraw without a
 visible flash if `vs_can` forwards the whole byte; the semantic API does not
 allow it.
 
+### Cluster agent client
+
+Open NaviCore can hand the cluster to the common cluster agent (`cagentd`, sibling checkout
+`cluster-agent`) instead of sending the PAS record itself. The mode is off by default and is
+selected by the marker file `/datastore/navicore-backend/cluster-agent` (re-read at most every
+five seconds and on reset). With the marker present `open_navi_cluster_backend_publish()` still
+validates and serializes the state (so invalid input returns the same `OPEN_NAVI_CLUSTER_*`
+status), then sends the semantic state as one non-blocking AF_UNIX datagram (source NAVI) and
+returns 0 when the kernel accepted it, 1 when it was dropped; no local publication history is
+kept, because change masks, arbitration against other sources (Android Auto) and the PAS call
+belong to the agent's output backend. `open_navi_cluster_backend_reset()` sends RELEASE once
+after an update. Road text is passed as UTF-8, control characters become spaces and text over
+255 bytes is cut on a character boundary. The agent expires a silent source after its TTL
+(default 10 s), so a producer that keeps navigating should publish at least every few seconds.
+The client is compiled in when a `cluster-agent` checkout is found (`-DONC_CAGENT_DIR=`);
+otherwise the marker is ignored. Do not enable the marker while the agent has no working PAS
+backend: the cluster would stay dark.
+
 ## Native Screen/EGL milestone
 
 The readiness worker creates a minimal native renderer after adapter 6 is
