@@ -11,6 +11,7 @@ add_library(provider SHARED
   runtime/open_navi_callback_backend.c
   runtime/open_navi_cluster_backend.c
   runtime/open_navi_cluster_agent.c
+  runtime/open_navi_cluster_relay.c
   ${ONC_CAGENT_SOURCES}
   runtime/open_navi_gps_backend.c
   runtime/open_navi_pointer_backend.c
