@@ -48,18 +48,19 @@ set(HOST_RENDERER_SOURCES ${src}/renderer/open_navi_renderer.c ${src}/renderer/o
     ${src}/backend/open_navi_default_backend.c ${src}/platform/host/open_navi_renderer_stub.c)
 set(HOST_PROVIDER_SOURCES ${src}/compat/qr39/navicore_compat.c ${src}/runtime/open_navi_api_telemetry.c
     ${src}/runtime/open_navi_callback_backend.c ${src}/runtime/open_navi_cluster_backend.c
+    ${src}/runtime/open_navi_cluster_agent.c ${src}/runtime/open_navi_cluster_relay.c ${ONC_CAGENT_SOURCES}
     ${src}/backend/open_navi_backend_loader.c ${src}/compat/qr39/host_callbacks.c
     ${src}/runtime/open_navi_gps_backend.c ${src}/runtime/open_navi_pointer_backend.c
     ${src}/runtime/open_navi_scalar_backend.c ${HOST_RENDERER_SOURCES})
 set(PROVIDER_INCLUDES ${ONC_ROOT}/include ${src}/include ${src}/compat/qr39 ${src}/runtime ${src}/backend
-    ${src}/renderer)
+    ${src}/renderer ${ONC_CAGENT_INCLUDES})
 
 # onc_test(<name> SOURCES ... [DEFINES ...] [INCLUDES ...] [LIBS ...])
 function(onc_test name)
   cmake_parse_arguments(T "" "" "SOURCES;DEFINES;INCLUDES;LIBS" ${ARGN})
   add_executable(${name} ${T_SOURCES})
   target_include_directories(${name} PRIVATE ${PROVIDER_INCLUDES} ${T_INCLUDES})
-  target_compile_definitions(${name} PRIVATE ${T_DEFINES})
+  target_compile_definitions(${name} PRIVATE ${T_DEFINES} ${ONC_CAGENT_DEFINES})
   target_compile_options(${name} PRIVATE ${ONC_WARNINGS} -O2 -g)
   target_link_libraries(${name} PRIVATE Threads::Threads ${CMAKE_DL_LIBS} ${T_LIBS})
   add_test(NAME ${name} COMMAND ${name})
@@ -73,7 +74,10 @@ onc_test(lifecycle_smoke SOURCES ${HOST_PROVIDER_SOURCES} lifecycle_smoke.c
 onc_test(pas_callbacks_smoke SOURCES ${src}/runtime/open_navi_callback_backend.c
          ${src}/compat/qr39/host_callbacks.c pas_callbacks_smoke.c DEFINES OPEN_NAVI_TESTING)
 onc_test(cluster_backend_smoke SOURCES ${src}/runtime/open_navi_cluster_backend.c
-         cluster_backend_smoke.c)
+         ${src}/runtime/open_navi_cluster_agent.c ${src}/runtime/open_navi_cluster_relay.c ${ONC_CAGENT_SOURCES} cluster_backend_smoke.c)
+onc_test(cluster_agent_client_smoke SOURCES ${src}/runtime/open_navi_cluster_backend.c
+         ${src}/runtime/open_navi_cluster_agent.c ${src}/runtime/open_navi_cluster_relay.c ${ONC_CAGENT_SOURCES} cluster_agent_client_smoke.c
+         DEFINES OPEN_NAVI_TESTING)
 onc_test(screen_input_smoke SOURCES ${src}/renderer/open_navi_screen_input.c screen_input_smoke.c)
 onc_test(default_backend_gl_smoke SOURCES ${src}/backend/open_navi_default_backend.c
          default_backend_gl_smoke.c INCLUDES fixtures/fake_gles)

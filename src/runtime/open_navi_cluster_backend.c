@@ -1,6 +1,7 @@
 #include <open_navicore/cluster.h>
 
 #include "open_navi_callback_backend.h"
+#include "open_navi_cluster_agent.h"
 
 #include <pthread.h>
 #include <string.h>
@@ -372,7 +373,7 @@ static uint16_t calculate_changed(const uint8_t *current,
     return changed;
 }
 
-uint32_t open_navi_cluster_backend_publish(const OpenNaviClusterNavigationState *state)
+static uint32_t publish_state(const OpenNaviClusterNavigationState *state, int allow_agent)
 {
     uint8_t record[OPEN_NAVI_CLUSTER_RECORD_SIZE];
     uint16_t changed;
@@ -389,6 +390,13 @@ uint32_t open_navi_cluster_backend_publish(const OpenNaviClusterNavigationState 
 
     status = open_navi_cluster_backend_serialize(state, 0u, record);
     if (status != OPEN_NAVI_CLUSTER_OK) {
+        producer_end(lifecycle_epoch);
+        return status;
+    }
+    if (allow_agent != 0 && open_navi_cluster_agent_active() != 0) {
+        /* The cluster agent owns the output (arbitration, change masks, PAS). The validated
+         * state goes to it as a datagram; no local publication history is kept. */
+        status = open_navi_cluster_agent_publish(state);
         producer_end(lifecycle_epoch);
         return status;
     }
@@ -460,8 +468,19 @@ uint32_t open_navi_cluster_backend_publish(const OpenNaviClusterNavigationState 
     return status;
 }
 
+uint32_t open_navi_cluster_backend_publish(const OpenNaviClusterNavigationState *state)
+{
+    return publish_state(state, 1);
+}
+
+uint32_t open_navi_cluster_backend_publish_pas(const OpenNaviClusterNavigationState *state)
+{
+    return publish_state(state, 0);
+}
+
 void open_navi_cluster_backend_reset(void)
 {
+    open_navi_cluster_agent_release();
     (void)pthread_mutex_lock(&g_cluster_lock);
     ++g_history_epoch;
     if (g_history_epoch == 0u) {

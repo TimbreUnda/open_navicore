@@ -10,6 +10,9 @@ add_library(provider SHARED
   runtime/open_navi_api_telemetry.c
   runtime/open_navi_callback_backend.c
   runtime/open_navi_cluster_backend.c
+  runtime/open_navi_cluster_agent.c
+  runtime/open_navi_cluster_relay.c
+  ${ONC_CAGENT_SOURCES}
   runtime/open_navi_gps_backend.c
   runtime/open_navi_pointer_backend.c
   runtime/open_navi_scalar_backend.c
@@ -19,15 +22,15 @@ add_library(provider SHARED
   renderer/open_navi_screen_input.c
   platform/qnx/open_navi_renderer_qnx.c)
 target_include_directories(provider PRIVATE ${ONC_ROOT}/include include compat/qr39 runtime backend
-                           renderer)
+                           renderer ${ONC_CAGENT_INCLUDES})
 target_compile_options(provider PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS} ${ONC_THUMB}
                        -fvisibility=hidden)
-target_compile_definitions(provider PRIVATE _REENTRANT)
+target_compile_definitions(provider PRIVATE _REENTRANT ${ONC_CAGENT_DEFINES})
 set_target_properties(provider PROPERTIES OUTPUT_NAME NaviCore
                       LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 target_link_options(provider PRIVATE -Wl,-soname,libNaviCore.so -Wl,--gc-sections
                     -Wl,--no-undefined -static-libgcc)
-target_link_libraries(provider PRIVATE screen EGL GLESv2 c)
+target_link_libraries(provider PRIVATE screen EGL GLESv2 socket c)
 # The four PAS entry points are exported, nothing else (tests/check_elf.sh).
 add_custom_command(TARGET provider POST_BUILD
   COMMAND ${QNX_ENV} READELF=${QNX_READELF} sh ${ONC_ROOT}/tests/check_elf.sh
