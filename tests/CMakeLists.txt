@@ -20,6 +20,13 @@ if(ONC_QNX)
     set_target_properties(osmand_${t}_smoke PROPERTIES SKIP_BUILD_RPATH ON)
   endforeach()
   # Search option B: the prebuilt index (search_proto/), no OsmAnd.
+  # The navigation's index search (backends/osmand/search) on a query set.
+  add_executable(search_index_bench search_index_bench.cpp
+                 ${ONC_ROOT}/backends/osmand/search/search_index.cpp)
+  target_include_directories(search_index_bench PRIVATE ${ONC_ROOT}/backends/osmand)
+  target_compile_options(search_index_bench PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})
+  target_link_options(search_index_bench PRIVATE -static-libstdc++ -static-libgcc)
+  target_link_libraries(search_index_bench PRIVATE m c)
   add_executable(search_b search_proto/search_b.cpp)
   target_include_directories(search_b PRIVATE ${ONC_ROOT}/backends/osmand)
   target_compile_options(search_b PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})

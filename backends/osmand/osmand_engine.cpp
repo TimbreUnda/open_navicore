@@ -1441,7 +1441,11 @@ ui::GeoPoint OsmAndEngine::search_origin() const
     if (has_valid_position_)
         return {static_cast<double>(latest_gps_.latitude_e7) / 1e7,
                 static_cast<double>(latest_gps_.longitude_e7) / 1e7};
-    if (pose_applied_) return {applied_pose_.latitude, applied_pose_.longitude};
+    // Without any position the camera sits at 0,0 (the empty map of the
+    // bench): no better than the default.
+    if (pose_applied_ && (std::fabs(applied_pose_.latitude) > 0.01 ||
+                          std::fabs(applied_pose_.longitude) > 0.01))
+        return {applied_pose_.latitude, applied_pose_.longitude};
     return {50.4501, 30.5234};
 }
 

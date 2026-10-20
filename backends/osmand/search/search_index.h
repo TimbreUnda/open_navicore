@@ -60,7 +60,8 @@ private:
     std::pair<uint32_t, uint32_t> token_range(const TokenRow* table, uint32_t n,
                                               const QueryWord& word) const;
     bool correct(QueryWord& word) const;
-    void search_reading(Query q, int typos, Context& ctx) const;
+    bool correct_in_city(const CityRow& city, uint32_t mask, Query& q, int& fixes) const;
+    void search_reading(Query q, int typos, bool fix_in_city, Context& ctx) const;
     void add_city(uint32_t c, const Query& q, int exact, int typos, Context& ctx) const;
     void add_street(uint32_t s, const Query& q, uint32_t mask, int city_exact, int typos,
                     Context& ctx) const;

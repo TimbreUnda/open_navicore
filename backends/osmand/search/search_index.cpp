@@ -26,23 +26,24 @@ std::vector<std::string> tokens_of(const std::string& joined)
     return out;
 }
 
-std::vector<uint32_t> codepoints(const char* s, std::size_t n)
+void codepoints(const char* s, std::size_t n, std::vector<uint32_t>& out)
 {
-    std::vector<uint32_t> out;
+    out.clear();
     const std::string text(s, n);
     for (std::size_t i = 0; i < text.size();) {
         uint32_t cp;
         decode(text, i, cp);
         out.push_back(cp);
     }
-    return out;
 }
 
-int bounded_levenshtein(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b, int bound)
+int bounded_levenshtein(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b, int bound,
+                        std::vector<int>& prev, std::vector<int>& cur)
 {
     const std::size_t n = a.size(), m = b.size();
     if ((n > m ? n - m : m - n) > static_cast<std::size_t>(bound)) return bound + 1;
-    std::vector<int> prev(m + 1), cur(m + 1);
+    prev.resize(m + 1);
+    cur.resize(m + 1);
     for (std::size_t j = 0; j <= m; ++j) prev[j] = static_cast<int>(j);
     for (std::size_t i = 1; i <= n; ++i) {
         cur[0] = static_cast<int>(i);
@@ -56,6 +57,44 @@ int bounded_levenshtein(const std::vector<uint32_t>& a, const std::vector<uint32
     }
     return prev[m];
 }
+
+// Finds the closest candidate word to a misspelt one: within 1 edit (2 for
+// words of 8+ letters), never the word itself, the most used on a tie.
+class Closest {
+public:
+    explicit Closest(const std::string& word) : word_bytes_(word.size())
+    {
+        codepoints(word.data(), word.size(), wanted_);
+        bound_ = wanted_.size() >= 8 ? 2 : 1;
+        best_distance_ = bound_ + 1;
+    }
+    bool usable() const { return wanted_.size() >= 4; }
+
+    void offer(const char* text, std::size_t bytes, uint32_t weight)
+    {
+        // A letter is 1-3 bytes: a length this far off cannot be close.
+        const std::size_t gap = bytes > word_bytes_ ? bytes - word_bytes_ : word_bytes_ - bytes;
+        if (gap > 3u * static_cast<std::size_t>(bound_)) return;
+        codepoints(text, bytes, token_);
+        const int d = bounded_levenshtein(wanted_, token_, bound_, prev_, cur_);
+        if (d == 0 || d > bound_) return;
+        if (d < best_distance_ || (d == best_distance_ && weight > best_weight_)) {
+            best_distance_ = d;
+            best_weight_ = weight;
+            best_.assign(text, bytes);
+        }
+    }
+    bool found() const { return best_distance_ <= bound_; }
+    const std::string& best() const { return best_; }
+
+private:
+    std::size_t word_bytes_;
+    std::vector<uint32_t> wanted_, token_;
+    std::vector<int> prev_, cur_;
+    int bound_ = 1, best_distance_ = 2;
+    uint32_t best_weight_ = 0;
+    std::string best_;
+};
 
 }  // namespace
 
@@ -145,30 +184,46 @@ std::pair<uint32_t, uint32_t> SearchIndex::token_range(const TokenRow* table, ui
 // used one on a tie.
 bool SearchIndex::correct(QueryWord& word) const
 {
-    const auto wanted = codepoints(word.text.data(), word.text.size());
-    if (wanted.size() < 4) return false;
-    const int bound = wanted.size() >= 8 ? 2 : 1;
-    int best_distance = bound + 1;
-    uint32_t best_count = 0;
-    std::string best;
+    Closest closest(word.text);
+    if (!closest.usable()) return false;
     for (int dict = 0; dict < 2; ++dict) {
         const TokenRow* table = dict ? street_tokens_ : city_tokens_;
         const uint32_t n = dict ? count_[5] : count_[4];
-        for (uint32_t i = 0; i < n; ++i) {
-            const int d = bounded_levenshtein(
-                wanted, codepoints(pool_ + table[i].tok_off, table[i].tok_len), bound);
-            if (d == 0) continue;
-            if (d < best_distance || (d == best_distance && table[i].count > best_count)) {
-                best_distance = d;
-                best_count = table[i].count;
-                best = str(table[i].tok_off, table[i].tok_len);
-            }
-        }
+        for (uint32_t i = 0; i < n; ++i)
+            closest.offer(pool_ + table[i].tok_off, table[i].tok_len, table[i].count);
     }
-    if (best_distance > bound) return false;
-    word.text = best;
+    if (!closest.found()) return false;
+    word.text = closest.best();
     word.incomplete = false;
     return true;
+}
+
+// The words of `mask` that no street of the city has, corrected against that
+// city's street words only: fast, and the likeliest intended street.
+bool SearchIndex::correct_in_city(const CityRow& city, uint32_t mask, Query& q, int& fixes) const
+{
+    std::vector<std::string> words;
+    for (uint32_t s = city.street_first; s < city.street_first + city.street_count; ++s)
+        for (auto& token : tokens_of(str(streets_[s].tok_off, streets_[s].tok_len)))
+            words.push_back(std::move(token));
+    std::sort(words.begin(), words.end());
+    words.erase(std::unique(words.begin(), words.end()), words.end());
+    fixes = 0;
+    for (std::size_t w = 0; w < q.words.size() && w < 32; ++w) {
+        if (!(mask & (1u << w))) continue;
+        bool known = false;
+        for (const auto& token : words)
+            if (word_match(q.words[w], token)) { known = true; break; }
+        if (known) continue;
+        Closest closest(q.words[w].text);
+        if (!closest.usable()) return false;
+        for (const auto& token : words) closest.offer(token.data(), token.size(), 1);
+        if (!closest.found()) return false;
+        q.words[w].text = closest.best();
+        q.words[w].incomplete = false;
+        ++fixes;
+    }
+    return fixes > 0;
 }
 
 std::vector<SearchIndex::Hit> SearchIndex::search(const std::string& text, Point origin,
@@ -188,19 +243,31 @@ std::vector<SearchIndex::Hit> SearchIndex::search(const std::string& text, Point
     }
 
     const Query parsed = parse(text);
-    for (const auto& reading : readings(parsed)) search_reading(reading, 0, ctx);
-    // Nothing found: a typo that is a word elsewhere ("камєнь"); replace one
-    // word, longest first, by its closest dictionary word.
+    for (const auto& reading : readings(parsed)) search_reading(reading, 0, false, ctx);
+    // Nothing found: a misspelt street in a named settlement ("дніпро
+    // червоний камєнь"), corrected against that settlement's streets.
+    if (ctx.hits.empty())
+        for (const auto& reading : readings(parsed)) search_reading(reading, 0, true, ctx);
+    // Still nothing: a typo that is a word elsewhere; replace one word,
+    // longest first, by its closest word in the whole index.
+    // Words in no dictionary first (certainly misspelt), then longer ones.
+    auto unknown = [this](const QueryWord& word) {
+        const auto c = token_range(city_tokens_, count_[4], word);
+        const auto s = token_range(street_tokens_, count_[5], word);
+        return c.first == c.second && s.first == s.second;
+    };
     std::vector<std::size_t> order(parsed.words.size());
     for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        const bool ua = unknown(parsed.words[a]), ub = unknown(parsed.words[b]);
+        if (ua != ub) return ua;
         return parsed.words[a].text.size() > parsed.words[b].text.size();
     });
     for (std::size_t w : order) {
         if (!ctx.hits.empty()) break;
         Query fixed = parsed;
         if (!correct(fixed.words[w])) continue;
-        for (const auto& reading : readings(fixed)) search_reading(reading, 1, ctx);
+        for (const auto& reading : readings(fixed)) search_reading(reading, 1, false, ctx);
     }
 
     std::stable_sort(ctx.hits.begin(), ctx.hits.end(),
@@ -221,15 +288,10 @@ std::vector<SearchIndex::Hit> SearchIndex::search(const std::string& text, Point
     return unique;
 }
 
-void SearchIndex::search_reading(Query q, int typos, Context& ctx) const
+void SearchIndex::search_reading(Query q, int typos, bool fix_in_city, Context& ctx) const
 {
     if (q.words.empty()) return;
     if (q.words.size() > 31) q.words.resize(31);
-    for (auto& word : q.words) {
-        const auto c = token_range(city_tokens_, count_[4], word);
-        const auto s = token_range(street_tokens_, count_[5], word);
-        if (c.first == c.second && s.first == s.second && correct(word)) ++typos;
-    }
     int region = -1;
     if (q.region)
         for (uint32_t f = 0; f < count_[0]; ++f)
@@ -255,12 +317,21 @@ void SearchIndex::search_reading(Query q, int typos, Context& ctx) const
         if (!used) continue;
         const uint32_t rest = all & ~used;
         if (!rest) {
-            add_city(c, q, exact, typos, ctx);
+            if (!fix_in_city) add_city(c, q, exact, typos, ctx);
+            continue;
+        }
+        if (fix_in_city) {
+            Query fixed = q;
+            int fixes = 0;
+            if (!correct_in_city(city, rest, fixed, fixes)) continue;
+            for (uint32_t s = city.street_first; s < city.street_first + city.street_count; ++s)
+                add_street(s, fixed, rest, exact, typos + fixes, ctx);
             continue;
         }
         for (uint32_t s = city.street_first; s < city.street_first + city.street_count; ++s)
             add_street(s, q, rest, exact, typos, ctx);
     }
+    if (fix_in_city) return;
     // A street without its settlement ("хрещатик 5"): every word in the name.
     int rarest = -1;
     uint32_t rarest_count = ~0u;
