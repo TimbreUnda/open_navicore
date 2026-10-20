@@ -1,9 +1,13 @@
 // Search option B: the prebuilt index of build_index.py, memory mapped.
+// With --model-a it behaves as option A does (OsmAnd data: typo fixes for
+// settlement names only, street-only lookup in the user's region first)
+// and estimates A's radio time from the OsmAnd costs measured on the radio.
 //
-//   search_b INDEX QUERIES.tsv
+//   search_b INDEX QUERIES.tsv [--model-a]
 #include "harness.h"
 
 #include <cstring>
+#include <set>
 #include <fcntl.h>
 #include <malloc.h>
 #include <sys/mman.h>
@@ -135,7 +139,7 @@ int bounded_levenshtein(const std::vector<uint32_t>& a, const std::vector<uint32
 
 // A word found in neither dictionary: the closest token (1 edit, 2 for
 // long words), preferring the most used one.
-bool correct(const Index& ix, sq::QueryWord& word)
+bool correct(const Index& ix, sq::QueryWord& word, bool street_names = true)
 {
     const auto wanted = codepoints(word.text.data(), word.text.size());
     const int bound = wanted.size() >= 8 ? 2 : 1;
@@ -143,7 +147,7 @@ bool correct(const Index& ix, sq::QueryWord& word)
     int best_distance = bound + 1;
     uint32_t best_count = 0;
     std::string best;
-    for (int dict = 0; dict < 2; ++dict) {
+    for (int dict = 0; dict < (street_names ? 2 : 1); ++dict) {
         const TokenRow* table = dict ? ix.street_tokens : ix.city_tokens;
         const uint32_t n = dict ? ix.count[5] : ix.count[4];
         for (uint32_t i = 0; i < n; ++i) {
@@ -165,8 +169,16 @@ bool correct(const Index& ix, sq::QueryWord& word)
 
 class SearchB {
 public:
-    explicit SearchB(const Index& ix) : ix_(ix)
+    // Option A costs on the radio (osmand_search_smoke, 2026-10-19): a
+    // city's streets from the OBF (0.6 s for Дніпро), one street's houses
+    // (1-11 ms), one region file's name index scan (120-260 ms).
+    static constexpr double kDniproStreetsMs = 600, kHousesMs = 5, kScanMs = 200;
+
+    explicit SearchB(const Index& ix, bool model_a) : ix_(ix), model_a_(model_a)
     {
+        for (uint32_t c = 0; c < ix.count[1]; ++c)
+            if (ix.cities[c].subtype == 0 && ix.str(ix.cities[c].title_off, ix.cities[c].title_len) == "Дніпро")
+                ms_per_street_ = kDniproStreetsMs / std::max(1u, ix.cities[c].street_count);
         // The user's region: the smallest file box around the position.
         double best_area = 1e30;
         for (uint32_t f = 0; f < ix.count[0]; ++f) {
@@ -179,8 +191,11 @@ public:
         }
     }
 
+    double last_cost_ms() const { return cost_ms_; }
+
     std::vector<sq::Result> operator()(const std::string& text) const
     {
+        cost_ms_ = 0;
         const sq::Query parsed = sq::parse(text);
         std::vector<sq::Result> out;
         for (const auto& reading : sq::readings(parsed)) search(reading, 0, out);
@@ -194,7 +209,7 @@ public:
         for (std::size_t w : order) {
             if (!out.empty()) break;
             sq::Query fixed = parsed;
-            if (!correct(ix_, fixed.words[w])) continue;
+            if (!correct(ix_, fixed.words[w], !model_a_)) continue;
             for (const auto& reading : sq::readings(fixed)) search(reading, 1, out);
         }
         sq::rank(out);
@@ -207,6 +222,7 @@ private:
         if (q.words.empty()) return;
         if (q.words.size() > 31) q.words.resize(31);
         for (auto& word : q.words) {
+            if (model_a_) break;  // A has no street dictionary to check against
             const auto c = token_range(ix_, ix_.city_tokens, ix_.count[4], word);
             const auto s = token_range(ix_, ix_.street_tokens, ix_.count[5], word);
             if (c.first == c.second && s.first == s.second && correct(ix_, word)) ++typos;
@@ -241,8 +257,14 @@ private:
                 add_city(c, q, exact, typos, out);
                 continue;
             }
+            if (model_a_ && loaded_cities_.insert(c).second)
+                cost_ms_ += ms_per_street_ * city.street_count;
             for (uint32_t s = city.street_first; s < city.street_first + city.street_count; ++s)
                 add_street(s, q, rest, exact, typos, out);
+        }
+        if (model_a_) {
+            street_alone_a(q, region, all, typos, out, !out.empty());
+            return;
         }
         // Street alone ("хрещатик 5"): every word in the street name.
         int rarest = -1;
@@ -294,10 +316,11 @@ private:
                        sq::score(sq::Kind::Street, q, exact + city_exact, unmatched, city.subtype,
                                  sq::km(sq::kUserLat, sq::kUserLon, lat, lon), 0, typos, home)});
         if (q.house.empty()) return;
+        if (model_a_ && loaded_streets_.insert(s).second) cost_ms_ += kHousesMs;
         for (uint32_t h = street.house_first; h < street.house_first + street.house_count; ++h) {
             const auto& house = ix_.houses[h];
             const std::string number = ix_.str(house.number_off, house.number_len);
-            const int quality = sq::house_match(q.house, sq::fold_word(number));
+            const int quality = sq::house_match(q.house, sq::house_key(number));
             if (!quality) continue;
             const double hl = house.lat / 1e6, ho = house.lon / 1e6;
             out.push_back({sq::Kind::House, title + ", " + number, hl, ho,
@@ -307,25 +330,59 @@ private:
         }
     }
 
+    // A's street-only path: OsmAnd's name index with the longest word, in the
+    // named or the user's region, then in every region if that finds nothing.
+    void street_alone_a(const sq::Query& q, int region, uint32_t all, int typos,
+                        std::vector<sq::Result>& out, bool city_found) const
+    {
+        std::size_t longest = 0;
+        for (std::size_t w = 1; w < q.words.size(); ++w)
+            if (q.words[w].text.size() > q.words[longest].text.size()) longest = w;
+        sq::QueryWord word = q.words[longest];
+        word.incomplete = true;  // CHECK_STARTS_FROM_SPACE: prefix of a name word
+        const auto range = token_range(ix_, ix_.street_tokens, ix_.count[5], word);
+        const int first_file = region >= 0 ? region : user_file_;
+        const std::size_t before = out.size();
+        for (int pass = 0; pass < 2 && out.size() == before; ++pass) {
+            if (pass == 1 && (region >= 0 || city_found)) break;  // all regions: last resort
+            cost_ms_ += kScanMs * (pass == 0 ? 1 : ix_.count[0] - 1);
+            for (uint32_t t = range.first; t < range.second; ++t)
+                for (uint32_t p = 0; p < ix_.street_tokens[t].count; ++p) {
+                    const uint32_t s = ix_.street_postings[ix_.street_tokens[t].first + p];
+                    const int file = ix_.cities[ix_.streets[s].city].file;
+                    if ((pass == 0) != (file == first_file)) continue;
+                    add_street(s, q, all, 0, typos, out);
+                }
+        }
+    }
+
     const Index& ix_;
+    bool model_a_;
     int user_file_ = -1;
+    double ms_per_street_ = 0;
+    mutable double cost_ms_ = 0;
+    mutable std::set<uint32_t> loaded_cities_, loaded_streets_;
 };
 
 }  // namespace
 
 int main(int argc, char** argv)
 {
-    if (argc != 3) {
-        std::fprintf(stderr, "usage: search_b INDEX QUERIES.tsv\n");
+    const bool model_a = argc == 4 && std::string(argv[3]) == "--model-a";
+    if (argc != 3 && !model_a) {
+        std::fprintf(stderr, "usage: search_b INDEX QUERIES.tsv [--model-a]\n");
         return 2;
     }
     const double start = sq::now_ms();
     Index ix;
     if (!ix.open(argv[1])) return 3;
-    SearchB search(ix);
-    std::printf("B init_ms=%.1f index_bytes=%zu heap_bytes=%d\n", sq::now_ms() - start, ix.size,
-                mallinfo().uordblks);
-    sq::run_queries("B", argv[2], [&](const std::string& q) { return search(q); });
-    std::printf("B heap_bytes_after=%d\n", mallinfo().uordblks);
+    SearchB search(ix, model_a);
+    const char* label = model_a ? "Amodel" : "B";
+    std::printf("%s init_ms=%.1f index_bytes=%zu heap_bytes=%d\n", label, sq::now_ms() - start,
+                ix.size, mallinfo().uordblks);
+    sq::run_queries(label, argv[2], [&](const std::string& q) { return search(q); },
+                    model_a ? std::function<double()>([&] { return search.last_cost_ms(); })
+                            : std::function<double()>());
+    std::printf("%s heap_bytes_after=%d\n", label, mallinfo().uordblks);
     return 0;
 }
