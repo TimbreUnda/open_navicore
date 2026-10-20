@@ -22,6 +22,7 @@
 #include <cagent/proto.h>
 #endif
 
+#ifdef OPEN_NAVI_CLUSTER_AGENT
 #include <time.h>
 
 static void usleep_us(long us)
@@ -31,6 +32,7 @@ static void usleep_us(long us)
     ts.tv_nsec = (us % 1000000) * 1000;
     nanosleep(&ts, NULL);
 }
+#endif
 
 static uint32_t g_pas_calls;
 static uint8_t g_last_record[OPEN_NAVI_CLUSTER_RECORD_SIZE];
