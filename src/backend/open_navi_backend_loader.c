@@ -98,346 +98,277 @@ static void set_flag(uint32_t *flag)
     (void)pthread_mutex_unlock(&g_loader.lock);
 }
 
+/* Where a handshake check reports to, and how it names the query version. */
+typedef struct {
+    char *buffer;
+    size_t capacity;
+    const char *label;
+} HandshakeLog;
+
+static int field_matches(const HandshakeLog *log, const char *field,
+                         uint32_t got, uint32_t expected)
+{
+    if (got == expected) return 1;
+    set_diagnostic(log->buffer, log->capacity,
+                   "%s %s mismatch got=%u expected=%u", log->label, field,
+                   (unsigned int)got, (unsigned int)expected);
+    return 0;
+}
+
+#define REQUIRE_FIELD(log, base, field, expected)                             \
+    do {                                                                      \
+        if (!field_matches((log), #field, (uint32_t)(base)->field,           \
+                           (uint32_t)(expected)))                             \
+            return -1;                                                        \
+    } while (0)
+
+static int require_callbacks(const HandshakeLog *log, int present)
+{
+    if (present) return 0;
+    set_diagnostic(log->buffer, log->capacity,
+                   "%s descriptor missing required callback", log->label);
+    return -1;
+}
+
+static int handshake_valid(const HandshakeLog *log)
+{
+    set_diagnostic(log->buffer, log->capacity, "%s handshake valid",
+                   log->label);
+    return 0;
+}
+
+/* The V1 query header that every query version embeds first: magic, sizes of
+ * the shared structs, capabilities and the build id. Only the ABI numbers and
+ * the build id differ between query versions. */
+static int check_query_header(const HandshakeLog *log,
+                              const OpenNaviBackendPluginV1 *plugin,
+                              uint32_t query_abi_version,
+                              uint32_t backend_abi_version,
+                              size_t query_struct_size,
+                              const uint8_t *expected_build_id)
+{
+    REQUIRE_FIELD(log, plugin, magic0, OPEN_NAVI_PLUGIN_MAGIC0);
+    REQUIRE_FIELD(log, plugin, magic1, OPEN_NAVI_PLUGIN_MAGIC1);
+    REQUIRE_FIELD(log, plugin, query_abi_version, query_abi_version);
+    REQUIRE_FIELD(log, plugin, struct_size, query_struct_size);
+    REQUIRE_FIELD(log, plugin, endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
+    REQUIRE_FIELD(log, plugin, pointer_bytes, sizeof(void *));
+    REQUIRE_FIELD(log, plugin, backend_abi_version, backend_abi_version);
+    REQUIRE_FIELD(log, plugin, backend_v1_size, sizeof(OpenNaviBackendV1));
+    REQUIRE_FIELD(log, plugin, backend_v2_size, sizeof(OpenNaviBackendV2));
+    REQUIRE_FIELD(log, plugin, render_target_v1_size,
+                  sizeof(OpenNaviBackendRenderTargetV1));
+    REQUIRE_FIELD(log, plugin, frame_v1_size, sizeof(OpenNaviBackendFrameV1));
+    REQUIRE_FIELD(log, plugin, gps_v1_size, sizeof(OpenNaviBackendGpsV1));
+    REQUIRE_FIELD(log, plugin, visibility_v1_size,
+                  sizeof(OpenNaviBackendVisibilityV1));
+    REQUIRE_FIELD(log, plugin, screen_v1_size, sizeof(OpenNaviBackendScreenV1));
+    REQUIRE_FIELD(log, plugin, pointer_v1_size,
+                  sizeof(OpenNaviBackendPointerV1));
+    REQUIRE_FIELD(log, plugin, services_v1_size,
+                  sizeof(OpenNaviBackendServicesV1));
+    REQUIRE_FIELD(log, plugin, vehicle_v2_size,
+                  sizeof(OpenNaviBackendVehicleV2));
+    REQUIRE_FIELD(log, plugin, gps_interval_v2_size,
+                  sizeof(OpenNaviBackendGpsIntervalV2));
+    REQUIRE_FIELD(log, plugin, audio_v2_size, sizeof(OpenNaviBackendAudioV2));
+    /* Optional capabilities (pointer contacts, window area) may be added to the
+     * exact required set in every query version. */
+    if (!field_matches(log, "capabilities",
+                       plugin->capabilities &
+                           ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES,
+                       OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES))
+        return -1;
+    if (memcmp(plugin->build_id, expected_build_id,
+               OPEN_NAVI_PLUGIN_BUILD_ID_BYTES) != 0) {
+        set_diagnostic(log->buffer, log->capacity, "%s build id mismatch",
+                       log->label);
+        return -1;
+    }
+    return 0;
+}
+
+static int check_query_v2_fields(const HandshakeLog *log,
+                                 const OpenNaviBackendPluginV2 *plugin)
+{
+    REQUIRE_FIELD(log, plugin, services_v2_size,
+                  sizeof(OpenNaviBackendServicesV2));
+    REQUIRE_FIELD(log, plugin, cluster_v1_size,
+                  sizeof(OpenNaviBackendClusterV1));
+    REQUIRE_FIELD(log, plugin, utf8_span_v1_size,
+                  sizeof(OpenNaviBackendUtf8SpanV1));
+    REQUIRE_FIELD(log, plugin, audio_availability_v1_size,
+                  sizeof(OpenNaviBackendAudioAvailabilityV1));
+    REQUIRE_FIELD(log, plugin, thread_status_v1_size,
+                  sizeof(OpenNaviBackendThreadStatusV1));
+    REQUIRE_FIELD(log, plugin, backend_v3_size, sizeof(OpenNaviBackendV3));
+    REQUIRE_FIELD(log, plugin, capabilities_v2,
+                  OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
+    return 0;
+}
+
+static int check_query_v3_fields(const HandshakeLog *log,
+                                 const OpenNaviBackendPluginV3 *plugin)
+{
+    REQUIRE_FIELD(log, plugin, internationalization_v1_size,
+                  sizeof(OpenNaviBackendInternationalizationV1));
+    REQUIRE_FIELD(log, plugin, cluster_display_v1_size,
+                  sizeof(OpenNaviBackendClusterDisplayV1));
+    REQUIRE_FIELD(log, plugin, backend_v4_size, sizeof(OpenNaviBackendV4));
+    REQUIRE_FIELD(log, plugin, capabilities_v3,
+                  OPEN_NAVI_PLUGIN_V3_REQUIRED_CAPABILITIES);
+    return 0;
+}
+
+static int check_query_v4_fields(const HandshakeLog *log,
+                                 const OpenNaviBackendPluginV4 *plugin)
+{
+    REQUIRE_FIELD(log, plugin, driver_distraction_v1_size,
+                  sizeof(OpenNaviBackendDriverDistractionV1));
+    REQUIRE_FIELD(log, plugin, backend_v5_size, sizeof(OpenNaviBackendV5));
+    REQUIRE_FIELD(log, plugin, capabilities_v4,
+                  OPEN_NAVI_PLUGIN_V4_REQUIRED_CAPABILITIES);
+    return 0;
+}
+
+#undef REQUIRE_FIELD
+
+/* Callbacks every backend version provides, other than the start entry point. */
+static int has_core_callbacks(const OpenNaviBackendV1 *backend)
+{
+    return backend->stop != NULL && backend->surface_created != NULL &&
+           backend->surface_destroyed != NULL &&
+           backend->visibility_changed != NULL &&
+           backend->screen_changed != NULL && backend->gps_changed != NULL &&
+           backend->pointer_changed != NULL && backend->render_frame != NULL;
+}
+
+static int has_v2_callbacks(const OpenNaviBackendV2 *backend)
+{
+    return has_core_callbacks(&backend->v1) &&
+           backend->vehicle_changed != NULL &&
+           backend->gps_interval_changed != NULL &&
+           backend->audio_changed != NULL;
+}
+
+static int has_v3_callbacks(const OpenNaviBackendV3 *backend)
+{
+    return has_v2_callbacks(&backend->v2) && backend->start_v2 != NULL;
+}
+
+static int has_v4_callbacks(const OpenNaviBackendV4 *backend)
+{
+    return has_v3_callbacks(&backend->v3) &&
+           backend->internationalization_changed != NULL &&
+           backend->cluster_display_changed != NULL;
+}
+
+static int has_v5_callbacks(const OpenNaviBackendV5 *backend)
+{
+    return has_v4_callbacks(&backend->v4) &&
+           backend->driver_distraction_changed != NULL;
+}
+
 int open_navi_backend_plugin_validate(const OpenNaviBackendPluginV1 *plugin,
                                  char *diagnostic,
                                  size_t diagnostic_capacity)
 {
-#define REQUIRE_EQUAL(field, expected)                                        \
-    do {                                                                      \
-        if (plugin->field != (uint32_t)(expected)) {                          \
-            set_diagnostic(diagnostic, diagnostic_capacity,                   \
-                           "plugin %s mismatch got=%u expected=%u",          \
-                           #field, (unsigned int)plugin->field,                \
-                           (unsigned int)(expected));                          \
-            return -1;                                                        \
-        }                                                                     \
-    } while (0)
-    const OpenNaviBackendV1 *backend;
+    const HandshakeLog log = {diagnostic, diagnostic_capacity, "plugin"};
+    const OpenNaviBackendV2 *backend;
     if (plugin == NULL) {
         set_diagnostic(diagnostic, diagnostic_capacity, "null plugin query");
         return -1;
     }
-    REQUIRE_EQUAL(magic0, OPEN_NAVI_PLUGIN_MAGIC0);
-    REQUIRE_EQUAL(magic1, OPEN_NAVI_PLUGIN_MAGIC1);
-    REQUIRE_EQUAL(query_abi_version, OPEN_NAVI_PLUGIN_QUERY_ABI_V1);
-    REQUIRE_EQUAL(struct_size, sizeof(*plugin));
-    REQUIRE_EQUAL(endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
-    REQUIRE_EQUAL(pointer_bytes, sizeof(void *));
-    REQUIRE_EQUAL(backend_abi_version, OPEN_NAVI_BACKEND_ABI_V2);
-    REQUIRE_EQUAL(backend_v1_size, sizeof(OpenNaviBackendV1));
-    REQUIRE_EQUAL(backend_v2_size, sizeof(OpenNaviBackendV2));
-    REQUIRE_EQUAL(render_target_v1_size,
-                  sizeof(OpenNaviBackendRenderTargetV1));
-    REQUIRE_EQUAL(frame_v1_size, sizeof(OpenNaviBackendFrameV1));
-    REQUIRE_EQUAL(gps_v1_size, sizeof(OpenNaviBackendGpsV1));
-    REQUIRE_EQUAL(visibility_v1_size, sizeof(OpenNaviBackendVisibilityV1));
-    REQUIRE_EQUAL(screen_v1_size, sizeof(OpenNaviBackendScreenV1));
-    REQUIRE_EQUAL(pointer_v1_size, sizeof(OpenNaviBackendPointerV1));
-    REQUIRE_EQUAL(services_v1_size, sizeof(OpenNaviBackendServicesV1));
-    REQUIRE_EQUAL(vehicle_v2_size, sizeof(OpenNaviBackendVehicleV2));
-    REQUIRE_EQUAL(gps_interval_v2_size,
-                  sizeof(OpenNaviBackendGpsIntervalV2));
-    REQUIRE_EQUAL(audio_v2_size, sizeof(OpenNaviBackendAudioV2));
-    /* Optional capabilities (pointer contacts, window area) may be added to the exact
-     * required set in every query version. */
-    if ((plugin->capabilities & ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES) !=
-        (uint32_t)OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES) {
-        set_diagnostic(diagnostic, diagnostic_capacity,
-                       "plugin capabilities mismatch got=%u expected=%u",
-                       (unsigned int)plugin->capabilities,
-                       (unsigned int)OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
+    if (check_query_header(&log, plugin, OPEN_NAVI_PLUGIN_QUERY_ABI_V1,
+                           OPEN_NAVI_BACKEND_ABI_V2, sizeof(*plugin),
+                           g_expected_build_id) != 0)
         return -1;
-    }
-    if (memcmp(plugin->build_id, g_expected_build_id,
-               sizeof(g_expected_build_id)) != 0) {
-        set_diagnostic(diagnostic, diagnostic_capacity,
-                       "plugin build id mismatch");
+    backend = &plugin->backend;
+    if (require_callbacks(&log,
+            backend->v1.abi_version == OPEN_NAVI_BACKEND_ABI_V2 &&
+            backend->v1.struct_size == sizeof(OpenNaviBackendV2) &&
+            backend->v1.start != NULL && has_v2_callbacks(backend)) != 0)
         return -1;
-    }
-    backend = &plugin->backend.v1;
-    if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V2 ||
-        backend->struct_size != sizeof(OpenNaviBackendV2) ||
-        backend->start == NULL || backend->stop == NULL ||
-        backend->surface_created == NULL ||
-        backend->surface_destroyed == NULL ||
-        backend->visibility_changed == NULL ||
-        backend->screen_changed == NULL || backend->gps_changed == NULL ||
-        backend->pointer_changed == NULL || backend->render_frame == NULL ||
-        plugin->backend.vehicle_changed == NULL ||
-        plugin->backend.gps_interval_changed == NULL ||
-        plugin->backend.audio_changed == NULL) {
-        set_diagnostic(diagnostic, diagnostic_capacity,
-                       "plugin descriptor missing required callback");
-        return -1;
-    }
-    set_diagnostic(diagnostic, diagnostic_capacity, "plugin handshake valid");
-    return 0;
-#undef REQUIRE_EQUAL
+    return handshake_valid(&log);
 }
 
 int open_navi_backend_plugin_validate_v2(const OpenNaviBackendPluginV2 *plugin,
                                     char *diagnostic,
                                     size_t diagnostic_capacity)
 {
-#define REQUIRE_V2(field, expected)                                           \
-    do {                                                                      \
-        if ((field) != (uint32_t)(expected)) {                                \
-            set_diagnostic(diagnostic, diagnostic_capacity,                   \
-                           "plugin v2 %s mismatch got=%u expected=%u",       \
-                           #field, (unsigned int)(field),                      \
-                           (unsigned int)(expected));                          \
-            return -1;                                                        \
-        }                                                                     \
-    } while (0)
-    const OpenNaviBackendV1 *backend;
+    const HandshakeLog log = {diagnostic, diagnostic_capacity, "plugin v2"};
+    const OpenNaviBackendV3 *backend;
     if (plugin == NULL) {
         set_diagnostic(diagnostic, diagnostic_capacity,
                        "null plugin v2 query");
         return -1;
     }
-    REQUIRE_V2(plugin->v1.magic0, OPEN_NAVI_PLUGIN_MAGIC0);
-    REQUIRE_V2(plugin->v1.magic1, OPEN_NAVI_PLUGIN_MAGIC1);
-    REQUIRE_V2(plugin->v1.query_abi_version, OPEN_NAVI_PLUGIN_QUERY_ABI_V2);
-    REQUIRE_V2(plugin->v1.struct_size, sizeof(*plugin));
-    REQUIRE_V2(plugin->v1.endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
-    REQUIRE_V2(plugin->v1.pointer_bytes, sizeof(void *));
-    REQUIRE_V2(plugin->v1.backend_abi_version, OPEN_NAVI_BACKEND_ABI_V3);
-    REQUIRE_V2(plugin->v1.backend_v1_size, sizeof(OpenNaviBackendV1));
-    REQUIRE_V2(plugin->v1.backend_v2_size, sizeof(OpenNaviBackendV2));
-    REQUIRE_V2(plugin->v1.render_target_v1_size,
-               sizeof(OpenNaviBackendRenderTargetV1));
-    REQUIRE_V2(plugin->v1.frame_v1_size, sizeof(OpenNaviBackendFrameV1));
-    REQUIRE_V2(plugin->v1.gps_v1_size, sizeof(OpenNaviBackendGpsV1));
-    REQUIRE_V2(plugin->v1.visibility_v1_size,
-               sizeof(OpenNaviBackendVisibilityV1));
-    REQUIRE_V2(plugin->v1.screen_v1_size, sizeof(OpenNaviBackendScreenV1));
-    REQUIRE_V2(plugin->v1.pointer_v1_size, sizeof(OpenNaviBackendPointerV1));
-    REQUIRE_V2(plugin->v1.services_v1_size,
-               sizeof(OpenNaviBackendServicesV1));
-    REQUIRE_V2(plugin->v1.vehicle_v2_size, sizeof(OpenNaviBackendVehicleV2));
-    REQUIRE_V2(plugin->v1.gps_interval_v2_size,
-               sizeof(OpenNaviBackendGpsIntervalV2));
-    REQUIRE_V2(plugin->v1.audio_v2_size, sizeof(OpenNaviBackendAudioV2));
-    REQUIRE_V2(plugin->v1.capabilities & ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES,
-               OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
-    REQUIRE_V2(plugin->services_v2_size, sizeof(OpenNaviBackendServicesV2));
-    REQUIRE_V2(plugin->cluster_v1_size, sizeof(OpenNaviBackendClusterV1));
-    REQUIRE_V2(plugin->utf8_span_v1_size, sizeof(OpenNaviBackendUtf8SpanV1));
-    REQUIRE_V2(plugin->audio_availability_v1_size,
-               sizeof(OpenNaviBackendAudioAvailabilityV1));
-    REQUIRE_V2(plugin->thread_status_v1_size,
-               sizeof(OpenNaviBackendThreadStatusV1));
-    REQUIRE_V2(plugin->backend_v3_size, sizeof(OpenNaviBackendV3));
-    REQUIRE_V2(plugin->capabilities_v2,
-               OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
-    if (memcmp(plugin->v1.build_id, g_v2_expected_build_id,
-               sizeof(g_v2_expected_build_id)) != 0) {
-        set_diagnostic(diagnostic, diagnostic_capacity,
-                       "plugin v2 build id mismatch");
+    if (check_query_header(&log, &plugin->v1, OPEN_NAVI_PLUGIN_QUERY_ABI_V2,
+                           OPEN_NAVI_BACKEND_ABI_V3, sizeof(*plugin),
+                           g_v2_expected_build_id) != 0 ||
+        check_query_v2_fields(&log, plugin) != 0)
         return -1;
-    }
-    backend = &plugin->backend_v3.v2.v1;
-    if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V3 ||
-        backend->struct_size != sizeof(OpenNaviBackendV3) ||
-        backend->stop == NULL || backend->surface_created == NULL ||
-        backend->surface_destroyed == NULL ||
-        backend->visibility_changed == NULL ||
-        backend->screen_changed == NULL || backend->gps_changed == NULL ||
-        backend->pointer_changed == NULL || backend->render_frame == NULL ||
-        plugin->backend_v3.v2.vehicle_changed == NULL ||
-        plugin->backend_v3.v2.gps_interval_changed == NULL ||
-        plugin->backend_v3.v2.audio_changed == NULL ||
-        plugin->backend_v3.start_v2 == NULL) {
-        set_diagnostic(diagnostic, diagnostic_capacity,
-                       "plugin v2 descriptor missing required callback");
+    backend = &plugin->backend_v3;
+    if (require_callbacks(&log,
+            backend->v2.v1.abi_version == OPEN_NAVI_BACKEND_ABI_V3 &&
+            backend->v2.v1.struct_size == sizeof(OpenNaviBackendV3) &&
+            has_v3_callbacks(backend)) != 0)
         return -1;
-    }
-    set_diagnostic(diagnostic, diagnostic_capacity,
-                   "plugin v2 handshake valid");
-    return 0;
-#undef REQUIRE_V2
+    return handshake_valid(&log);
 }
 
 int open_navi_backend_plugin_validate_v3(const OpenNaviBackendPluginV3 *plugin,
                                     char *diagnostic,
                                     size_t diagnostic_capacity)
 {
-#define REQUIRE_V3(field, expected)                                           \
-    do {                                                                      \
-        if ((field) != (uint32_t)(expected)) {                                \
-            set_diagnostic(diagnostic, diagnostic_capacity,                   \
-                           "plugin v3 %s mismatch got=%u expected=%u",       \
-                           #field, (unsigned int)(field),                      \
-                           (unsigned int)(expected));                          \
-            return -1;                                                        \
-        }                                                                     \
-    } while (0)
-    const OpenNaviBackendV1 *backend;
-    if (plugin == NULL) return -1;
-    REQUIRE_V3(plugin->v2.v1.magic0, OPEN_NAVI_PLUGIN_MAGIC0);
-    REQUIRE_V3(plugin->v2.v1.magic1, OPEN_NAVI_PLUGIN_MAGIC1);
-    REQUIRE_V3(plugin->v2.v1.query_abi_version,
-               OPEN_NAVI_PLUGIN_QUERY_ABI_V3);
-    REQUIRE_V3(plugin->v2.v1.struct_size, sizeof(*plugin));
-    REQUIRE_V3(plugin->v2.v1.endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
-    REQUIRE_V3(plugin->v2.v1.pointer_bytes, sizeof(void *));
-    REQUIRE_V3(plugin->v2.v1.backend_abi_version, OPEN_NAVI_BACKEND_ABI_V4);
-    REQUIRE_V3(plugin->v2.v1.backend_v1_size, sizeof(OpenNaviBackendV1));
-    REQUIRE_V3(plugin->v2.v1.backend_v2_size, sizeof(OpenNaviBackendV2));
-    REQUIRE_V3(plugin->v2.v1.render_target_v1_size,
-               sizeof(OpenNaviBackendRenderTargetV1));
-    REQUIRE_V3(plugin->v2.v1.frame_v1_size, sizeof(OpenNaviBackendFrameV1));
-    REQUIRE_V3(plugin->v2.v1.gps_v1_size, sizeof(OpenNaviBackendGpsV1));
-    REQUIRE_V3(plugin->v2.v1.visibility_v1_size,
-               sizeof(OpenNaviBackendVisibilityV1));
-    REQUIRE_V3(plugin->v2.v1.screen_v1_size,
-               sizeof(OpenNaviBackendScreenV1));
-    REQUIRE_V3(plugin->v2.v1.pointer_v1_size,
-               sizeof(OpenNaviBackendPointerV1));
-    REQUIRE_V3(plugin->v2.v1.services_v1_size,
-               sizeof(OpenNaviBackendServicesV1));
-    REQUIRE_V3(plugin->v2.v1.vehicle_v2_size,
-               sizeof(OpenNaviBackendVehicleV2));
-    REQUIRE_V3(plugin->v2.v1.gps_interval_v2_size,
-               sizeof(OpenNaviBackendGpsIntervalV2));
-    REQUIRE_V3(plugin->v2.v1.audio_v2_size, sizeof(OpenNaviBackendAudioV2));
-    REQUIRE_V3(plugin->v2.v1.capabilities & ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES,
-               OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
-    REQUIRE_V3(plugin->v2.services_v2_size,
-               sizeof(OpenNaviBackendServicesV2));
-    REQUIRE_V3(plugin->v2.cluster_v1_size, sizeof(OpenNaviBackendClusterV1));
-    REQUIRE_V3(plugin->v2.utf8_span_v1_size,
-               sizeof(OpenNaviBackendUtf8SpanV1));
-    REQUIRE_V3(plugin->v2.audio_availability_v1_size,
-               sizeof(OpenNaviBackendAudioAvailabilityV1));
-    REQUIRE_V3(plugin->v2.thread_status_v1_size,
-               sizeof(OpenNaviBackendThreadStatusV1));
-    REQUIRE_V3(plugin->v2.backend_v3_size, sizeof(OpenNaviBackendV3));
-    REQUIRE_V3(plugin->v2.capabilities_v2,
-               OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
-    REQUIRE_V3(plugin->internationalization_v1_size,
-               sizeof(OpenNaviBackendInternationalizationV1));
-    REQUIRE_V3(plugin->cluster_display_v1_size,
-               sizeof(OpenNaviBackendClusterDisplayV1));
-    REQUIRE_V3(plugin->backend_v4_size, sizeof(OpenNaviBackendV4));
-    REQUIRE_V3(plugin->capabilities_v3,
-               OPEN_NAVI_PLUGIN_V3_REQUIRED_CAPABILITIES);
-    if (memcmp(plugin->v2.v1.build_id, g_v3_expected_build_id,
-               sizeof(g_v3_expected_build_id)) != 0) return -1;
-    backend = &plugin->backend_v4.v3.v2.v1;
-    if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V4 ||
-        backend->struct_size != sizeof(OpenNaviBackendV4) ||
-        backend->stop == NULL || backend->surface_created == NULL ||
-        backend->surface_destroyed == NULL ||
-        backend->visibility_changed == NULL ||
-        backend->screen_changed == NULL || backend->gps_changed == NULL ||
-        backend->pointer_changed == NULL || backend->render_frame == NULL ||
-        plugin->backend_v4.v3.v2.vehicle_changed == NULL ||
-        plugin->backend_v4.v3.v2.gps_interval_changed == NULL ||
-        plugin->backend_v4.v3.v2.audio_changed == NULL ||
-        plugin->backend_v4.v3.start_v2 == NULL ||
-        plugin->backend_v4.internationalization_changed == NULL ||
-        plugin->backend_v4.cluster_display_changed == NULL) return -1;
-    set_diagnostic(diagnostic, diagnostic_capacity,
-                   "plugin v3 handshake valid");
-    return 0;
-#undef REQUIRE_V3
+    const HandshakeLog log = {diagnostic, diagnostic_capacity, "plugin v3"};
+    const OpenNaviBackendV4 *backend;
+    if (plugin == NULL) {
+        set_diagnostic(diagnostic, diagnostic_capacity,
+                       "null plugin v3 query");
+        return -1;
+    }
+    if (check_query_header(&log, &plugin->v2.v1, OPEN_NAVI_PLUGIN_QUERY_ABI_V3,
+                           OPEN_NAVI_BACKEND_ABI_V4, sizeof(*plugin),
+                           g_v3_expected_build_id) != 0 ||
+        check_query_v2_fields(&log, &plugin->v2) != 0 ||
+        check_query_v3_fields(&log, plugin) != 0)
+        return -1;
+    backend = &plugin->backend_v4;
+    if (require_callbacks(&log,
+            backend->v3.v2.v1.abi_version == OPEN_NAVI_BACKEND_ABI_V4 &&
+            backend->v3.v2.v1.struct_size == sizeof(OpenNaviBackendV4) &&
+            has_v4_callbacks(backend)) != 0)
+        return -1;
+    return handshake_valid(&log);
 }
 
 int open_navi_backend_plugin_validate_v4(const OpenNaviBackendPluginV4 *plugin,
                                     char *diagnostic,
                                     size_t diagnostic_capacity)
 {
-#define REQUIRE_V4(field, expected)                                           \
-    do {                                                                      \
-        if ((field) != (uint32_t)(expected)) {                                \
-            set_diagnostic(diagnostic, diagnostic_capacity,                   \
-                           "plugin v4 %s mismatch got=%u expected=%u",       \
-                           #field, (unsigned int)(field),                      \
-                           (unsigned int)(expected));                          \
-            return -1;                                                        \
-        }                                                                     \
-    } while (0)
-    const OpenNaviBackendV1 *backend;
-    if (plugin == NULL) return -1;
-    REQUIRE_V4(plugin->v3.v2.v1.magic0, OPEN_NAVI_PLUGIN_MAGIC0);
-    REQUIRE_V4(plugin->v3.v2.v1.magic1, OPEN_NAVI_PLUGIN_MAGIC1);
-    REQUIRE_V4(plugin->v3.v2.v1.query_abi_version,
-               OPEN_NAVI_PLUGIN_QUERY_ABI_V4);
-    REQUIRE_V4(plugin->v3.v2.v1.struct_size, sizeof(*plugin));
-    REQUIRE_V4(plugin->v3.v2.v1.endian_tag, OPEN_NAVI_PLUGIN_ENDIAN_TAG);
-    REQUIRE_V4(plugin->v3.v2.v1.pointer_bytes, sizeof(void *));
-    REQUIRE_V4(plugin->v3.v2.v1.backend_abi_version,
-               OPEN_NAVI_BACKEND_ABI_V5);
-    REQUIRE_V4(plugin->v3.v2.v1.backend_v1_size, sizeof(OpenNaviBackendV1));
-    REQUIRE_V4(plugin->v3.v2.v1.backend_v2_size, sizeof(OpenNaviBackendV2));
-    REQUIRE_V4(plugin->v3.v2.v1.render_target_v1_size,
-               sizeof(OpenNaviBackendRenderTargetV1));
-    REQUIRE_V4(plugin->v3.v2.v1.frame_v1_size,
-               sizeof(OpenNaviBackendFrameV1));
-    REQUIRE_V4(plugin->v3.v2.v1.gps_v1_size, sizeof(OpenNaviBackendGpsV1));
-    REQUIRE_V4(plugin->v3.v2.v1.visibility_v1_size,
-               sizeof(OpenNaviBackendVisibilityV1));
-    REQUIRE_V4(plugin->v3.v2.v1.screen_v1_size,
-               sizeof(OpenNaviBackendScreenV1));
-    REQUIRE_V4(plugin->v3.v2.v1.pointer_v1_size,
-               sizeof(OpenNaviBackendPointerV1));
-    REQUIRE_V4(plugin->v3.v2.v1.services_v1_size,
-               sizeof(OpenNaviBackendServicesV1));
-    REQUIRE_V4(plugin->v3.v2.v1.vehicle_v2_size,
-               sizeof(OpenNaviBackendVehicleV2));
-    REQUIRE_V4(plugin->v3.v2.v1.gps_interval_v2_size,
-               sizeof(OpenNaviBackendGpsIntervalV2));
-    REQUIRE_V4(plugin->v3.v2.v1.audio_v2_size,
-               sizeof(OpenNaviBackendAudioV2));
-    REQUIRE_V4(plugin->v3.v2.v1.capabilities & ~(uint32_t)OPEN_NAVI_PLUGIN_OPTIONAL_CAPABILITIES,
-               OPEN_NAVI_PLUGIN_REQUIRED_CAPABILITIES);
-    REQUIRE_V4(plugin->v3.v2.services_v2_size,
-               sizeof(OpenNaviBackendServicesV2));
-    REQUIRE_V4(plugin->v3.v2.cluster_v1_size,
-               sizeof(OpenNaviBackendClusterV1));
-    REQUIRE_V4(plugin->v3.v2.utf8_span_v1_size,
-               sizeof(OpenNaviBackendUtf8SpanV1));
-    REQUIRE_V4(plugin->v3.v2.audio_availability_v1_size,
-               sizeof(OpenNaviBackendAudioAvailabilityV1));
-    REQUIRE_V4(plugin->v3.v2.thread_status_v1_size,
-               sizeof(OpenNaviBackendThreadStatusV1));
-    REQUIRE_V4(plugin->v3.v2.backend_v3_size, sizeof(OpenNaviBackendV3));
-    REQUIRE_V4(plugin->v3.v2.capabilities_v2,
-               OPEN_NAVI_PLUGIN_V2_REQUIRED_CAPABILITIES);
-    REQUIRE_V4(plugin->v3.internationalization_v1_size,
-               sizeof(OpenNaviBackendInternationalizationV1));
-    REQUIRE_V4(plugin->v3.cluster_display_v1_size,
-               sizeof(OpenNaviBackendClusterDisplayV1));
-    REQUIRE_V4(plugin->v3.backend_v4_size, sizeof(OpenNaviBackendV4));
-    REQUIRE_V4(plugin->v3.capabilities_v3,
-               OPEN_NAVI_PLUGIN_V3_REQUIRED_CAPABILITIES);
-    REQUIRE_V4(plugin->driver_distraction_v1_size,
-               sizeof(OpenNaviBackendDriverDistractionV1));
-    REQUIRE_V4(plugin->backend_v5_size, sizeof(OpenNaviBackendV5));
-    REQUIRE_V4(plugin->capabilities_v4,
-               OPEN_NAVI_PLUGIN_V4_REQUIRED_CAPABILITIES);
-    if (memcmp(plugin->v3.v2.v1.build_id, g_v4_expected_build_id,
-               sizeof(g_v4_expected_build_id)) != 0) return -1;
-    backend = &plugin->backend_v5.v4.v3.v2.v1;
-    if (backend->abi_version != OPEN_NAVI_BACKEND_ABI_V5 ||
-        backend->struct_size != sizeof(OpenNaviBackendV5) ||
-        backend->stop == NULL || backend->surface_created == NULL ||
-        backend->surface_destroyed == NULL ||
-        backend->visibility_changed == NULL ||
-        backend->screen_changed == NULL || backend->gps_changed == NULL ||
-        backend->pointer_changed == NULL || backend->render_frame == NULL ||
-        plugin->backend_v5.v4.v3.v2.vehicle_changed == NULL ||
-        plugin->backend_v5.v4.v3.v2.gps_interval_changed == NULL ||
-        plugin->backend_v5.v4.v3.v2.audio_changed == NULL ||
-        plugin->backend_v5.v4.v3.start_v2 == NULL ||
-        plugin->backend_v5.v4.internationalization_changed == NULL ||
-        plugin->backend_v5.v4.cluster_display_changed == NULL ||
-        plugin->backend_v5.driver_distraction_changed == NULL) return -1;
-    set_diagnostic(diagnostic, diagnostic_capacity,
-                   "plugin v4 handshake valid");
-    return 0;
-#undef REQUIRE_V4
+    const HandshakeLog log = {diagnostic, diagnostic_capacity, "plugin v4"};
+    const OpenNaviBackendV5 *backend;
+    if (plugin == NULL) {
+        set_diagnostic(diagnostic, diagnostic_capacity,
+                       "null plugin v4 query");
+        return -1;
+    }
+    if (check_query_header(&log, &plugin->v3.v2.v1,
+                           OPEN_NAVI_PLUGIN_QUERY_ABI_V4,
+                           OPEN_NAVI_BACKEND_ABI_V5, sizeof(*plugin),
+                           g_v4_expected_build_id) != 0 ||
+        check_query_v2_fields(&log, &plugin->v3.v2) != 0 ||
+        check_query_v3_fields(&log, &plugin->v3) != 0 ||
+        check_query_v4_fields(&log, plugin) != 0)
+        return -1;
+    backend = &plugin->backend_v5;
+    if (require_callbacks(&log,
+            backend->v4.v3.v2.v1.abi_version == OPEN_NAVI_BACKEND_ABI_V5 &&
+            backend->v4.v3.v2.v1.struct_size == sizeof(OpenNaviBackendV5) &&
+            has_v5_callbacks(backend)) != 0)
+        return -1;
+    return handshake_valid(&log);
 }
 
 /* Query V5: the complete query-V4 handshake of the prefix (with the V5
