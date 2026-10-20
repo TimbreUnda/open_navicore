@@ -127,6 +127,13 @@ void CameraController::recenter() noexcept
     anchored_ = false;
 }
 
+void CameraController::set_resting_location(double latitude, double longitude) noexcept
+{
+    if (mode_ != Mode::HeadingUp && mode_ != Mode::NorthUp) return;
+    free_latitude_ = latitude;
+    free_longitude_ = longitude;
+}
+
 void CameraController::begin_free(double latitude, double longitude) noexcept
 {
     idle_seconds_ = 0.0;

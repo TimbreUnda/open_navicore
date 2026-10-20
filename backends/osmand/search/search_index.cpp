@@ -96,6 +96,17 @@ private:
     std::string best_;
 };
 
+// OSM tells same-named streets apart with the settlement in brackets
+// ("Прорізна вулиця (Київ)"); the result shows the settlement already.
+std::string without_settlement(const std::string& name, const std::string& settlement)
+{
+    const std::string suffix = " (" + settlement + ")";
+    if (name.size() > suffix.size() &&
+        name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+        return name.substr(0, name.size() - suffix.size());
+    return name;
+}
+
 }  // namespace
 
 struct SearchIndex::Context {
@@ -389,8 +400,8 @@ void SearchIndex::add_street(uint32_t s, const Query& q, uint32_t mask, int city
     if (exact < 0) return;
     const auto& city = cities_[street.city];
     const int unmatched = std::max(0, static_cast<int>(tokens.size()) - __builtin_popcount(mask));
-    const std::string name = str(street.title_off, street.title_len);
     const std::string place = str(city.title_off, city.title_len);
+    const std::string name = without_settlement(str(street.title_off, street.title_len), place);
     const bool home = city.file == ctx.user_file;
     const double lat = street.lat / 1e6, lon = street.lon / 1e6;
     const std::string region = region_key(city.file);

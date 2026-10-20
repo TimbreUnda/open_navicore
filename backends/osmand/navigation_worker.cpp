@@ -139,7 +139,9 @@ ui::Destination destination(const search::SearchIndex::Hit& hit, const OsmAnd::L
     const auto point = OsmAnd::Utilities::convertLatLonTo31(coordinates);
     const std::string region = ui::loc::region_name(hit.region);
     std::string subtitle = hit.context.empty() ? settlement_kind(hit.settlement_type) : hit.context;
-    if (!region.empty() && region != hit.context && region != hit.title)
+    // Kyiv is a region of its own: "Київ · Kyiv" under its streets says nothing.
+    const bool city_region = hit.region == "kyiv-city" && !hit.context.empty();
+    if (!region.empty() && !city_region && region != hit.context && region != hit.title)
         subtitle += " · " + region;
     return {"address:" + std::to_string(point.x) + ":" + std::to_string(point.y), hit.title,
             std::move(subtitle), distance_text(origin, coordinates), hit.latitude,

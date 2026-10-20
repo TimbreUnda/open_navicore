@@ -763,12 +763,11 @@ bool OsmAndEngine::apply_camera()
                            kind == ui::ManeuverKind::UTurn;
         camera_.set_maneuver(turn, guidance.distance_to_maneuver_metres, tight);
     }
-    auto vehicle = motion_.predict(now_s);
+    const auto vehicle = motion_.predict(now_s);
     if (!vehicle.valid) {
-        // No fix: the map stays where the car was last (the marker is hidden).
+        // No fix: the map rests where the car is believed to be.
         const auto here = current_location();
-        vehicle.latitude = here.latitude;
-        vehicle.longitude = here.longitude;
+        camera_.set_resting_location(here.latitude, here.longitude);
     }
     const auto pose = camera_.update(vehicle, dt);
     vector_view_.tile_zoom_limit = pose.tile_zoom;

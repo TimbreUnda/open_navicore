@@ -75,6 +75,15 @@ int main()
     expect_top(index, "шевченка 1", kKyiv, Kind::House, 48.470100, 35.040100,
                {{48.470100, 35.040100}});
 
+    // "(Київ)" in an OSM street name is not repeated in the result title.
+    {
+        const auto hits = index.search("прорізна 2", kKyiv, {}, 8);
+        if (hits.empty() || hits[0].title != "Прорізна вулиця, 2" || hits[0].context != "Київ") {
+            ++failures;
+            std::printf("FAIL \"прорізна 2\": %s\n", hits.empty() ? "no hits" : hits[0].title.c_str());
+        }
+    }
+
     if (!index.search("", kKyiv, {}, 8).empty()) ++failures;
     if (!index.search("ыыыыыыыыы", kKyiv, {}, 8).empty()) ++failures;
 
