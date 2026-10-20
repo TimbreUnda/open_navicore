@@ -71,6 +71,7 @@ Config Config::from_environment()
     if (!map_overridden && obf_files(config.map).empty())
         config.map = "/datastore/navicore-backend/maps/kyiv.obf";
     config.fonts = path("OPEN_NAVICORE_OSMAND_FONTS", config.fonts);
+    config.search_index = path("OPEN_NAVICORE_OSMAND_SEARCH_INDEX", config.search_index);
     config.recents = path("OPEN_NAVICORE_OSMAND_RECENTS", config.recents);
     config.vector_cache = path("OPEN_NAVICORE_OSMAND_VECTOR_CACHE", config.vector_cache);
     config.language_marker = path("OPEN_NAVICORE_OSMAND_LANGUAGE_MARKER", config.language_marker);

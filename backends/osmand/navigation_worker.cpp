@@ -5,6 +5,7 @@
 #include "diagnostics.h"
 #include "junction_shape.h"
 #include "route_check.h"
+#include "search/search_index.h"
 #include "session.h"
 #include "ui/localization.h"
 
@@ -64,7 +65,10 @@ constexpr std::size_t kMaxRoutes = 3;  // the fastest and up to two alternatives
 // Alternatives are off: finding them costs routing time, and the route preview
 // then offers only the fastest route. Set to true to bring them back.
 constexpr bool kAlternativeRoutes = false;
-const OsmAnd::LatLon kDemoOrigin(50.4501, 30.5234);
+// Places (amenities) are searched this far around the origin, in degrees
+// (about 33 km): the whole country takes seconds.
+constexpr double kAmenityRadiusLatitude = 0.3;
+constexpr double kAmenityRadiusLongitude = 0.45;
 
 std::string utf8(const QString& value)
 {
@@ -72,11 +76,9 @@ std::string utf8(const QString& value)
     return std::string(bytes.constData(), static_cast<std::size_t>(bytes.size()));
 }
 
-std::string distance_text(const OsmAnd::PointI& point)
+std::string distance_text(const OsmAnd::LatLon& origin, const OsmAnd::LatLon& point)
 {
-    const auto destination = OsmAnd::Utilities::convert31ToLatLon(point);
-    const double metres = OsmAnd::Utilities::distance(kDemoOrigin, destination);
-    return ui::loc::format_distance(metres);
+    return ui::loc::format_distance(OsmAnd::Utilities::distance(origin, point));
 }
 
 std::string address_kind(OsmAnd::AddressType type)
@@ -102,18 +104,30 @@ std::string localized_name(const Object& object)
     return utf8(object.nativeName);
 }
 
-ui::Destination destination(const OsmAnd::Address& address)
+ui::Destination destination(const OsmAnd::Address& address, const OsmAnd::LatLon& origin)
 {
     const auto coordinates = OsmAnd::Utilities::convert31ToLatLon(address.position31);
     std::string title = localized_name(address);
     return {"address:" + std::to_string(address.position31.x) + ":" +
                 std::to_string(address.position31.y),
             std::move(title), address_kind(address.addressType),
-            distance_text(address.position31), coordinates.latitude,
+            distance_text(origin, coordinates), coordinates.latitude,
             coordinates.longitude};
 }
 
-ui::Destination destination(const OsmAnd::Amenity& amenity)
+// A search index hit: the settlement is the subtitle of a street or house.
+ui::Destination destination(const search::SearchIndex::Hit& hit, const OsmAnd::LatLon& origin)
+{
+    const OsmAnd::LatLon coordinates(hit.latitude, hit.longitude);
+    const auto point = OsmAnd::Utilities::convertLatLonTo31(coordinates);
+    std::string subtitle = hit.context;
+    if (subtitle.empty()) subtitle = ui::loc::tr(ui::loc::Str::AddressPlace);
+    return {"address:" + std::to_string(point.x) + ":" + std::to_string(point.y), hit.title,
+            std::move(subtitle), distance_text(origin, coordinates), hit.latitude,
+            hit.longitude};
+}
+
+ui::Destination destination(const OsmAnd::Amenity& amenity, const OsmAnd::LatLon& origin)
 {
     const auto coordinates = OsmAnd::Utilities::convert31ToLatLon(amenity.position31);
     std::string title = localized_name(amenity);
@@ -123,7 +137,7 @@ ui::Destination destination(const OsmAnd::Amenity& amenity)
     return {"amenity:" + std::to_string(amenity.position31.x) + ":" +
                 std::to_string(amenity.position31.y),
             std::move(title), std::move(subtitle),
-            distance_text(amenity.position31), coordinates.latitude,
+            distance_text(origin, coordinates), coordinates.latitude,
             coordinates.longitude};
 }
 
@@ -350,10 +364,13 @@ public:
     Impl(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
          std::shared_ptr<Wakeup> wakeup,
          std::vector<std::string> map_paths,
-         std::string routing_xml)
+         std::string routing_xml,
+         const std::string& search_index)
         : obfs_(std::move(obfs)), wakeup_(std::move(wakeup)),
           map_paths_(std::move(map_paths)), routing_xml_(std::move(routing_xml))
     {
+        // Opened here, read only by the worker thread started below.
+        trace(index_.open(search_index) ? "worker=search_index" : "worker=no_search_index");
         // Start only after every request/result flag below has completed
         // construction. Starting in the member initializer races run()
         // against later members such as has_pending_ and stopping_.
@@ -363,12 +380,17 @@ public:
 
     ~Impl() { stop(); }
 
-    void submit(std::uint64_t revision, std::string query)
+    bool has_index() const { return index_.is_open(); }
+
+    void submit(std::uint64_t revision, std::string query, ui::GeoPoint origin,
+                std::vector<ui::GeoPoint> recent)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) return;
         if (active_) active_->cancel();
         pending_ = Request::search(revision, std::move(query));
+        pending_.origin = origin;
+        pending_.recent = std::move(recent);
         has_pending_ = true;
         trace_result("worker=search_queued", revision, pending_.query.size());
         condition_.notify_one();
@@ -448,7 +470,8 @@ private:
         std::uint64_t revision = 0;
         std::string query;
         ui::Destination destination;
-        ui::GeoPoint origin;
+        ui::GeoPoint origin;               // route start; search: "near"
+        std::vector<ui::GeoPoint> recent;  // search: destinations picked before
         bool alternatives = false;  // route: also look for alternatives
 
         static Request search(std::uint64_t revision, std::string query)
@@ -508,16 +531,55 @@ private:
         if (request.query.empty()) return output;
         const QString query = QString::fromUtf8(request.query.data(),
                                                 static_cast<int>(request.query.size()));
+        const OsmAnd::LatLon origin(request.origin.latitude, request.origin.longitude);
+
+        if (index_.is_open()) {
+            std::vector<search::SearchIndex::Point> recent;
+            for (const auto& point : request.recent)
+                recent.push_back({point.latitude, point.longitude});
+            const auto hits = index_.search(request.query,
+                                            {origin.latitude, origin.longitude}, recent,
+                                            kMaxAddressResults);
+            for (const auto& hit : hits) output.push_back(destination(hit, origin));
+            trace_result("worker=index_hits", request.revision, output.size());
+            // An address with a house number needs no places; otherwise the
+            // addresses show now and nearby places follow.
+            if (!search::parse(request.query).house.empty() || cancel->isAborted())
+                return output;
+            publish_early(request, cancel, output);
+            const auto centre = OsmAnd::Utilities::convertLatLonTo31(origin);
+            const OsmAnd::AreaI area(
+                OsmAnd::Utilities::get31TileNumberY(origin.latitude + kAmenityRadiusLatitude),
+                OsmAnd::Utilities::get31TileNumberX(origin.longitude - kAmenityRadiusLongitude),
+                OsmAnd::Utilities::get31TileNumberY(origin.latitude - kAmenityRadiusLatitude),
+                OsmAnd::Utilities::get31TileNumberX(origin.longitude + kAmenityRadiusLongitude));
+            const std::size_t limit = output.size() + kMaxAmenityResults;
+            OsmAnd::AmenitiesByNameSearch amenities(obfs_);
+            OsmAnd::AmenitiesByNameSearch::Criteria criteria;
+            criteria.name = query;
+            criteria.xy31 = centre;
+            criteria.bbox31 = area;
+            criteria.obfInfoAreaFilter = area;
+            amenities.performSearch(criteria,
+                [&output, &origin, cancel, limit](const OsmAnd::ISearch::Criteria&,
+                                                  const OsmAnd::ISearch::IResultEntry& entry) {
+                    const auto& result = static_cast<const OsmAnd::AmenitiesByNameSearch::ResultEntry&>(entry);
+                    if (result.amenity && output.size() < limit)
+                        output.push_back(destination(*result.amenity, origin));
+                    if (output.size() >= limit) cancel->stop_at_limit();
+                }, cancel);
+            return output;
+        }
 
         OsmAnd::AddressesByNameSearch addresses(obfs_);
         OsmAnd::AddressesByNameSearch::Criteria address_criteria;
         address_criteria.name = query;
         addresses.performSearch(address_criteria,
-            [&output, cancel](const OsmAnd::ISearch::Criteria&,
-                              const OsmAnd::ISearch::IResultEntry& entry) {
+            [&output, &origin, cancel](const OsmAnd::ISearch::Criteria&,
+                                       const OsmAnd::ISearch::IResultEntry& entry) {
                 const auto& result = static_cast<const OsmAnd::AddressesByNameSearch::ResultEntry&>(entry);
                 if (result.address && output.size() < kMaxAddressResults)
-                    output.push_back(destination(*result.address));
+                    output.push_back(destination(*result.address, origin));
                 if (output.size() >= kMaxAddressResults) cancel->stop_at_limit();
             }, cancel);
 
@@ -525,13 +587,13 @@ private:
         OsmAnd::AmenitiesByNameSearch amenities(obfs_);
         OsmAnd::AmenitiesByNameSearch::Criteria amenity_criteria;
         amenity_criteria.name = query;
-        amenity_criteria.xy31 = OsmAnd::Utilities::convertLatLonTo31(kDemoOrigin);
+        amenity_criteria.xy31 = OsmAnd::Utilities::convertLatLonTo31(origin);
         amenities.performSearch(amenity_criteria,
-            [&output, cancel](const OsmAnd::ISearch::Criteria&,
-                              const OsmAnd::ISearch::IResultEntry& entry) {
+            [&output, &origin, cancel](const OsmAnd::ISearch::Criteria&,
+                                       const OsmAnd::ISearch::IResultEntry& entry) {
                 const auto& result = static_cast<const OsmAnd::AmenitiesByNameSearch::ResultEntry&>(entry);
                 if (result.amenity && output.size() < kMaxAddressResults + kMaxAmenityResults)
-                    output.push_back(destination(*result.amenity));
+                    output.push_back(destination(*result.amenity, origin));
                 if (output.size() >= kMaxAddressResults + kMaxAmenityResults)
                     cancel->stop_at_limit();
             }, cancel);
@@ -791,6 +853,21 @@ private:
         return alternative;
     }
 
+    // Search results before the request is done (index addresses ahead of
+    // the slower place search); the final publish replaces them.
+    void publish_early(const Request& request, const std::shared_ptr<Cancellation>& cancel,
+                       const std::vector<ui::Destination>& destinations)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (stopping_ || active_ != cancel || cancel->superseded()) return;
+            result_ = {request.revision, destinations};
+            has_result_ = true;
+        }
+        trace_result("worker=search_published_early", request.revision, destinations.size());
+        if (wakeup_) (void)wakeup_->request();
+    }
+
     void run()
     {
         place_worker_thread();
@@ -865,6 +942,7 @@ private:
         }
     }
 
+    search::SearchIndex index_;  // read by the worker thread only, after open
     std::shared_ptr<OsmAnd::ObfsCollection> obfs_;
     std::shared_ptr<Wakeup> wakeup_;
     std::vector<std::string> map_paths_;
@@ -891,10 +969,16 @@ private:
 NavigationWorker::NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
                                    std::shared_ptr<Wakeup> wakeup,
                                    std::vector<std::string> map_paths,
-                                   std::string routing_xml)
+                                   std::string routing_xml,
+                                   std::string search_index)
     : impl_(new Impl(std::move(obfs), std::move(wakeup), std::move(map_paths),
-                     std::move(routing_xml)))
+                     std::move(routing_xml), search_index))
 {
+}
+
+bool NavigationWorker::has_search_index() const
+{
+    return impl_->has_index();
 }
 
 void NavigationWorker::submit_route(std::uint64_t revision,
@@ -906,9 +990,10 @@ void NavigationWorker::submit_route(std::uint64_t revision,
 
 NavigationWorker::~NavigationWorker() = default;
 
-void NavigationWorker::submit_search(std::uint64_t revision, std::string query)
+void NavigationWorker::submit_search(std::uint64_t revision, std::string query,
+                                     ui::GeoPoint origin, std::vector<ui::GeoPoint> recent)
 {
-    impl_->submit(revision, std::move(query));
+    impl_->submit(revision, std::move(query), origin, std::move(recent));
 }
 
 bool NavigationWorker::take_route_result(RouteResult& output)

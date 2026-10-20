@@ -88,6 +88,8 @@ private:
     void check_off_route(const ui::GuidanceState& state, const ui::GeoPoint& position);
     bool update_guidance();
     bool ensure_navigation_worker();
+    ui::GeoPoint search_origin() const;
+    std::chrono::milliseconds search_debounce() const;
     void advance_benchmark_autostart();
     // Drains UI map commands, advances the car camera and applies the pose to
     // the renderer. Returns true while the camera still needs frames.
@@ -1433,6 +1435,24 @@ void OsmAndEngine::update_pin_marker()
     view_->set_pin_marker(visible, screen.x, screen.y);
 }
 
+// "Near" for search: the car, or the map centre without a position fix.
+ui::GeoPoint OsmAndEngine::search_origin() const
+{
+    if (has_valid_position_)
+        return {static_cast<double>(latest_gps_.latitude_e7) / 1e7,
+                static_cast<double>(latest_gps_.longitude_e7) / 1e7};
+    if (pose_applied_) return {applied_pose_.latitude, applied_pose_.longitude};
+    return {50.4501, 30.5234};
+}
+
+// Quiet time after the last key before searching: the index answers in
+// milliseconds, so results follow the typing; OsmAnd's search takes seconds.
+std::chrono::milliseconds OsmAndEngine::search_debounce() const
+{
+    const bool fast = navigation_worker_ && navigation_worker_->has_search_index();
+    return std::chrono::milliseconds(fast ? 200 : 500);
+}
+
 bool OsmAndEngine::ensure_navigation_worker()
 {
     if (navigation_worker_)
@@ -1443,7 +1463,7 @@ bool OsmAndEngine::ensure_navigation_worker()
         trace("worker=create");
         navigation_worker_ = std::unique_ptr<NavigationWorker>(
             new NavigationWorker(obfs_, navigation_wakeup_, navigation_maps_,
-                                 navigation_routing_xml_));
+                                 navigation_routing_xml_, config_.search_index));
         trace("worker=ready");
         return true;
     } catch (...) {
@@ -1688,8 +1708,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
             search_revision_observed_at_ = now;
             search_revision_observed_ = true;
         } else if (revision != submitted_search_revision_ &&
-                   now - search_revision_observed_at_ >=
-                       std::chrono::milliseconds(500)) {
+                   now - search_revision_observed_at_ >= search_debounce()) {
             submitted_search_revision_ = revision;
             if (!navigation_->query().empty()) {
             trace_result("engine=search_submit", submitted_search_revision_,
@@ -1701,8 +1720,12 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
                     (void)view_->apply_search_results(
                         submitted_search_revision_, std::move(seeded));
                 } else if (ensure_navigation_worker()) {
+                std::vector<ui::GeoPoint> recent;
+                for (const auto& r : navigation_->recents())
+                    recent.push_back({r.latitude, r.longitude});
                 navigation_worker_->submit_search(submitted_search_revision_,
-                                                   navigation_->query());
+                                                   navigation_->query(), search_origin(),
+                                                   std::move(recent));
                 }
             }
         }

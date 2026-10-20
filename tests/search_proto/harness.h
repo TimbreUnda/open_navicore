@@ -4,7 +4,7 @@
 // Query file (TSV): query  lat  lon  kind(C|S|H)  tolerance_km
 #pragma once
 
-#include "address_query.h"
+#include "search/address_query.h"
 
 #include <algorithm>
 #include <chrono>
@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace sq {
+namespace navicore_osmand::search {
 
 constexpr double kUserLat = 50.4501, kUserLon = 30.5234;  // Kyiv, as the app's demo origin
 
@@ -113,4 +113,6 @@ inline void rank(std::vector<Result>& results, std::size_t keep = 8)
     results.swap(unique);
 }
 
-}  // namespace sq
+}  // namespace navicore_osmand::search
+
+namespace sq = navicore_osmand::search;

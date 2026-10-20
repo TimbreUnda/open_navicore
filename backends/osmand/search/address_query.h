@@ -1,6 +1,6 @@
-// Destination search prototypes (option A: OsmAnd OBF data, option B: a
-// prebuilt index): the query parsing, name normalisation and ranking both
-// share, so they differ only in how they reach the data.
+// Destination search: query parsing, name normalisation and ranking, used
+// by the search index (search_index.h) and by the search prototypes in
+// tests/search_proto/.
 //
 // Normalisation ("fold"): lower case; і ї ы -> и, є э ё -> е, ґ -> г;
 // apostrophes, ь and ъ dropped; Latin look-alikes inside a Cyrillic word
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace sq {
+namespace navicore_osmand::search {
 
 inline bool decode(const std::string& s, std::size_t& i, uint32_t& cp)
 {
@@ -402,7 +402,7 @@ struct Result {
 // Shared ranking: kind fit, exact words, settlement size, distance, typos.
 inline double score(Kind kind, const Query& q, int exact_words, int unmatched_tokens,
                     int subtype, double km_from_user, int house_quality, int typos,
-                    bool in_user_region)
+                    bool in_user_region, bool recent = false)
 {
     // A settlement named by the whole query beats a street of that name.
     double s = kind == Kind::House ? 300 : kind == Kind::Street ? 200 : 220;
@@ -415,7 +415,8 @@ inline double score(Kind kind, const Query& q, int exact_words, int unmatched_to
     if (house_quality == 1) s -= 10;
     s -= 25.0 * typos;
     if (in_user_region) s += 15;
+    if (recent) s += 40;  // a destination the user picked before
     return s;
 }
 
-}  // namespace sq
+}  // namespace navicore_osmand::search
