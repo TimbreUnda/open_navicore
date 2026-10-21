@@ -66,6 +66,10 @@ static ReferenceContext g_reference = {
     .lock = PTHREAD_MUTEX_INITIALIZER
 };
 
+/* Separate from g_reference.lock: trace_line is called with that held.
+ * Some filesystems (WSL DrvFs) tear concurrent O_APPEND writes. */
+static pthread_mutex_t g_trace_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void trace_line(const char *line)
 {
     char record[128];
@@ -75,13 +79,16 @@ static void trace_line(const char *line)
     if (length + 1u >= sizeof(record)) return;
     memcpy(record, line, length);
     record[length++] = '\n';
+    (void)pthread_mutex_lock(&g_trace_lock);
     descriptor = open(OPEN_NAVI_REF_PLUGIN_TRACE_PATH,
                       O_WRONLY | O_CREAT | O_APPEND, 0600);
-    if (descriptor < 0) return;
-    /* One O_APPEND write keeps worker/render trace records from interleaving. */
-    ignored = write(descriptor, record, length);
-    (void)ignored;
-    (void)close(descriptor);
+    if (descriptor >= 0) {
+        /* One write per record keeps worker/render records from interleaving. */
+        ignored = write(descriptor, record, length);
+        (void)ignored;
+        (void)close(descriptor);
+    }
+    (void)pthread_mutex_unlock(&g_trace_lock);
 }
 
 static void trace_status(const char *name, int status)
