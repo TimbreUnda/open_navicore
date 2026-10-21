@@ -1182,32 +1182,38 @@ void OsmAndEngine::publish_cluster()
     cluster_last_status_ = status;
 }
 
+// One "label: value" line of a developer-menu section.
+static void add_row(ui::DevSection& section, std::string label, std::string value)
+{
+    section.rows.emplace_back(std::move(label), std::move(value));
+}
+
 ui::DevSection OsmAndEngine::dev_gps_section(std::chrono::steady_clock::time_point now)
 {
     ui::DevSection gps{"GPS", {}};
     const auto& g = latest_gps_;
-    gps.rows.push_back({"Fix (raw)", printf_string("%u%s", g.fix_type,
-                                                   has_valid_position_ ? " · position" : " · none")});
-    gps.rows.push_back({"Satellites", printf_string("%u used / %u in view", g.satellites_used,
-                                                    g.satellites_in_view)});
-    gps.rows.push_back({"DOP (raw)", printf_string("H %u · P %u · V %u", g.hdop_raw, g.pdop_raw,
-                                                   g.vdop_raw)});
-    gps.rows.push_back({"Accuracy (raw)", printf_string("%u", g.accuracy_raw)});
-    gps.rows.push_back({"Position", printf_string("%.6f, %.6f", g.latitude_e7 / 1e7,
-                                                  g.longitude_e7 / 1e7)});
-    gps.rows.push_back({"Course (raw)", printf_string("hdg %u · spd %u", g.heading_raw,
-                                                      g.speed_raw_masked)});
-    gps.rows.push_back({"Quality / sync", printf_string("%u / %u", g.quality_status,
-                                                        g.sync_counter)});
+    add_row(gps, "Fix (raw)", printf_string("%u%s", g.fix_type,
+                                            has_valid_position_ ? " · position" : " · none"));
+    add_row(gps, "Satellites", printf_string("%u used / %u in view", g.satellites_used,
+                                             g.satellites_in_view));
+    add_row(gps, "DOP (raw)", printf_string("H %u · P %u · V %u", g.hdop_raw, g.pdop_raw,
+                                            g.vdop_raw));
+    add_row(gps, "Accuracy (raw)", printf_string("%u", g.accuracy_raw));
+    add_row(gps, "Position", printf_string("%.6f, %.6f", g.latitude_e7 / 1e7,
+                                           g.longitude_e7 / 1e7));
+    add_row(gps, "Course (raw)", printf_string("hdg %u · spd %u", g.heading_raw,
+                                               g.speed_raw_masked));
+    add_row(gps, "Quality / sync", printf_string("%u / %u", g.quality_status,
+                                                 g.sync_counter));
     if (gps_history_.empty()) {
-        gps.rows.push_back({"Last fix", "never"});
-        gps.rows.push_back({"Rate", "-"});
+        add_row(gps, "Last fix", "never");
+        add_row(gps, "Rate", "-");
     } else {
-        gps.rows.push_back({"Last fix", printf_string("%.1f s ago",
-            std::chrono::duration<double>(now - gps_history_.latest()).count())});
+        add_row(gps, "Last fix", printf_string("%.1f s ago",
+            std::chrono::duration<double>(now - gps_history_.latest()).count()));
         const double rate = gps_history_.rate_hz();
-        gps.rows.push_back({"Rate", rate > 0.0 ? printf_string("%.1f Hz", rate)
-                                               : std::string("-")});
+        add_row(gps, "Rate", rate > 0.0 ? printf_string("%.1f Hz", rate)
+                                        : std::string("-"));
     }
     return gps;
 }
@@ -1217,9 +1223,9 @@ ui::DevSection OsmAndEngine::dev_position_section(std::chrono::steady_clock::tim
     ui::DevSection position{"POSITION AND CAMERA", {}};
     const double now_s = std::chrono::duration<double>(now - clock_origin_).count();
     const auto vehicle = motion_.predict(now_s);
-    position.rows.push_back({"Motion", vehicle.valid
+    add_row(position, "Motion", vehicle.valid
         ? printf_string("%.0f km/h · %.0f°", vehicle.speed_mps * 3.6, vehicle.heading_degrees)
-        : std::string("no position")});
+        : std::string("no position"));
     const char* mode = "free";
     switch (camera_.mode()) {
     case CameraController::Mode::HeadingUp: mode = "heading-up"; break;
@@ -1227,13 +1233,13 @@ ui::DevSection OsmAndEngine::dev_position_section(std::chrono::steady_clock::tim
     case CameraController::Mode::Free: mode = "free"; break;
     case CameraController::Mode::Overview: mode = "overview"; break;
     }
-    position.rows.push_back({"Camera", printf_string("%s · z%.2f · %.0f°", mode,
-        applied_pose_.zoom, applied_pose_.elevation_degrees)});
+    add_row(position, "Camera", printf_string("%s · z%.2f · %.0f°", mode,
+        applied_pose_.zoom, applied_pose_.elevation_degrees));
     const auto& guidance = navigation_->guidance();
-    position.rows.push_back({"Off route", navigation_->screen() == ui::Screen::Guidance
+    add_row(position, "Off route", navigation_->screen() == ui::Screen::Guidance
         ? printf_string("%.0f m%s", guidance.off_route_metres,
                         guidance.recalculating ? " · recalculating" : "")
-        : std::string("not guiding")});
+        : std::string("not guiding"));
     return position;
 }
 
@@ -1244,23 +1250,23 @@ ui::DevSection OsmAndEngine::dev_map_section()
         struct stat info {};
         const auto slash = config_.map.rfind('/');
         const std::string name = slash == std::string::npos ? config_.map : config_.map.substr(slash + 1);
-        map.rows.push_back({"Map file", ::stat(config_.map.c_str(), &info) == 0
+        add_row(map, "Map file", ::stat(config_.map.c_str(), &info) == 0
             ? printf_string("%s · %.0f MB", name.c_str(), info.st_size / 1048576.0)
-            : name + " · missing"});
+            : name + " · missing");
         struct statvfs space {};
-        map.rows.push_back({"Cache free", !config_.vector_cache.empty() &&
-                                ::statvfs(config_.vector_cache.c_str(), &space) == 0
+        add_row(map, "Cache free", !config_.vector_cache.empty() &&
+                         ::statvfs(config_.vector_cache.c_str(), &space) == 0
             ? printf_string("%.0f MB", static_cast<double>(space.f_bavail) * space.f_frsize / 1048576.0)
-            : std::string("off")});
+            : std::string("off"));
     }
     if (vector_map_) {
         const auto stats = vector_map_->stats();
-        map.rows.push_back({"Tiles", printf_string("%llu new · %llu disk · %zu GPU",
+        add_row(map, "Tiles", printf_string("%llu new · %llu disk · %zu GPU",
             static_cast<unsigned long long>(stats.tiles_built),
-            static_cast<unsigned long long>(stats.disk_hits), stats.gpu_tiles)});
-        map.rows.push_back({"GPU memory", printf_string("%.1f MB", stats.gpu_bytes / 1048576.0)});
-        map.rows.push_back({"Wanted", printf_string("%zu · prefetch %zu · z%d",
-            stats.wanted_tiles, stats.prefetch_tiles, stats.tile_zoom)});
+            static_cast<unsigned long long>(stats.disk_hits), stats.gpu_tiles));
+        add_row(map, "GPU memory", printf_string("%.1f MB", stats.gpu_bytes / 1048576.0));
+        add_row(map, "Wanted", printf_string("%zu · prefetch %zu · z%d",
+            stats.wanted_tiles, stats.prefetch_tiles, stats.tile_zoom));
     }
     if (frame_interval_count_ > 0) {
         std::array<float, 240> sorted{};
@@ -1271,14 +1277,14 @@ ui::DevSection OsmAndEngine::dev_map_section()
             total += sorted[i];
         const float p99 = sorted[std::min(frame_interval_count_ - 1,
                                           frame_interval_count_ * 99 / 100)];
-        map.rows.push_back({"Frames", printf_string("%.1f fps · 1%% low %.1f fps",
-            1000.0f * frame_interval_count_ / std::max(total, 1.0f), 1000.0f / std::max(p99, 1.0f))});
+        add_row(map, "Frames", printf_string("%.1f fps · 1%% low %.1f fps",
+            1000.0f * frame_interval_count_ / std::max(total, 1.0f), 1000.0f / std::max(p99, 1.0f)));
     }
 #if defined(__QNXNTO__)
     {
         const struct mallinfo heap = ::mallinfo();
-        map.rows.push_back({"Heap", printf_string("%.1f MB used · %.1f MB arena",
-            heap.uordblks / 1048576.0, heap.arena / 1048576.0)});
+        add_row(map, "Heap", printf_string("%.1f MB used · %.1f MB arena",
+            heap.uordblks / 1048576.0, heap.arena / 1048576.0));
     }
 #endif
     return map;
@@ -1294,34 +1300,34 @@ ui::DevSection OsmAndEngine::dev_platform_section(std::chrono::steady_clock::tim
     float displayed_speed = 0.0f;
     static_assert(sizeof(displayed_speed) == sizeof(v.displayed_vehicle_speed_bits), "float bits");
     std::memcpy(&displayed_speed, &v.displayed_vehicle_speed_bits, sizeof(displayed_speed));
-    platform.rows.push_back({"Day/night", raw(vehicle_in_.has, printf_string(
+    add_row(platform, "Day/night", raw(vehicle_in_.has, printf_string(
         "status %u · setting %u · fields 0x%x", v.day_night_status, v.day_night_setting,
-        v.valid_fields))});
-    platform.rows.push_back({"Car speed", raw(vehicle_in_.has &&
+        v.valid_fields)));
+    add_row(platform, "Car speed", raw(vehicle_in_.has &&
         (v.valid_fields & OPEN_NAVI_BACKEND_VEHICLE_SPEED) != 0,
-        printf_string("%.1f (GPS %.1f km/h)", displayed_speed, vehicle.valid ? vehicle.speed_mps * 3.6 : 0.0))});
-    platform.rows.push_back({"Visibility", raw(visibility_in_.has, printf_string(
+        printf_string("%.1f (GPS %.1f km/h)", displayed_speed, vehicle.valid ? vehicle.speed_mps * 3.6 : 0.0)));
+    add_row(platform, "Visibility", raw(visibility_in_.has, printf_string(
         "%u · interactive %u · screen %u", visibility_in_.value.visibility,
-        visibility_in_.value.interactivity, screen_in_.value.screen_type))});
-    platform.rows.push_back({"Language", raw(language_in_.has, printf_string(
+        visibility_in_.value.interactivity, screen_in_.value.screen_type)));
+    add_row(platform, "Language", raw(language_in_.has, printf_string(
         "%u · date %u · time %u", language_in_.value.language_raw,
-        language_in_.value.date_format_raw, language_in_.value.time_format_raw))});
-    platform.rows.push_back({"Distraction", raw(distraction_in_.has, printf_string(
-        "%u", distraction_in_.value.distraction_status_raw))});
-    platform.rows.push_back({"Cluster", outbound_ ? printf_string(
+        language_in_.value.date_format_raw, language_in_.value.time_format_raw)));
+    add_row(platform, "Distraction", raw(distraction_in_.has, printf_string(
+        "%u", distraction_in_.value.distraction_status_raw)));
+    add_row(platform, "Cluster", outbound_ ? printf_string(
         "%llu sent · status %u · display %s", static_cast<unsigned long long>(cluster_publishes_),
         cluster_last_status_, cluster_display_in_.has
             ? printf_string("%u", cluster_display_in_.value.enabled_raw).c_str() : "-")
-        : std::string("no outbound services")});
+        : std::string("no outbound services"));
     return platform;
 }
 
 ui::DevSection OsmAndEngine::dev_build_section()
 {
     ui::DevSection build{"BUILD", {}};
-    build.rows.push_back({"Backend", build_git()});
-    build.rows.push_back({"Built", build_date()});
-    build.rows.push_back({"Interfaces", outbound_ ? "backend V5 · contacts" : "backend V2 · contacts"});
+    add_row(build, "Backend", build_git());
+    add_row(build, "Built", build_date());
+    add_row(build, "Interfaces", outbound_ ? "backend V5 · contacts" : "backend V2 · contacts");
     return build;
 }
 
