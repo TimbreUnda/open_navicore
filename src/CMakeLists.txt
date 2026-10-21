@@ -19,6 +19,7 @@ add_library(provider SHARED
   backend/open_navi_backend_loader.c
   backend/open_navi_default_backend.c
   renderer/open_navi_renderer.c
+  renderer/open_navi_renderer_backend_table.c
   renderer/open_navi_screen_input.c
   platform/qnx/open_navi_renderer_qnx.c)
 target_include_directories(provider PRIVATE ${ONC_ROOT}/include include compat/qr39 runtime backend
