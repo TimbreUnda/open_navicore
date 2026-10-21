@@ -4,6 +4,7 @@
 #include "cluster_payload.h"
 #include "dev_menu.h"
 #include "gps_history.h"
+#include "reroute_state.h"
 #include "crash_reporter.h"
 #include "session.h"
 #include "diagnostics.h"
@@ -58,13 +59,6 @@ namespace {
 enum class Phase { Empty, Resources, CoreEntering, CoreReady,
                    RenderingEntering, Ready, Quarantined };
 
-// Bench detour (simulate_detour): drive off the route once, then recover.
-enum class DetourPhase { NotStarted, Driving, Done };
-
-constexpr double kDetourStartRouteFraction = 0.35;
-constexpr double kDetourOffsetMetres = 150.0;
-constexpr std::chrono::seconds kDetourTimeout{30};
-constexpr std::chrono::seconds kRerouteRetryDelay{10};
 constexpr std::chrono::milliseconds kClusterPublishInterval{500};
 constexpr std::chrono::milliseconds kDevMenuRefreshInterval{500};
 
@@ -255,13 +249,8 @@ private:
     bool simulation_running_ = false;
     bool simulation_arrival_reported_ = false;
     // Off-route recalculation.
-    bool off_route_ = false;
-    std::chrono::steady_clock::time_point off_route_since_{};
-    std::chrono::steady_clock::time_point reroute_retry_at_{};
-    // Bench detour (simulate-detour): 0 pending, 1 active, 2 done.
-    bool simulate_detour_ = false;
-    DetourPhase detour_phase_ = DetourPhase::NotStarted;
-    std::chrono::steady_clock::time_point detour_started_{};
+    RerouteState reroute_;
+    BenchDetour bench_detour_;
     double simulation_progress_metres_ = 0.0;
     double simulation_geometry_length_metres_ = 0.0;
     double simulation_speed_metres_per_second_ = 20.0;
@@ -454,12 +443,12 @@ bool OsmAndEngine::initialize(const Config& config,
     config_ = config;
     configure_language();
     simulation_enabled_ = config.simulate_route;
-    simulate_detour_ = config.simulate_detour;
+    bench_detour_.enable(config.simulate_detour);
     if (config.voice) {
         voice_.reset(new VoiceClient(config.voice_queue));
         trace(("voice=enabled queue=" + config.voice_queue).c_str());
     }
-    if (simulate_detour_)
+    if (bench_detour_.enabled())
         trace("simulation=detour_enabled");
     autostart_ = config.benchmark_autostart && config.simulate_route
                      ? Autostart::Search : Autostart::Off;
@@ -592,7 +581,7 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
     overview_pending_ = fit;
     guidance_tracker_.reset();
     reset_voice();
-    off_route_ = false;
+    reroute_.clear_off_route();
     guidance_active_ = false;
     simulation_running_ = false;
     simulation_progress_metres_ = 0.0;
@@ -669,22 +658,12 @@ bool OsmAndEngine::update_guidance()
         }
         position = simulated_position(route, simulation_progress_metres_,
                                       simulation_geometry_length_metres_);
-        // Bench detour: once, past 35% of the route, drive 150 m beside it
-        // until a recalculated route arrives (or 30 s pass).
-        if (simulate_detour_ && detour_phase_ == DetourPhase::NotStarted &&
-            simulation_progress_metres_ > kDetourStartRouteFraction * route.distance_metres) {
-            detour_phase_ = DetourPhase::Driving;
-            detour_started_ = now;
+        // Bench detour: drive beside the route until a recalculated one arrives.
+        if (bench_detour_.advance(simulation_progress_metres_, route.distance_metres, now))
             trace("simulation=detour_started");
-        }
-        if (detour_phase_ == DetourPhase::Driving) {
-            if (now - detour_started_ > kDetourTimeout) {
-                detour_phase_ = DetourPhase::Done;
-            } else {
-                position.longitude += kDetourOffsetMetres /
-                    (111320.0 * std::cos(position.latitude * 3.14159265358979323846 / 180.0));
-            }
-        }
+        if (bench_detour_.driving())
+            position.longitude += BenchDetour::kOffsetMetres /
+                (111320.0 * std::cos(position.latitude * 3.14159265358979323846 / 180.0));
         position_available = true;
         simulated = true;
     }
@@ -730,21 +709,11 @@ bool OsmAndEngine::update_guidance()
 void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
                                    const ui::GeoPoint& position)
 {
-    constexpr double off_route_metres = 50.0;
-    constexpr auto off_route_time = std::chrono::seconds(4);
     const auto now = std::chrono::steady_clock::now();
-    if (state.arrived || state.off_route_metres <= off_route_metres) {
-        off_route_ = false;
+    if (!reroute_.off_route_long_enough(state.arrived, state.off_route_metres, now))
         return;
-    }
-    if (!off_route_) {
-        off_route_ = true;
-        off_route_since_ = now;
-        return;
-    }
-    if (now - off_route_since_ < off_route_time || navigation_->rerouting() ||
-        now < reroute_retry_at_ || !navigation_->destination() ||
-        !ensure_navigation_worker())
+    if (navigation_->rerouting() || reroute_.retry_blocked(now) ||
+        !navigation_->destination() || !ensure_navigation_worker())
         return;
     const std::uint64_t revision = navigation_->request_reroute();
     if (!revision)
@@ -1499,13 +1468,11 @@ void OsmAndEngine::drain_navigation_results()
                     trace("reroute=applied");
                     show_route(navigation_->routes().front(), false);
                     shown_route_index_ = 0;
-                    if (detour_phase_ == DetourPhase::Driving)
-                        detour_phase_ = DetourPhase::Done;
+                    bench_detour_.route_recovered();
                 } else {
                     // Keep the old route; try again a little later.
                     trace("reroute=failed");
-                    reroute_retry_at_ = std::chrono::steady_clock::now() +
-                                        kRerouteRetryDelay;
+                    reroute_.request_failed(std::chrono::steady_clock::now());
                 }
                 gps_dirty_ = true;
             }
