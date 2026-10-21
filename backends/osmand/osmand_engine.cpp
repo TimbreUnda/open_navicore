@@ -2,6 +2,8 @@
 #include "build_info.h"
 #include "camera_controller.h"
 #include "cluster_payload.h"
+#include "dev_menu.h"
+#include "gps_history.h"
 #include "crash_reporter.h"
 #include "session.h"
 #include "diagnostics.h"
@@ -65,38 +67,6 @@ constexpr std::chrono::seconds kDetourTimeout{30};
 constexpr std::chrono::seconds kRerouteRetryDelay{10};
 constexpr std::chrono::milliseconds kClusterPublishInterval{500};
 constexpr std::chrono::milliseconds kDevMenuRefreshInterval{500};
-
-// Arrival times of the most recent GPS fixes, for the developer menu's
-// last-fix age and fix rate.
-class GpsHistory {
-public:
-    using Clock = std::chrono::steady_clock;
-
-    void record(Clock::time_point at)
-    {
-        times_[next_] = at;
-        next_ = (next_ + 1) % times_.size();
-        count_ = std::min(count_ + 1, times_.size());
-    }
-    bool empty() const { return count_ == 0; }
-    Clock::time_point latest() const
-    {
-        return times_[(next_ + times_.size() - 1) % times_.size()];
-    }
-    // Fixes per second across the window; 0 until two fixes span some time.
-    double rate_hz() const
-    {
-        if (count_ < 2)
-            return 0.0;
-        const auto oldest = times_[count_ < times_.size() ? 0 : next_];
-        const double span = std::chrono::duration<double>(latest() - oldest).count();
-        return span > 0.0 ? (count_ - 1) / span : 0.0;
-    }
-
-private:
-    std::array<Clock::time_point, 16> times_{};
-    std::size_t count_ = 0, next_ = 0;
-};
 
 class OsmAndEngine final : public Engine {
 public:
@@ -214,7 +184,7 @@ private:
     void handle_map_touch(const ui::MapTouch& touch);
     // Platform inputs, raw (meanings not qualified): kept for the
     // developer menu and traced when they change; nothing acts on them.
-    template <typename T> struct Raw { T value{}; bool has = false; };
+    template <typename T> using Raw = RawInput<T>;
     Raw<OpenNaviBackendVisibilityV2> visibility_in_;
     Raw<OpenNaviBackendScreenV1> screen_in_;
     Raw<OpenNaviBackendVehicleV2> vehicle_in_;
@@ -240,12 +210,7 @@ private:
     // toggles applied, the vector cache cleared a little each frame.
     void update_dev_menu();
     void apply_dev_action(std::size_t toggle);
-    ui::DevSection dev_gps_section(std::chrono::steady_clock::time_point now);
-    ui::DevSection dev_position_section(std::chrono::steady_clock::time_point now);
-    ui::DevSection dev_map_section();
-    ui::DevSection dev_platform_section(std::chrono::steady_clock::time_point now);
-    ui::DevSection dev_build_section();
-    std::vector<ui::DevToggle> dev_toggles();
+    DevMenuSnapshot dev_menu_snapshot(std::chrono::steady_clock::time_point now) const;
     bool step_cache_clear();
     std::chrono::steady_clock::time_point dev_updated_at_{};
     std::array<float, 240> frame_intervals_ms_{};
@@ -1020,37 +985,6 @@ bool OsmAndEngine::apply_drag(const ui::MapDrag& drag)
     return drag.active;
 }
 
-namespace {
-const char* const kMarkerDir = "/datastore/navicore-backend/";
-// Bench markers shown as switches; read at backend (or provider) start.
-struct DevMarker { const char* label; const char* file; };
-constexpr DevMarker kDevMarkers[] = {
-    {"Route simulation", "enable-route-simulation"},
-    {"Performance metrics", "enable-performance-metrics"},
-    {"Input trace", "enable-input-trace"},
-    {"Benchmark autostart", "enable-benchmark-autostart"},
-    {"Simulate detour", "simulate-detour"},
-};
-constexpr std::size_t kDevToggleNight = 0, kDevToggleTilt = 1, kDevMarkerFirst = 2;
-constexpr std::size_t kDevClearCache = kDevMarkerFirst + sizeof(kDevMarkers) / sizeof(kDevMarkers[0]);
-
-bool file_exists(const std::string& path)
-{
-    struct stat info {};
-    return ::stat(path.c_str(), &info) == 0;
-}
-
-std::string printf_string(const char* format, ...)
-{
-    char text[160] = {};
-    va_list arguments;
-    va_start(arguments, format);
-    std::vsnprintf(text, sizeof(text), format, arguments);
-    va_end(arguments);
-    return text;
-}
-} // namespace
-
 void OsmAndEngine::visibility(const OpenNaviBackendVisibilityV2& event)
 {
     visibility_in_ = {event, true};
@@ -1182,170 +1116,53 @@ void OsmAndEngine::publish_cluster()
     cluster_last_status_ = status;
 }
 
-// One "label: value" line of a developer-menu section.
-static void add_row(ui::DevSection& section, std::string label, std::string value)
+DevMenuSnapshot OsmAndEngine::dev_menu_snapshot(
+    std::chrono::steady_clock::time_point now) const
 {
-    section.rows.emplace_back(std::move(label), std::move(value));
-}
-
-ui::DevSection OsmAndEngine::dev_gps_section(std::chrono::steady_clock::time_point now)
-{
-    ui::DevSection gps{"GPS", {}};
-    const auto& g = latest_gps_;
-    add_row(gps, "Fix (raw)", printf_string("%u%s", g.fix_type,
-                                            has_valid_position_ ? " · position" : " · none"));
-    add_row(gps, "Satellites", printf_string("%u used / %u in view", g.satellites_used,
-                                             g.satellites_in_view));
-    add_row(gps, "DOP (raw)", printf_string("H %u · P %u · V %u", g.hdop_raw, g.pdop_raw,
-                                            g.vdop_raw));
-    add_row(gps, "Accuracy (raw)", printf_string("%u", g.accuracy_raw));
-    add_row(gps, "Position", printf_string("%.6f, %.6f", g.latitude_e7 / 1e7,
-                                           g.longitude_e7 / 1e7));
-    add_row(gps, "Course (raw)", printf_string("hdg %u · spd %u", g.heading_raw,
-                                               g.speed_raw_masked));
-    add_row(gps, "Quality / sync", printf_string("%u / %u", g.quality_status,
-                                                 g.sync_counter));
-    if (gps_history_.empty()) {
-        add_row(gps, "Last fix", "never");
-        add_row(gps, "Rate", "-");
-    } else {
-        add_row(gps, "Last fix", printf_string("%.1f s ago",
-            std::chrono::duration<double>(now - gps_history_.latest()).count()));
-        const double rate = gps_history_.rate_hz();
-        add_row(gps, "Rate", rate > 0.0 ? printf_string("%.1f Hz", rate)
-                                        : std::string("-"));
-    }
-    return gps;
-}
-
-ui::DevSection OsmAndEngine::dev_position_section(std::chrono::steady_clock::time_point now)
-{
-    ui::DevSection position{"POSITION AND CAMERA", {}};
-    const double now_s = std::chrono::duration<double>(now - clock_origin_).count();
-    const auto vehicle = motion_.predict(now_s);
-    add_row(position, "Motion", vehicle.valid
-        ? printf_string("%.0f km/h · %.0f°", vehicle.speed_mps * 3.6, vehicle.heading_degrees)
-        : std::string("no position"));
-    const char* mode = "free";
-    switch (camera_.mode()) {
-    case CameraController::Mode::HeadingUp: mode = "heading-up"; break;
-    case CameraController::Mode::NorthUp: mode = "north-up"; break;
-    case CameraController::Mode::Free: mode = "free"; break;
-    case CameraController::Mode::Overview: mode = "overview"; break;
-    }
-    add_row(position, "Camera", printf_string("%s · z%.2f · %.0f°", mode,
-        applied_pose_.zoom, applied_pose_.elevation_degrees));
+    DevMenuSnapshot snapshot;
+    snapshot.now = now;
+    snapshot.gps = latest_gps_;
+    snapshot.has_valid_position = has_valid_position_;
+    snapshot.gps_history = gps_history_;
+    snapshot.vehicle = motion_.predict(
+        std::chrono::duration<double>(now - clock_origin_).count());
+    snapshot.camera_mode = camera_.mode();
+    snapshot.zoom = applied_pose_.zoom;
+    snapshot.elevation_degrees = applied_pose_.elevation_degrees;
     const auto& guidance = navigation_->guidance();
-    add_row(position, "Off route", navigation_->screen() == ui::Screen::Guidance
-        ? printf_string("%.0f m%s", guidance.off_route_metres,
-                        guidance.recalculating ? " · recalculating" : "")
-        : std::string("not guiding"));
-    return position;
-}
-
-ui::DevSection OsmAndEngine::dev_map_section()
-{
-    ui::DevSection map{"MAP DATA", {}};
-    {
-        struct stat info {};
-        const auto slash = config_.map.rfind('/');
-        const std::string name = slash == std::string::npos ? config_.map : config_.map.substr(slash + 1);
-        add_row(map, "Map file", ::stat(config_.map.c_str(), &info) == 0
-            ? printf_string("%s · %.0f MB", name.c_str(), info.st_size / 1048576.0)
-            : name + " · missing");
-        struct statvfs space {};
-        add_row(map, "Cache free", !config_.vector_cache.empty() &&
-                         ::statvfs(config_.vector_cache.c_str(), &space) == 0
-            ? printf_string("%.0f MB", static_cast<double>(space.f_bavail) * space.f_frsize / 1048576.0)
-            : std::string("off"));
-    }
+    snapshot.guiding = navigation_->screen() == ui::Screen::Guidance;
+    snapshot.off_route_metres = guidance.off_route_metres;
+    snapshot.recalculating = guidance.recalculating;
+    snapshot.map_path = config_.map;
+    snapshot.vector_cache_dir = config_.vector_cache;
     if (vector_map_) {
         const auto stats = vector_map_->stats();
-        add_row(map, "Tiles", printf_string("%llu new · %llu disk · %zu GPU",
-            static_cast<unsigned long long>(stats.tiles_built),
-            static_cast<unsigned long long>(stats.disk_hits), stats.gpu_tiles));
-        add_row(map, "GPU memory", printf_string("%.1f MB", stats.gpu_bytes / 1048576.0));
-        add_row(map, "Wanted", printf_string("%zu · prefetch %zu · z%d",
-            stats.wanted_tiles, stats.prefetch_tiles, stats.tile_zoom));
+        snapshot.has_vector_stats = true;
+        snapshot.vector_stats = {stats.tiles_built, stats.disk_hits, stats.gpu_tiles,
+                                 stats.gpu_bytes, stats.wanted_tiles,
+                                 stats.prefetch_tiles, stats.tile_zoom};
     }
-    if (frame_interval_count_ > 0) {
-        std::array<float, 240> sorted{};
-        std::copy_n(frame_intervals_ms_.begin(), frame_interval_count_, sorted.begin());
-        std::sort(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(frame_interval_count_));
-        float total = 0.0f;
-        for (std::size_t i = 0; i < frame_interval_count_; ++i)
-            total += sorted[i];
-        const float p99 = sorted[std::min(frame_interval_count_ - 1,
-                                          frame_interval_count_ * 99 / 100)];
-        add_row(map, "Frames", printf_string("%.1f fps · 1%% low %.1f fps",
-            1000.0f * frame_interval_count_ / std::max(total, 1.0f), 1000.0f / std::max(p99, 1.0f)));
-    }
-#if defined(__QNXNTO__)
-    {
-        const struct mallinfo heap = ::mallinfo();
-        add_row(map, "Heap", printf_string("%.1f MB used · %.1f MB arena",
-            heap.uordblks / 1048576.0, heap.arena / 1048576.0));
-    }
-#endif
-    return map;
+    snapshot.frame_intervals_ms.assign(
+        frame_intervals_ms_.begin(),
+        frame_intervals_ms_.begin() + static_cast<std::ptrdiff_t>(frame_interval_count_));
+    snapshot.vehicle_in = vehicle_in_;
+    snapshot.visibility_in = visibility_in_;
+    snapshot.screen_in = screen_in_;
+    snapshot.language_in = language_in_;
+    snapshot.distraction_in = distraction_in_;
+    snapshot.cluster_display_in = cluster_display_in_;
+    snapshot.outbound = outbound_ != nullptr;
+    snapshot.cluster_publishes = cluster_publishes_;
+    snapshot.cluster_last_status = cluster_last_status_;
+    snapshot.backend_git = build_git();
+    snapshot.backend_date = build_date();
+    snapshot.night = night_;
+    snapshot.tilted = camera_.tilted();
+    snapshot.cache_clearing = !cache_clear_.empty();
+    snapshot.cache_clear_done = cache_clear_done_;
+    snapshot.cache_cleared_files = cache_cleared_files_;
+    return snapshot;
 }
-
-ui::DevSection OsmAndEngine::dev_platform_section(std::chrono::steady_clock::time_point now)
-{
-    const auto vehicle = motion_.predict(
-        std::chrono::duration<double>(now - clock_origin_).count());
-    ui::DevSection platform{"CAR AND HMI (RAW)", {}};
-    const auto raw = [&](bool has, std::string text) { return has ? text : std::string("-"); };
-    const auto& v = vehicle_in_.value;
-    float displayed_speed = 0.0f;
-    static_assert(sizeof(displayed_speed) == sizeof(v.displayed_vehicle_speed_bits), "float bits");
-    std::memcpy(&displayed_speed, &v.displayed_vehicle_speed_bits, sizeof(displayed_speed));
-    add_row(platform, "Day/night", raw(vehicle_in_.has, printf_string(
-        "status %u · setting %u · fields 0x%x", v.day_night_status, v.day_night_setting,
-        v.valid_fields)));
-    add_row(platform, "Car speed", raw(vehicle_in_.has &&
-        (v.valid_fields & OPEN_NAVI_BACKEND_VEHICLE_SPEED) != 0,
-        printf_string("%.1f (GPS %.1f km/h)", displayed_speed, vehicle.valid ? vehicle.speed_mps * 3.6 : 0.0)));
-    add_row(platform, "Visibility", raw(visibility_in_.has, printf_string(
-        "%u · interactive %u · screen %u", visibility_in_.value.visibility,
-        visibility_in_.value.interactivity, screen_in_.value.screen_type)));
-    add_row(platform, "Language", raw(language_in_.has, printf_string(
-        "%u · date %u · time %u", language_in_.value.language_raw,
-        language_in_.value.date_format_raw, language_in_.value.time_format_raw)));
-    add_row(platform, "Distraction", raw(distraction_in_.has, printf_string(
-        "%u", distraction_in_.value.distraction_status_raw)));
-    add_row(platform, "Cluster", outbound_ ? printf_string(
-        "%llu sent · status %u · display %s", static_cast<unsigned long long>(cluster_publishes_),
-        cluster_last_status_, cluster_display_in_.has
-            ? printf_string("%u", cluster_display_in_.value.enabled_raw).c_str() : "-")
-        : std::string("no outbound services"));
-    return platform;
-}
-
-ui::DevSection OsmAndEngine::dev_build_section()
-{
-    ui::DevSection build{"BUILD", {}};
-    add_row(build, "Backend", build_git());
-    add_row(build, "Built", build_date());
-    add_row(build, "Interfaces", outbound_ ? "backend V5 · contacts" : "backend V2 · contacts");
-    return build;
-}
-
-std::vector<ui::DevToggle> OsmAndEngine::dev_toggles()
-{
-    std::vector<ui::DevToggle> toggles;
-    toggles.push_back({"Night map", night_, ""});
-    toggles.push_back({"3D view", camera_.tilted(), ""});
-    for (const auto& marker : kDevMarkers)
-        toggles.push_back({marker.label, file_exists(std::string(kMarkerDir) + marker.file),
-                           "applies at next start"});
-    toggles.push_back({"Clear vector cache", false,
-                       !cache_clear_.empty() ? printf_string("clearing · %zu files", cache_cleared_files_)
-                       : cache_clear_done_ ? printf_string("cleared %zu files", cache_cleared_files_)
-                                           : std::string("rebuilds tiles from the map")});
-    return toggles;
-}
-
 
 void OsmAndEngine::update_dev_menu()
 {
@@ -1357,13 +1174,8 @@ void OsmAndEngine::update_dev_menu()
         now - dev_updated_at_ < kDevMenuRefreshInterval)
         return;
     dev_updated_at_ = now;
-    std::vector<ui::DevSection> sections;
-    sections.push_back(dev_gps_section(now));
-    sections.push_back(dev_position_section(now));
-    sections.push_back(dev_map_section());
-    sections.push_back(dev_platform_section(now));
-    sections.push_back(dev_build_section());
-    (void)view_->set_dev_info(std::move(sections), dev_toggles());
+    const DevMenuSnapshot snapshot = dev_menu_snapshot(now);
+    (void)view_->set_dev_info(build_dev_sections(snapshot), build_dev_toggles(snapshot));
 
     std::size_t action = 0;
     while (navigation_->take_dev_action(action))
