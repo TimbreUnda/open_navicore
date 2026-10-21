@@ -56,6 +56,16 @@ namespace {
 enum class Phase { Empty, Resources, CoreEntering, CoreReady,
                    RenderingEntering, Ready, Quarantined };
 
+// Bench detour (simulate_detour): drive off the route once, then recover.
+enum class DetourPhase { NotStarted, Driving, Done };
+
+constexpr double kDetourStartRouteFraction = 0.35;
+constexpr double kDetourOffsetMetres = 150.0;
+constexpr std::chrono::seconds kDetourTimeout{30};
+constexpr std::chrono::seconds kRerouteRetryDelay{10};
+constexpr std::chrono::milliseconds kClusterPublishInterval{500};
+constexpr std::chrono::milliseconds kDevMenuRefreshInterval{500};
+
 // Arrival times of the most recent GPS fixes, for the developer menu's
 // last-fix age and fix rate.
 class GpsHistory {
@@ -272,7 +282,7 @@ private:
     std::chrono::steady_clock::time_point reroute_retry_at_{};
     // Bench detour (simulate-detour): 0 pending, 1 active, 2 done.
     bool simulate_detour_ = false;
-    int detour_phase_ = 0;
+    DetourPhase detour_phase_ = DetourPhase::NotStarted;
     std::chrono::steady_clock::time_point detour_started_{};
     double simulation_progress_metres_ = 0.0;
     double simulation_geometry_length_metres_ = 0.0;
@@ -661,17 +671,17 @@ bool OsmAndEngine::update_guidance()
                                       simulation_geometry_length_metres_);
         // Bench detour: once, past 35% of the route, drive 150 m beside it
         // until a recalculated route arrives (or 30 s pass).
-        if (simulate_detour_ && detour_phase_ == 0 &&
-            simulation_progress_metres_ > 0.35 * route.distance_metres) {
-            detour_phase_ = 1;
+        if (simulate_detour_ && detour_phase_ == DetourPhase::NotStarted &&
+            simulation_progress_metres_ > kDetourStartRouteFraction * route.distance_metres) {
+            detour_phase_ = DetourPhase::Driving;
             detour_started_ = now;
             trace("simulation=detour_started");
         }
-        if (detour_phase_ == 1) {
-            if (now - detour_started_ > std::chrono::seconds(30)) {
-                detour_phase_ = 2;
+        if (detour_phase_ == DetourPhase::Driving) {
+            if (now - detour_started_ > kDetourTimeout) {
+                detour_phase_ = DetourPhase::Done;
             } else {
-                position.longitude += 150.0 /
+                position.longitude += kDetourOffsetMetres /
                     (111320.0 * std::cos(position.latitude * 3.14159265358979323846 / 180.0));
             }
         }
@@ -1082,7 +1092,7 @@ void OsmAndEngine::publish_cluster()
     if (!outbound_ || !outbound_->publish_cluster)
         return;
     const auto now = std::chrono::steady_clock::now();
-    if (cluster_published_ && now - cluster_published_at_ < std::chrono::milliseconds(500))
+    if (cluster_published_ && now - cluster_published_at_ < kClusterPublishInterval)
         return;
     ClusterInputs inputs;
     inputs.screen = navigation_->screen();
@@ -1280,7 +1290,7 @@ void OsmAndEngine::update_dev_menu()
         return;
     const auto now = std::chrono::steady_clock::now();
     if (!clearing && dev_updated_at_ != std::chrono::steady_clock::time_point{} &&
-        now - dev_updated_at_ < std::chrono::milliseconds(500))
+        now - dev_updated_at_ < kDevMenuRefreshInterval)
         return;
     dev_updated_at_ = now;
     std::vector<ui::DevSection> sections;
@@ -1613,12 +1623,13 @@ void OsmAndEngine::drain_navigation_results()
                     trace("reroute=applied");
                     show_route(navigation_->routes().front(), false);
                     shown_route_index_ = 0;
-                    if (detour_phase_ == 1) detour_phase_ = 2;
+                    if (detour_phase_ == DetourPhase::Driving)
+                        detour_phase_ = DetourPhase::Done;
                 } else {
                     // Keep the old route; try again a little later.
                     trace("reroute=failed");
                     reroute_retry_at_ = std::chrono::steady_clock::now() +
-                                        std::chrono::seconds(10);
+                                        kRerouteRetryDelay;
                 }
                 gps_dirty_ = true;
             }
