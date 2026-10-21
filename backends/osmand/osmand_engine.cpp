@@ -141,6 +141,12 @@ private:
     static void record_vector_timing(const navicore_vector::VectorFrameTiming& vt,
                                      FrameMeasurement& m);
     bool ensure_navigation_worker();
+    // Steps of initialize().
+    void configure_language();
+    void set_vector_cache_identity();
+    void log_load_bases();
+    bool init_vector_map(const std::shared_ptr<Wakeup>& wakeup);
+    bool defer_navigation_worker(std::shared_ptr<Wakeup> wakeup);
     // Where the car is, for search, routes and the map: the position the
     // car's GPS service reports (its own last known one included), else the
     // last one seen since start, else Kyiv.
@@ -375,19 +381,106 @@ bool seeded_destinations(const std::string& query,
     return true;
 }
 
+void OsmAndEngine::configure_language()
+{
+    const auto language = ui::loc::detect_language(
+        std::getenv("OPEN_NAVICORE_OSMAND_LANGUAGE"), config_.language_marker,
+        config_.hmi_language_file);
+    ui::loc::set_language(language.language);
+    trace(("language=" + std::string(ui::loc::language_code(language.language)) +
+           " source=" + language.source).c_str());
+}
+
+// Anything that changes built geometry or labels must change this.
+void OsmAndEngine::set_vector_cache_identity()
+{
+    vector_cache_dir_ = config_.vector_cache;
+    vector_cache_identity_.clear();
+    for (const std::string& file : obf_files(config_.map)) {
+        struct stat map_info {};
+        const bool map_known = ::stat(file.c_str(), &map_info) == 0;
+        vector_cache_identity_ += file + "|" +
+            std::to_string(map_known ? map_info.st_size : 0) + "|" +
+            std::to_string(map_known ? map_info.st_mtime : 0) + ";";
+    }
+    // Labels are baked into the tiles, so the label languages are part of the identity.
+    vector_cache_identity_ += "|labels=";
+    for (const std::string& language : ui::loc::name_languages(ui::loc::language()))
+        vector_cache_identity_ += language + ",";
+    vector_cache_identity_ += "|vector-style-5";
+}
+
+// Load bases let a slog fault 'ip' be mapped to a library and symbol.
+void OsmAndEngine::log_load_bases()
+{
+    const auto report = [](const char* name, const void* address) {
+        Dl_info info{};
+        if (dladdr(const_cast<void*>(address), &info) == 0 ||
+            !info.dli_fbase)
+            return;
+        char message[256] = {};
+        (void)std::snprintf(message, sizeof(message),
+                            "load_base %s=%p %s", name, info.dli_fbase,
+                            info.dli_fname ? info.dli_fname : "?");
+        trace(message);
+    };
+    report("backend", reinterpret_cast<const void*>(&make_engine));
+    report("osmand_core",
+           reinterpret_cast<const void*>(&OsmAnd::InitializeCore));
+    report("qt_core", reinterpret_cast<const void*>(&qVersion));
+}
+
+bool OsmAndEngine::init_vector_map(const std::shared_ptr<Wakeup>& wakeup)
+{
+    try {
+        vector_map_.reset(new navicore_vector::VectorMap(
+            obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); },
+            basemap_obfs_->getObfFiles().isEmpty() ? nullptr : basemap_obfs_,
+            ui::loc::name_languages(ui::loc::language())));
+        vector_map_->set_upload_thread(true);
+        if (!vector_map_->init_gl())
+            throw std::runtime_error("vector_map gl");
+        if (!vector_cache_dir_.empty())
+            vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
+                                        200ull << 20);
+        vector_map_->set_night(night_);
+        trace(vector_map_->upload_thread_active() ? "vector_upload=thread"
+                                                  : "vector_upload=render_thread");
+        trace("init=vector_map");
+    } catch (...) {
+        if (vector_map_)
+            vector_map_->release_gl(false);
+        vector_map_.reset();
+        return failure("error=vector_map_init");
+    }
+    return true;
+}
+
+bool OsmAndEngine::defer_navigation_worker(std::shared_ptr<Wakeup> wakeup)
+{
+    bool resource_ok = false;
+    const QByteArray routing_xml = resources_->getResource(
+        QStringLiteral("routing/routing.xml"), &resource_ok);
+    if (!resource_ok || routing_xml.isEmpty())
+        return failure("error=routing_xml");
+    trace("init=routing_resource");
+    navigation_wakeup_ = std::move(wakeup);
+    navigation_maps_.clear();
+    for (const std::string& file : obf_files(config_.map))
+        if (!is_basemap(file))
+            navigation_maps_.push_back(file);
+    navigation_routing_xml_.assign(
+        routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
+    trace("init=worker_deferred");
+    return true;
+}
+
 bool OsmAndEngine::initialize(const Config& config,
                              const OpenNaviBackendRenderTargetV1& target,
                              std::shared_ptr<Wakeup> wakeup)
 {
     config_ = config;
-    {
-        const auto language = ui::loc::detect_language(
-            std::getenv("OPEN_NAVICORE_OSMAND_LANGUAGE"), config.language_marker,
-            config.hmi_language_file);
-        ui::loc::set_language(language.language);
-        trace(("language=" + std::string(ui::loc::language_code(language.language)) +
-               " source=" + language.source).c_str());
-    }
+    configure_language();
     simulation_enabled_ = config.simulate_route;
     simulate_detour_ = config.simulate_detour;
     if (config.voice) {
@@ -400,23 +493,8 @@ bool OsmAndEngine::initialize(const Config& config,
                      ? Autostart::Search : Autostart::Off;
     if (autostart_ != Autostart::Off)
         trace("benchmark_autostart=enabled");
-    if (!config.vector_cache.empty()) {
-        // Anything that changes built geometry or labels must change this.
-        vector_cache_dir_ = config.vector_cache;
-        vector_cache_identity_.clear();
-        for (const std::string& file : obf_files(config.map)) {
-            struct stat map_info {};
-            const bool map_known = ::stat(file.c_str(), &map_info) == 0;
-            vector_cache_identity_ += file + "|" +
-                std::to_string(map_known ? map_info.st_size : 0) + "|" +
-                std::to_string(map_known ? map_info.st_mtime : 0) + ";";
-        }
-        // Labels are baked into the tiles, so the label languages are part of the identity.
-        vector_cache_identity_ += "|labels=";
-        for (const std::string& language : ui::loc::name_languages(ui::loc::language()))
-            vector_cache_identity_ += language + ",";
-        vector_cache_identity_ += "|vector-style-5";
-    }
+    if (!config.vector_cache.empty())
+        set_vector_cache_identity();
     frame_metrics_ = FrameMetrics(config.performance_metrics);
 
     if (config.performance_metrics)
@@ -440,26 +518,8 @@ bool OsmAndEngine::initialize(const Config& config,
     phase_ = Phase::CoreReady;
     trace("init=core");
     install_crash_reporter("/tmp/open-navicore-crash.log");
-    // Load bases let a slog fault 'ip' be mapped to a library and symbol.
-    {
-        const auto report = [](const char* name, const void* address) {
-            Dl_info info{};
-            if (dladdr(const_cast<void*>(address), &info) == 0 ||
-                !info.dli_fbase)
-                return;
-            char message[256] = {};
-            (void)std::snprintf(message, sizeof(message),
-                                "load_base %s=%p %s", name, info.dli_fbase,
-                                info.dli_fname ? info.dli_fname : "?");
-            trace(message);
-        };
-        report("backend", reinterpret_cast<const void*>(&make_engine));
-        report("osmand_core",
-               reinterpret_cast<const void*>(&OsmAnd::InitializeCore));
-        report("qt_core", reinterpret_cast<const void*>(&qVersion));
-    }
+    log_load_bases();
 
-    bool resource_ok = false;
     obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
     basemap_obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
     for (const std::string& file : obf_files(config.map))
@@ -505,27 +565,8 @@ bool OsmAndEngine::initialize(const Config& config,
     // below so an LVGL construction exception can still release OsmAnd.
     phase_ = Phase::Ready;
     trace("init=rendering");
-    try {
-        vector_map_.reset(new navicore_vector::VectorMap(
-            obfs_, resources_, 2, [wakeup]() { (void)wakeup->request(); },
-            basemap_obfs_->getObfFiles().isEmpty() ? nullptr : basemap_obfs_,
-            ui::loc::name_languages(ui::loc::language())));
-        vector_map_->set_upload_thread(true);
-        if (!vector_map_->init_gl())
-            throw std::runtime_error("vector_map gl");
-        if (!vector_cache_dir_.empty())
-            vector_map_->set_disk_cache(vector_cache_dir_, vector_cache_identity_,
-                                        200ull << 20);
-        vector_map_->set_night(night_);
-        trace(vector_map_->upload_thread_active() ? "vector_upload=thread"
-                                                  : "vector_upload=render_thread");
-        trace("init=vector_map");
-    } catch (...) {
-        if (vector_map_)
-            vector_map_->release_gl(false);
-        vector_map_.reset();
-        return failure("error=vector_map_init");
-    }
+    if (!init_vector_map(wakeup))
+        return false;
     navigation_ = std::unique_ptr<ui::NavigationModel>(new ui::NavigationModel());
     recents_store_.reset(new ui::RecentsStore(config.recents));
     navigation_->set_recents(recents_store_->load());
@@ -534,20 +575,7 @@ bool OsmAndEngine::initialize(const Config& config,
         new ui::NavigationView(*navigation_, target.width, target.height));
     trace("init=view");
     apply_split();
-    const QByteArray routing_xml = resources_->getResource(
-        QStringLiteral("routing/routing.xml"), &resource_ok);
-    if (!resource_ok || routing_xml.isEmpty())
-        return failure("error=routing_xml");
-    trace("init=routing_resource");
-    navigation_wakeup_ = std::move(wakeup);
-    navigation_maps_.clear();
-    for (const std::string& file : obf_files(config.map))
-        if (!is_basemap(file))
-            navigation_maps_.push_back(file);
-    navigation_routing_xml_.assign(
-        routing_xml.constData(), static_cast<std::size_t>(routing_xml.size()));
-    trace("init=worker_deferred");
-    return true;
+    return defer_navigation_worker(std::move(wakeup));
 }
 
 void OsmAndEngine::resize(const OpenNaviBackendRenderTargetV1& target)
