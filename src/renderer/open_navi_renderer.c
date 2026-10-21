@@ -945,9 +945,7 @@ static int start_backend(uintptr_t service_token, int *started)
             g_runtime.active.backend_context, &services_v3);
         if (status == 0) *started = 1;
     } else if (status == 0 &&
-        (g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
-         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-         g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5)) {
+        active_abi_at_least(OPEN_NAVI_BACKEND_ABI_V3)) {
         status = g_runtime.active_v3.start_v2(
             g_runtime.active.backend_context, &services_v2);
         if (status == 0) *started = 1;
@@ -1727,51 +1725,36 @@ int open_navi_renderer_notify_gps(const OpenNaviGpsSnapshot *snapshot)
     return result;
 }
 
+/* While a backend is starting or running its negotiated version applies;
+ * otherwise the installed one does. */
+static int renderer_abi_at_least_locked(uint32_t first_version)
+{
+    const uint32_t version =
+        (g_runtime.state == RENDERER_STARTING ||
+         g_runtime.state == RENDERER_RUNNING)
+            ? g_runtime.active_version
+            : g_runtime.installed_version;
+    return version >= first_version && version <= OPEN_NAVI_BACKEND_ABI_V6;
+}
+
 static int renderer_v2_enabled_locked(void)
 {
-    if (g_runtime.state == RENDERER_STARTING ||
-        g_runtime.state == RENDERER_RUNNING) {
-        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V2 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V3 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
-    }
-    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V2 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V3 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6;
+    return renderer_abi_at_least_locked(OPEN_NAVI_BACKEND_ABI_V2);
 }
 
 static int renderer_v4_enabled_locked(void)
 {
-    if (g_runtime.state == RENDERER_STARTING ||
-        g_runtime.state == RENDERER_RUNNING)
-        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
-    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V4 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6;
+    return renderer_abi_at_least_locked(OPEN_NAVI_BACKEND_ABI_V4);
 }
 
 static int renderer_v5_enabled_locked(void)
 {
-    if (g_runtime.state == RENDERER_STARTING ||
-        g_runtime.state == RENDERER_RUNNING)
-        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V5 ||
-               g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
-    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5 ||
-           g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6;
+    return renderer_abi_at_least_locked(OPEN_NAVI_BACKEND_ABI_V5);
 }
 
 static int renderer_v6_enabled_locked(void)
 {
-    if (g_runtime.state == RENDERER_STARTING ||
-        g_runtime.state == RENDERER_RUNNING)
-        return g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6;
-    return g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6;
+    return renderer_abi_at_least_locked(OPEN_NAVI_BACKEND_ABI_V6);
 }
 
 static int notify_vehicle(uint32_t source_slot,
