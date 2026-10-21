@@ -40,9 +40,16 @@ void test_arrival_and_threshold_clear_the_timer()
     CHECK(!state.off_route_long_enough(false, 80.0, t0));
     CHECK(!state.off_route_long_enough(true, 80.0, t0 + std::chrono::seconds(10)));
     CHECK(!state.off_route_long_enough(false, 80.0, t0 + std::chrono::seconds(11)));
-    CHECK(!state.off_route_long_enough(false, 50.0, t0 + std::chrono::seconds(12)));
+    // Exactly at the threshold counts as on the route: it resets the timer
+    // even though the car has been "off" for well over 4 s.
+    CHECK(!state.off_route_long_enough(false, 50.0, t0 + std::chrono::seconds(20)));
+    CHECK(!state.off_route_long_enough(false, 80.0, t0 + std::chrono::seconds(21)));
+    CHECK(!state.off_route_long_enough(false, 80.0, t0 + std::chrono::seconds(24)));
+    CHECK(state.off_route_long_enough(false, 80.0, t0 + std::chrono::seconds(25)));
+    // clear_off_route() restarts the timer, so a long gap does not count.
     state.clear_off_route();
-    CHECK(!state.off_route_long_enough(false, 80.0, t0 + std::chrono::seconds(20)));
+    CHECK(!state.off_route_long_enough(false, 80.0, t0 + std::chrono::seconds(60)));
+    CHECK(state.off_route_long_enough(false, 80.0, t0 + std::chrono::seconds(64)));
 }
 
 void test_failed_request_backs_off()
@@ -74,6 +81,27 @@ void test_detour_starts_once_and_times_out()
     CHECK(!detour.driving());
 }
 
+void test_detour_boundaries()
+{
+    const auto t0 = Clock::now();
+    const double route = 2000.0;
+    // Exactly at the start fraction does not start; just past it does.
+    BenchDetour early;
+    early.enable(true);
+    CHECK(!early.advance(BenchDetour::kStartRouteFraction * route, route, t0));
+    CHECK(early.advance(BenchDetour::kStartRouteFraction * route + 1.0, route, t0));
+    // The timeout is exactly 30 s: still driving at 30 s, over just after.
+    BenchDetour timed;
+    timed.enable(true);
+    CHECK(timed.advance(route, route, t0));
+    timed.advance(route, route, t0 + std::chrono::seconds(29));
+    CHECK(timed.driving());
+    timed.advance(route, route, t0 + std::chrono::seconds(30));
+    CHECK(timed.driving());
+    timed.advance(route, route, t0 + std::chrono::seconds(30) + std::chrono::milliseconds(1));
+    CHECK(!timed.driving());
+}
+
 void test_detour_ends_when_route_recovers()
 {
     BenchDetour detour;
@@ -93,6 +121,7 @@ int main()
     test_arrival_and_threshold_clear_the_timer();
     test_failed_request_backs_off();
     test_detour_starts_once_and_times_out();
+    test_detour_boundaries();
     test_detour_ends_when_route_recovers();
     std::puts("reroute_state_test passed");
     return 0;
