@@ -120,6 +120,48 @@ typedef struct {
     OpenNaviBackendGuidanceStopV1 value;
 } GuidanceStopSlot;
 
+/* The backend as installed by its plugin and as activated for a run, each at
+ * every ABI level it implements. */
+typedef struct {
+    OpenNaviBackendV1 installed;
+    OpenNaviBackendV2 installed_v2;
+    OpenNaviBackendV3 installed_v3;
+    OpenNaviBackendV4 installed_v4;
+    OpenNaviBackendV5 installed_v5;
+    OpenNaviBackendV6 installed_v6;
+    uint32_t installed_version;
+    OpenNaviBackendV1 active;
+    OpenNaviBackendV2 active_v2;
+    OpenNaviBackendV3 active_v3;
+    OpenNaviBackendV4 active_v4;
+    OpenNaviBackendV5 active_v5;
+    OpenNaviBackendV6 active_v6;
+    uint32_t active_version;
+} BackendTable;
+
+/* Pointer events waiting for the render thread, and what became of the rest. */
+typedef struct {
+    RenderEvent queue[OPEN_NAVI_POINTER_QUEUE_CAPACITY];
+    unsigned int head;
+    unsigned int count;
+    uint32_t accepted;
+    uint32_t dropped;
+    uint32_t move_coalesced;
+    uint32_t move_dropped;
+    uint32_t edge_dropped;
+    uint32_t move_evicted;
+    uint32_t gesture_pairs_evicted;
+} PointerQueue;
+
+/* Events the platform layer reported but the renderer could not act on. */
+typedef struct {
+    uint32_t platform_ignored;
+    uint32_t platform_errors;
+    uint32_t platform_window_lost;
+    uint32_t visibility_unsupported;
+    uint32_t screen_unsupported;
+} PlatformCounters;
+
 typedef struct {
     pthread_mutex_t lock;
     pthread_cond_t condition;
@@ -139,20 +181,7 @@ typedef struct {
     int frame_pending;
     uint64_t frame_event_sequence;
     uint64_t frame_sequence;
-    OpenNaviBackendV1 installed;
-    OpenNaviBackendV2 installed_v2;
-    OpenNaviBackendV3 installed_v3;
-    OpenNaviBackendV4 installed_v4;
-    OpenNaviBackendV5 installed_v5;
-    OpenNaviBackendV6 installed_v6;
-    uint32_t installed_version;
-    OpenNaviBackendV1 active;
-    OpenNaviBackendV2 active_v2;
-    OpenNaviBackendV3 active_v3;
-    OpenNaviBackendV4 active_v4;
-    OpenNaviBackendV5 active_v5;
-    OpenNaviBackendV6 active_v6;
-    uint32_t active_version;
+    BackendTable backend;
     OpenNaviBackendRenderTargetV1 target;
     VisibilitySlot visibility[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
     ScreenSlot screen[OPEN_NAVI_RENDERER_DISPLAY_COUNT];
@@ -164,23 +193,10 @@ typedef struct {
     ClusterDisplaySlot cluster_display;
     DriverDistractionSlot driver_distraction;
     GuidanceStopSlot guidance_stop;
-    RenderEvent pointer_queue[OPEN_NAVI_POINTER_QUEUE_CAPACITY];
-    unsigned int pointer_head;
-    unsigned int pointer_count;
-    uint32_t pointer_accepted;
-    uint32_t pointer_dropped;
-    uint32_t pointer_move_coalesced;
-    uint32_t pointer_move_dropped;
-    uint32_t pointer_edge_dropped;
-    uint32_t pointer_move_evicted;
-    uint32_t pointer_gesture_pairs_evicted;
+    PointerQueue pointer;
     int pointer_contacts;
     int window_area;
-    uint32_t platform_ignored;
-    uint32_t platform_errors;
-    uint32_t platform_window_lost;
-    uint32_t visibility_unsupported;
-    uint32_t screen_unsupported;
+    PlatformCounters counters;
     char diagnostic[257];
 } RendererRuntime;
 
@@ -271,7 +287,7 @@ static uintptr_t next_service_token_locked(void)
 static int event_available_locked(void)
 {
     unsigned int display;
-    if (g_runtime.pointer_count != 0u || g_runtime.gps.pending != 0 ||
+    if (g_runtime.pointer.count != 0u || g_runtime.gps.pending != 0 ||
         g_runtime.vehicle.pending != 0 ||
         g_runtime.gps_interval.pending != 0 ||
         g_runtime.audio.pending != 0 ||
@@ -407,8 +423,8 @@ static RenderEventType select_next_event_locked(unsigned int *display_out)
         }                                                    \
     } while (0)
 
-    if (g_runtime.pointer_count != 0u) {
-        selected = g_runtime.pointer_queue[g_runtime.pointer_head].sequence;
+    if (g_runtime.pointer.count != 0u) {
+        selected = g_runtime.pointer.queue[g_runtime.pointer.head].sequence;
         type = RENDER_EVENT_POINTER;
     }
     for (display = 0u; display < OPEN_NAVI_RENDERER_DISPLAY_COUNT; ++display) {
@@ -450,10 +466,10 @@ static int pop_event_locked(RenderEventType type, unsigned int display,
     event->type = type;
     switch (type) {
     case RENDER_EVENT_POINTER:
-        *event = g_runtime.pointer_queue[g_runtime.pointer_head];
-        g_runtime.pointer_head =
-            (g_runtime.pointer_head + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-        --g_runtime.pointer_count;
+        *event = g_runtime.pointer.queue[g_runtime.pointer.head];
+        g_runtime.pointer.head =
+            (g_runtime.pointer.head + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
+        --g_runtime.pointer.count;
         break;
     case RENDER_EVENT_VISIBILITY:
         event->sequence = g_runtime.visibility[display].sequence;
@@ -543,32 +559,32 @@ static void increment_counter(uint32_t *counter)
 static void remove_pointer_offset_locked(unsigned int offset)
 {
     unsigned int index;
-    for (index = offset; index + 1u < g_runtime.pointer_count; ++index) {
+    for (index = offset; index + 1u < g_runtime.pointer.count; ++index) {
         unsigned int destination =
-            (g_runtime.pointer_head + index) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
+            (g_runtime.pointer.head + index) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
         unsigned int source =
-            (g_runtime.pointer_head + index + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-        g_runtime.pointer_queue[destination] = g_runtime.pointer_queue[source];
+            (g_runtime.pointer.head + index + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
+        g_runtime.pointer.queue[destination] = g_runtime.pointer.queue[source];
     }
-    --g_runtime.pointer_count;
+    --g_runtime.pointer.count;
 }
 
 static int evict_oldest_gesture_pair_locked(void)
 {
     unsigned int offset;
-    for (offset = 0u; offset + 1u < g_runtime.pointer_count; ++offset) {
-        unsigned int first = (g_runtime.pointer_head + offset) %
+    for (offset = 0u; offset + 1u < g_runtime.pointer.count; ++offset) {
+        unsigned int first = (g_runtime.pointer.head + offset) %
                              OPEN_NAVI_POINTER_QUEUE_CAPACITY;
         unsigned int second = (first + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-        if (g_runtime.pointer_queue[first].data.pointer.action ==
+        if (g_runtime.pointer.queue[first].data.pointer.action ==
                 OPEN_NAVI_BACKEND_POINTER_PRESS &&
-            g_runtime.pointer_queue[second].data.pointer.action ==
+            g_runtime.pointer.queue[second].data.pointer.action ==
                 OPEN_NAVI_BACKEND_POINTER_RELEASE) {
             remove_pointer_offset_locked(offset);
             remove_pointer_offset_locked(offset);
-            increment_counter(&g_runtime.pointer_dropped);
-            increment_counter(&g_runtime.pointer_dropped);
-            increment_counter(&g_runtime.pointer_gesture_pairs_evicted);
+            increment_counter(&g_runtime.pointer.dropped);
+            increment_counter(&g_runtime.pointer.dropped);
+            increment_counter(&g_runtime.pointer.gesture_pairs_evicted);
             return 1;
         }
     }
@@ -581,9 +597,9 @@ static int evict_oldest_gesture_pair_locked(void)
 static RenderEvent *coalescible_move_locked(uint32_t contact)
 {
     unsigned int back;
-    for (back = 1u; back <= g_runtime.pointer_count; ++back) {
-        RenderEvent *event = &g_runtime.pointer_queue[
-            (g_runtime.pointer_head + g_runtime.pointer_count - back) %
+    for (back = 1u; back <= g_runtime.pointer.count; ++back) {
+        RenderEvent *event = &g_runtime.pointer.queue[
+            (g_runtime.pointer.head + g_runtime.pointer.count - back) %
             OPEN_NAVI_POINTER_QUEUE_CAPACITY];
         if (event->data.pointer.action != OPEN_NAVI_BACKEND_POINTER_MOVE)
             return NULL;
@@ -607,7 +623,7 @@ static int enqueue_pointer(const OpenNaviBackendPointerV2 *pointer)
     if (g_runtime.accepting_state == 0 ||
         (g_runtime.state != RENDERER_STARTING &&
          g_runtime.state != RENDERER_RUNNING) || g_runtime.stop != 0) {
-        increment_counter(&g_runtime.pointer_dropped);
+        increment_counter(&g_runtime.pointer.dropped);
         result = -1;
     } else if (pointer->action == OPEN_NAVI_BACKEND_POINTER_MOVE &&
                (event = coalescible_move_locked(pointer->contact_id)) != NULL) {
@@ -617,46 +633,46 @@ static int enqueue_pointer(const OpenNaviBackendPointerV2 *pointer)
          * drag it was only dispatched about once a second. Updating the
          * position in place delivers the latest position every frame. */
         event->data.pointer = *pointer;
-        increment_counter(&g_runtime.pointer_accepted);
-        increment_counter(&g_runtime.pointer_move_coalesced);
+        increment_counter(&g_runtime.pointer.accepted);
+        increment_counter(&g_runtime.pointer.move_coalesced);
         (void)pthread_cond_signal(&g_runtime.condition);
     } else if (pointer->action == OPEN_NAVI_BACKEND_POINTER_MOVE &&
-               g_runtime.pointer_count >=
+               g_runtime.pointer.count >=
                    OPEN_NAVI_POINTER_QUEUE_CAPACITY - OPEN_NAVI_POINTER_EDGE_RESERVE) {
-        increment_counter(&g_runtime.pointer_dropped);
-        increment_counter(&g_runtime.pointer_move_dropped);
+        increment_counter(&g_runtime.pointer.dropped);
+        increment_counter(&g_runtime.pointer.move_dropped);
         result = -1;
     } else {
-        if (g_runtime.pointer_count == OPEN_NAVI_POINTER_QUEUE_CAPACITY) {
+        if (g_runtime.pointer.count == OPEN_NAVI_POINTER_QUEUE_CAPACITY) {
             unsigned int offset;
-            for (offset = 0u; offset < g_runtime.pointer_count; ++offset) {
-                if (g_runtime.pointer_queue[
-                        (g_runtime.pointer_head + offset) %
+            for (offset = 0u; offset < g_runtime.pointer.count; ++offset) {
+                if (g_runtime.pointer.queue[
+                        (g_runtime.pointer.head + offset) %
                         OPEN_NAVI_POINTER_QUEUE_CAPACITY].data.pointer.action ==
                     OPEN_NAVI_BACKEND_POINTER_MOVE) break;
             }
-            if (offset == g_runtime.pointer_count) {
+            if (offset == g_runtime.pointer.count) {
                 if (!evict_oldest_gesture_pair_locked()) {
-                    increment_counter(&g_runtime.pointer_dropped);
-                    increment_counter(&g_runtime.pointer_edge_dropped);
+                    increment_counter(&g_runtime.pointer.dropped);
+                    increment_counter(&g_runtime.pointer.edge_dropped);
                     result = -1;
                 }
             } else {
                 remove_pointer_offset_locked(offset);
-                increment_counter(&g_runtime.pointer_dropped);
-                increment_counter(&g_runtime.pointer_move_evicted);
+                increment_counter(&g_runtime.pointer.dropped);
+                increment_counter(&g_runtime.pointer.move_evicted);
             }
         }
         if (result == 0) {
-            tail = (g_runtime.pointer_head + g_runtime.pointer_count) %
+            tail = (g_runtime.pointer.head + g_runtime.pointer.count) %
                    OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-            event = &g_runtime.pointer_queue[tail];
+            event = &g_runtime.pointer.queue[tail];
             memset(event, 0, sizeof(*event));
             event->sequence = next_event_sequence_locked();
             event->type = RENDER_EVENT_POINTER;
             event->data.pointer = *pointer;
-            ++g_runtime.pointer_count;
-            increment_counter(&g_runtime.pointer_accepted);
+            ++g_runtime.pointer.count;
+            increment_counter(&g_runtime.pointer.accepted);
             (void)pthread_cond_signal(&g_runtime.condition);
         }
     }
@@ -677,19 +693,19 @@ static int drain_platform_pointer(void)
             (void)enqueue_pointer(&pointer);
         } else if (result == 2) {
             (void)pthread_mutex_lock(&g_runtime.lock);
-            increment_counter(&g_runtime.platform_ignored);
+            increment_counter(&g_runtime.counters.platform_ignored);
             (void)pthread_mutex_unlock(&g_runtime.lock);
         } else if (result == 3) {
             (void)pthread_mutex_lock(&g_runtime.lock);
-            increment_counter(&g_runtime.platform_errors);
+            increment_counter(&g_runtime.counters.platform_errors);
             (void)pthread_mutex_unlock(&g_runtime.lock);
             return 0;
         } else {
             (void)pthread_mutex_lock(&g_runtime.lock);
             if (result == -2)
-                increment_counter(&g_runtime.platform_window_lost);
+                increment_counter(&g_runtime.counters.platform_window_lost);
             else
-                increment_counter(&g_runtime.platform_errors);
+                increment_counter(&g_runtime.counters.platform_errors);
             (void)pthread_mutex_unlock(&g_runtime.lock);
             return -1;
         }
@@ -699,8 +715,8 @@ static int drain_platform_pointer(void)
 
 static int active_abi_at_least(uint32_t first_version)
 {
-    return g_runtime.active_version >= first_version &&
-           g_runtime.active_version <= OPEN_NAVI_BACKEND_ABI_V6;
+    return g_runtime.backend.active_version >= first_version &&
+           g_runtime.backend.active_version <= OPEN_NAVI_BACKEND_ABI_V6;
 }
 
 static void dispatch_visibility(const RenderEvent *event,
@@ -765,11 +781,11 @@ static void dispatch_frame(const OpenNaviBackendV1 *backend)
 
 static void dispatch_event(const RenderEvent *event, uintptr_t service_token)
 {
-    OpenNaviBackendV1 backend = g_runtime.active;
-    OpenNaviBackendV2 backend_v2 = g_runtime.active_v2;
-    OpenNaviBackendV4 backend_v4 = g_runtime.active_v4;
-    OpenNaviBackendV5 backend_v5 = g_runtime.active_v5;
-    OpenNaviBackendV6 backend_v6 = g_runtime.active_v6;
+    OpenNaviBackendV1 backend = g_runtime.backend.active;
+    OpenNaviBackendV2 backend_v2 = g_runtime.backend.active_v2;
+    OpenNaviBackendV4 backend_v4 = g_runtime.backend.active_v4;
+    OpenNaviBackendV5 backend_v5 = g_runtime.backend.active_v5;
+    OpenNaviBackendV6 backend_v6 = g_runtime.backend.active_v6;
     int request_render = event->type != RENDER_EVENT_FRAME;
 
     switch (event->type) {
@@ -861,7 +877,7 @@ static int stop_requested(void)
 
 static void renderer_cleanup(int started, int surfaced)
 {
-    OpenNaviBackendV1 backend = g_runtime.active;
+    OpenNaviBackendV1 backend = g_runtime.backend.active;
     if (surfaced != 0 && backend.surface_destroyed != NULL) {
         char diagnostic[257];
         diagnostic[0] = '\0';
@@ -897,8 +913,8 @@ static void clear_pending_notifications_locked(void)
            sizeof(g_runtime.driver_distraction));
     memset(&g_runtime.guidance_stop, 0,
            sizeof(g_runtime.guidance_stop));
-    g_runtime.pointer_head = 0u;
-    g_runtime.pointer_count = 0u;
+    g_runtime.pointer.head = 0u;
+    g_runtime.pointer.count = 0u;
 }
 
 /* Outbound services (V3 and later) are offered to the backend from start. */
@@ -940,17 +956,17 @@ static int start_backend(uintptr_t service_token, int *started)
                                            g_runtime.diagnostic,
                                            sizeof(g_runtime.diagnostic));
     if (status == 0 &&
-        g_runtime.active_version == OPEN_NAVI_BACKEND_ABI_V6) {
-        status = g_runtime.active_v6.start_v3(
-            g_runtime.active.backend_context, &services_v3);
+        g_runtime.backend.active_version == OPEN_NAVI_BACKEND_ABI_V6) {
+        status = g_runtime.backend.active_v6.start_v3(
+            g_runtime.backend.active.backend_context, &services_v3);
         if (status == 0) *started = 1;
     } else if (status == 0 &&
         active_abi_at_least(OPEN_NAVI_BACKEND_ABI_V3)) {
-        status = g_runtime.active_v3.start_v2(
-            g_runtime.active.backend_context, &services_v2);
+        status = g_runtime.backend.active_v3.start_v2(
+            g_runtime.backend.active.backend_context, &services_v2);
         if (status == 0) *started = 1;
-    } else if (status == 0 && g_runtime.active.start != NULL) {
-        status = g_runtime.active.start(g_runtime.active.backend_context,
+    } else if (status == 0 && g_runtime.backend.active.start != NULL) {
+        status = g_runtime.backend.active.start(g_runtime.backend.active.backend_context,
                                         &services);
         if (status == 0) *started = 1;
     } else if (status == 0) {
@@ -973,15 +989,15 @@ static int create_backend_surface(int *surfaced)
 {
     int status = 0;
 
-    if (g_runtime.active.surface_created != NULL) {
+    if (g_runtime.backend.active.surface_created != NULL) {
         char diagnostic[257];
         diagnostic[0] = '\0';
         if (open_navi_renderer_platform_begin_frame(
                 diagnostic, sizeof(diagnostic)) != 0) {
             status = -1;
         } else {
-            status = g_runtime.active.surface_created(
-                g_runtime.active.backend_context, &g_runtime.target);
+            status = g_runtime.backend.active.surface_created(
+                g_runtime.backend.active.backend_context, &g_runtime.target);
             (void)open_navi_renderer_platform_end_frame(
                 0, diagnostic, sizeof(diagnostic));
             if (status == 0) *surfaced = 1;
@@ -1138,13 +1154,13 @@ int open_navi_renderer_set_pointer_contacts(int enabled)
  * so a replacement backend starts clean. */
 static void reset_installed_backend_locked(void)
 {
-    memset(&g_runtime.installed, 0, sizeof(g_runtime.installed));
-    memset(&g_runtime.installed_v2, 0, sizeof(g_runtime.installed_v2));
-    memset(&g_runtime.installed_v3, 0, sizeof(g_runtime.installed_v3));
-    memset(&g_runtime.installed_v4, 0, sizeof(g_runtime.installed_v4));
-    memset(&g_runtime.installed_v5, 0, sizeof(g_runtime.installed_v5));
-    memset(&g_runtime.installed_v6, 0, sizeof(g_runtime.installed_v6));
-    g_runtime.installed_version = 0u;
+    memset(&g_runtime.backend.installed, 0, sizeof(g_runtime.backend.installed));
+    memset(&g_runtime.backend.installed_v2, 0, sizeof(g_runtime.backend.installed_v2));
+    memset(&g_runtime.backend.installed_v3, 0, sizeof(g_runtime.backend.installed_v3));
+    memset(&g_runtime.backend.installed_v4, 0, sizeof(g_runtime.backend.installed_v4));
+    memset(&g_runtime.backend.installed_v5, 0, sizeof(g_runtime.backend.installed_v5));
+    memset(&g_runtime.backend.installed_v6, 0, sizeof(g_runtime.backend.installed_v6));
+    g_runtime.backend.installed_version = 0u;
     memset(&g_runtime.vehicle, 0, sizeof(g_runtime.vehicle));
     memset(&g_runtime.gps_interval, 0, sizeof(g_runtime.gps_interval));
     memset(&g_runtime.audio, 0, sizeof(g_runtime.audio));
@@ -1169,8 +1185,8 @@ int open_navi_backend_install_v1(const OpenNaviBackendV1 *backend)
         result = -2;
     } else {
         reset_installed_backend_locked();
-        g_runtime.installed = *backend;
-        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V1;
+        g_runtime.backend.installed = *backend;
+        g_runtime.backend.installed_version = OPEN_NAVI_BACKEND_ABI_V1;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
@@ -1189,9 +1205,9 @@ int open_navi_backend_install_v2(const OpenNaviBackendV2 *backend)
         result = -2;
     } else {
         reset_installed_backend_locked();
-        g_runtime.installed = backend->v1;
-        g_runtime.installed_v2 = *backend;
-        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V2;
+        g_runtime.backend.installed = backend->v1;
+        g_runtime.backend.installed_v2 = *backend;
+        g_runtime.backend.installed_version = OPEN_NAVI_BACKEND_ABI_V2;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
@@ -1211,10 +1227,10 @@ int open_navi_backend_install_v3(const OpenNaviBackendV3 *backend)
         result = -2;
     } else {
         reset_installed_backend_locked();
-        g_runtime.installed = backend->v2.v1;
-        g_runtime.installed_v2 = backend->v2;
-        g_runtime.installed_v3 = *backend;
-        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V3;
+        g_runtime.backend.installed = backend->v2.v1;
+        g_runtime.backend.installed_v2 = backend->v2;
+        g_runtime.backend.installed_v3 = *backend;
+        g_runtime.backend.installed_version = OPEN_NAVI_BACKEND_ABI_V3;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
@@ -1234,11 +1250,11 @@ int open_navi_backend_install_v4(const OpenNaviBackendV4 *backend)
         result = -2;
     } else {
         reset_installed_backend_locked();
-        g_runtime.installed = backend->v3.v2.v1;
-        g_runtime.installed_v2 = backend->v3.v2;
-        g_runtime.installed_v3 = backend->v3;
-        g_runtime.installed_v4 = *backend;
-        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V4;
+        g_runtime.backend.installed = backend->v3.v2.v1;
+        g_runtime.backend.installed_v2 = backend->v3.v2;
+        g_runtime.backend.installed_v3 = backend->v3;
+        g_runtime.backend.installed_v4 = *backend;
+        g_runtime.backend.installed_version = OPEN_NAVI_BACKEND_ABI_V4;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
@@ -1259,12 +1275,12 @@ int open_navi_backend_install_v5(const OpenNaviBackendV5 *backend)
         result = -2;
     } else {
         reset_installed_backend_locked();
-        g_runtime.installed = backend->v4.v3.v2.v1;
-        g_runtime.installed_v2 = backend->v4.v3.v2;
-        g_runtime.installed_v3 = backend->v4.v3;
-        g_runtime.installed_v4 = backend->v4;
-        g_runtime.installed_v5 = *backend;
-        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V5;
+        g_runtime.backend.installed = backend->v4.v3.v2.v1;
+        g_runtime.backend.installed_v2 = backend->v4.v3.v2;
+        g_runtime.backend.installed_v3 = backend->v4.v3;
+        g_runtime.backend.installed_v4 = backend->v4;
+        g_runtime.backend.installed_v5 = *backend;
+        g_runtime.backend.installed_version = OPEN_NAVI_BACKEND_ABI_V5;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
@@ -1285,13 +1301,13 @@ int open_navi_backend_install_v6(const OpenNaviBackendV6 *backend)
         reset_installed_backend_locked();
     } else {
         reset_installed_backend_locked();
-        g_runtime.installed = backend->v5.v4.v3.v2.v1;
-        g_runtime.installed_v2 = backend->v5.v4.v3.v2;
-        g_runtime.installed_v3 = backend->v5.v4.v3;
-        g_runtime.installed_v4 = backend->v5.v4;
-        g_runtime.installed_v5 = backend->v5;
-        g_runtime.installed_v6 = *backend;
-        g_runtime.installed_version = OPEN_NAVI_BACKEND_ABI_V6;
+        g_runtime.backend.installed = backend->v5.v4.v3.v2.v1;
+        g_runtime.backend.installed_v2 = backend->v5.v4.v3.v2;
+        g_runtime.backend.installed_v3 = backend->v5.v4.v3;
+        g_runtime.backend.installed_v4 = backend->v5.v4;
+        g_runtime.backend.installed_v5 = backend->v5;
+        g_runtime.backend.installed_v6 = *backend;
+        g_runtime.backend.installed_version = OPEN_NAVI_BACKEND_ABI_V6;
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
@@ -1303,18 +1319,18 @@ void open_navi_renderer_prepare_lifecycle(void)
     (void)pthread_mutex_lock(&g_runtime.lock);
     g_runtime.accepting_state = 1;
     clear_pending_notifications_locked();
-    g_runtime.pointer_accepted = 0u;
-    g_runtime.pointer_dropped = 0u;
-    g_runtime.pointer_move_coalesced = 0u;
-    g_runtime.pointer_move_dropped = 0u;
-    g_runtime.pointer_edge_dropped = 0u;
-    g_runtime.pointer_move_evicted = 0u;
-    g_runtime.pointer_gesture_pairs_evicted = 0u;
-    g_runtime.platform_ignored = 0u;
-    g_runtime.platform_errors = 0u;
-    g_runtime.platform_window_lost = 0u;
-    g_runtime.visibility_unsupported = 0u;
-    g_runtime.screen_unsupported = 0u;
+    g_runtime.pointer.accepted = 0u;
+    g_runtime.pointer.dropped = 0u;
+    g_runtime.pointer.move_coalesced = 0u;
+    g_runtime.pointer.move_dropped = 0u;
+    g_runtime.pointer.edge_dropped = 0u;
+    g_runtime.pointer.move_evicted = 0u;
+    g_runtime.pointer.gesture_pairs_evicted = 0u;
+    g_runtime.counters.platform_ignored = 0u;
+    g_runtime.counters.platform_errors = 0u;
+    g_runtime.counters.platform_window_lost = 0u;
+    g_runtime.counters.visibility_unsupported = 0u;
+    g_runtime.counters.screen_unsupported = 0u;
     g_runtime.frame_pending = 0;
     (void)pthread_mutex_unlock(&g_runtime.lock);
 }
@@ -1331,42 +1347,42 @@ void open_navi_renderer_end_lifecycle(void)
 /* Copies the installed backend, at its ABI level, into the active slots. */
 static void activate_installed_backend_locked(void)
 {
-    if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V6) {
-        g_runtime.active = g_runtime.installed_v6.v5.v4.v3.v2.v1;
-        g_runtime.active_v2 = g_runtime.installed_v6.v5.v4.v3.v2;
-        g_runtime.active_v3 = g_runtime.installed_v6.v5.v4.v3;
-        g_runtime.active_v4 = g_runtime.installed_v6.v5.v4;
-        g_runtime.active_v5 = g_runtime.installed_v6.v5;
-        g_runtime.active_v6 = g_runtime.installed_v6;
-        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V6;
-    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V5) {
-        g_runtime.active = g_runtime.installed_v5.v4.v3.v2.v1;
-        g_runtime.active_v2 = g_runtime.installed_v5.v4.v3.v2;
-        g_runtime.active_v3 = g_runtime.installed_v5.v4.v3;
-        g_runtime.active_v4 = g_runtime.installed_v5.v4;
-        g_runtime.active_v5 = g_runtime.installed_v5;
-        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V5;
-    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V4) {
-        g_runtime.active = g_runtime.installed_v4.v3.v2.v1;
-        g_runtime.active_v2 = g_runtime.installed_v4.v3.v2;
-        g_runtime.active_v3 = g_runtime.installed_v4.v3;
-        g_runtime.active_v4 = g_runtime.installed_v4;
-        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V4;
-    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V3) {
-        g_runtime.active = g_runtime.installed_v3.v2.v1;
-        g_runtime.active_v2 = g_runtime.installed_v3.v2;
-        g_runtime.active_v3 = g_runtime.installed_v3;
-        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V3;
-    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V2) {
-        g_runtime.active = g_runtime.installed_v2.v1;
-        g_runtime.active_v2 = g_runtime.installed_v2;
-        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V2;
-    } else if (g_runtime.installed_version == OPEN_NAVI_BACKEND_ABI_V1) {
-        g_runtime.active = g_runtime.installed;
-        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V1;
+    if (g_runtime.backend.installed_version == OPEN_NAVI_BACKEND_ABI_V6) {
+        g_runtime.backend.active = g_runtime.backend.installed_v6.v5.v4.v3.v2.v1;
+        g_runtime.backend.active_v2 = g_runtime.backend.installed_v6.v5.v4.v3.v2;
+        g_runtime.backend.active_v3 = g_runtime.backend.installed_v6.v5.v4.v3;
+        g_runtime.backend.active_v4 = g_runtime.backend.installed_v6.v5.v4;
+        g_runtime.backend.active_v5 = g_runtime.backend.installed_v6.v5;
+        g_runtime.backend.active_v6 = g_runtime.backend.installed_v6;
+        g_runtime.backend.active_version = OPEN_NAVI_BACKEND_ABI_V6;
+    } else if (g_runtime.backend.installed_version == OPEN_NAVI_BACKEND_ABI_V5) {
+        g_runtime.backend.active = g_runtime.backend.installed_v5.v4.v3.v2.v1;
+        g_runtime.backend.active_v2 = g_runtime.backend.installed_v5.v4.v3.v2;
+        g_runtime.backend.active_v3 = g_runtime.backend.installed_v5.v4.v3;
+        g_runtime.backend.active_v4 = g_runtime.backend.installed_v5.v4;
+        g_runtime.backend.active_v5 = g_runtime.backend.installed_v5;
+        g_runtime.backend.active_version = OPEN_NAVI_BACKEND_ABI_V5;
+    } else if (g_runtime.backend.installed_version == OPEN_NAVI_BACKEND_ABI_V4) {
+        g_runtime.backend.active = g_runtime.backend.installed_v4.v3.v2.v1;
+        g_runtime.backend.active_v2 = g_runtime.backend.installed_v4.v3.v2;
+        g_runtime.backend.active_v3 = g_runtime.backend.installed_v4.v3;
+        g_runtime.backend.active_v4 = g_runtime.backend.installed_v4;
+        g_runtime.backend.active_version = OPEN_NAVI_BACKEND_ABI_V4;
+    } else if (g_runtime.backend.installed_version == OPEN_NAVI_BACKEND_ABI_V3) {
+        g_runtime.backend.active = g_runtime.backend.installed_v3.v2.v1;
+        g_runtime.backend.active_v2 = g_runtime.backend.installed_v3.v2;
+        g_runtime.backend.active_v3 = g_runtime.backend.installed_v3;
+        g_runtime.backend.active_version = OPEN_NAVI_BACKEND_ABI_V3;
+    } else if (g_runtime.backend.installed_version == OPEN_NAVI_BACKEND_ABI_V2) {
+        g_runtime.backend.active = g_runtime.backend.installed_v2.v1;
+        g_runtime.backend.active_v2 = g_runtime.backend.installed_v2;
+        g_runtime.backend.active_version = OPEN_NAVI_BACKEND_ABI_V2;
+    } else if (g_runtime.backend.installed_version == OPEN_NAVI_BACKEND_ABI_V1) {
+        g_runtime.backend.active = g_runtime.backend.installed;
+        g_runtime.backend.active_version = OPEN_NAVI_BACKEND_ABI_V1;
     } else {
-        g_runtime.active = *open_navi_default_backend_v1();
-        g_runtime.active_version = OPEN_NAVI_BACKEND_ABI_V1;
+        g_runtime.backend.active = *open_navi_default_backend_v1();
+        g_runtime.backend.active_version = OPEN_NAVI_BACKEND_ABI_V1;
     }
 }
 
@@ -1407,11 +1423,11 @@ int open_navi_renderer_create(char *diagnostic, size_t diagnostic_capacity)
     g_runtime.frame_sequence = 0u;
     g_runtime.frame_pending = 0;
     g_runtime.diagnostic[0] = '\0';
-    memset(&g_runtime.active_v2, 0, sizeof(g_runtime.active_v2));
-    memset(&g_runtime.active_v3, 0, sizeof(g_runtime.active_v3));
-    memset(&g_runtime.active_v4, 0, sizeof(g_runtime.active_v4));
-    memset(&g_runtime.active_v5, 0, sizeof(g_runtime.active_v5));
-    memset(&g_runtime.active_v6, 0, sizeof(g_runtime.active_v6));
+    memset(&g_runtime.backend.active_v2, 0, sizeof(g_runtime.backend.active_v2));
+    memset(&g_runtime.backend.active_v3, 0, sizeof(g_runtime.backend.active_v3));
+    memset(&g_runtime.backend.active_v4, 0, sizeof(g_runtime.backend.active_v4));
+    memset(&g_runtime.backend.active_v5, 0, sizeof(g_runtime.backend.active_v5));
+    memset(&g_runtime.backend.active_v6, 0, sizeof(g_runtime.backend.active_v6));
     g_runtime.outbound_services_active = 0;
     activate_installed_backend_locked();
     g_runtime.active_service_token = next_service_token_locked();
@@ -1469,8 +1485,8 @@ void open_navi_renderer_destroy(void)
         g_runtime.active_service_token = (uintptr_t)0u;
         g_runtime.outbound_services_active = 0;
         g_runtime.state = RENDERER_STOPPING;
-        g_runtime.pointer_head = 0u;
-        g_runtime.pointer_count = 0u;
+        g_runtime.pointer.head = 0u;
+        g_runtime.pointer.count = 0u;
         g_runtime.frame_pending = 0;
     }
     (void)pthread_cond_broadcast(&g_runtime.condition);
@@ -1561,8 +1577,8 @@ int open_navi_renderer_notify_visibility_area(uint32_t display,
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (display >= OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
-        if (g_runtime.visibility_unsupported != UINT32_MAX)
-            ++g_runtime.visibility_unsupported;
+        if (g_runtime.counters.visibility_unsupported != UINT32_MAX)
+            ++g_runtime.counters.visibility_unsupported;
         result = -2;
     } else if (g_runtime.accepting_state == 0 ||
         g_runtime.state == RENDERER_STOPPING) {
@@ -1589,8 +1605,8 @@ int open_navi_renderer_notify_screen(uint32_t display, uint32_t screen_type,
     int result = 0;
     (void)pthread_mutex_lock(&g_runtime.lock);
     if (display >= OPEN_NAVI_RENDERER_DISPLAY_COUNT) {
-        if (g_runtime.screen_unsupported != UINT32_MAX)
-            ++g_runtime.screen_unsupported;
+        if (g_runtime.counters.screen_unsupported != UINT32_MAX)
+            ++g_runtime.counters.screen_unsupported;
         result = -2;
     } else if (g_runtime.accepting_state == 0 ||
         g_runtime.state == RENDERER_STOPPING) {
@@ -1659,8 +1675,8 @@ static int renderer_abi_at_least_locked(uint32_t first_version)
     const uint32_t version =
         (g_runtime.state == RENDERER_STARTING ||
          g_runtime.state == RENDERER_RUNNING)
-            ? g_runtime.active_version
-            : g_runtime.installed_version;
+            ? g_runtime.backend.active_version
+            : g_runtime.backend.installed_version;
     return version >= first_version && version <= OPEN_NAVI_BACKEND_ABI_V6;
 }
 
@@ -1949,7 +1965,7 @@ uint32_t open_navi_renderer_test_pointer_accepted(void)
 {
     uint32_t result;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    result = g_runtime.pointer_accepted;
+    result = g_runtime.pointer.accepted;
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
@@ -1958,7 +1974,7 @@ uint32_t open_navi_renderer_test_pointer_dropped(void)
 {
     uint32_t result;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    result = g_runtime.pointer_dropped;
+    result = g_runtime.pointer.dropped;
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
@@ -1967,17 +1983,17 @@ void open_navi_renderer_test_pointer_stats(OpenNaviRendererPointerQueueStats *st
 {
     if (stats_out == NULL) return;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    stats_out->accepted = g_runtime.pointer_accepted;
-    stats_out->dropped = g_runtime.pointer_dropped;
-    stats_out->move_coalesced = g_runtime.pointer_move_coalesced;
-    stats_out->move_dropped = g_runtime.pointer_move_dropped;
-    stats_out->edge_dropped = g_runtime.pointer_edge_dropped;
-    stats_out->move_evicted = g_runtime.pointer_move_evicted;
+    stats_out->accepted = g_runtime.pointer.accepted;
+    stats_out->dropped = g_runtime.pointer.dropped;
+    stats_out->move_coalesced = g_runtime.pointer.move_coalesced;
+    stats_out->move_dropped = g_runtime.pointer.move_dropped;
+    stats_out->edge_dropped = g_runtime.pointer.edge_dropped;
+    stats_out->move_evicted = g_runtime.pointer.move_evicted;
     stats_out->gesture_pairs_evicted =
-        g_runtime.pointer_gesture_pairs_evicted;
-    stats_out->platform_ignored = g_runtime.platform_ignored;
-    stats_out->platform_errors = g_runtime.platform_errors;
-    stats_out->platform_window_lost = g_runtime.platform_window_lost;
+        g_runtime.pointer.gesture_pairs_evicted;
+    stats_out->platform_ignored = g_runtime.counters.platform_ignored;
+    stats_out->platform_errors = g_runtime.counters.platform_errors;
+    stats_out->platform_window_lost = g_runtime.counters.platform_window_lost;
     (void)pthread_mutex_unlock(&g_runtime.lock);
 }
 
@@ -1985,7 +2001,7 @@ uint32_t open_navi_renderer_test_visibility_unsupported(void)
 {
     uint32_t result;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    result = g_runtime.visibility_unsupported;
+    result = g_runtime.counters.visibility_unsupported;
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
@@ -1994,7 +2010,7 @@ uint32_t open_navi_renderer_test_screen_unsupported(void)
 {
     uint32_t result;
     (void)pthread_mutex_lock(&g_runtime.lock);
-    result = g_runtime.screen_unsupported;
+    result = g_runtime.counters.screen_unsupported;
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
 }
