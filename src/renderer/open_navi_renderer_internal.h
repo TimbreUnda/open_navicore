@@ -216,6 +216,12 @@ static inline void increment_counter(uint32_t *counter)
 /* open_navi_renderer.c; caller holds g_runtime.lock. */
 uint64_t open_navi_renderer_next_event_sequence_locked(void);
 
+/* open_navi_renderer.c: the event queue. Both need g_runtime.lock held except
+ * take_event, which takes it. take_event returns 1 with an event, 0 when the
+ * renderer is stopping, 2 on an idle poll and -1 on a wait failure. */
+int open_navi_renderer_event_available_locked(void);
+int open_navi_renderer_take_event(RenderEvent *event);
+
 /* open_navi_renderer.c: ask the render thread for a frame; `runtime_context` is
  * the service token the backend was started with. */
 int open_navi_renderer_request_frame(void *runtime_context);
