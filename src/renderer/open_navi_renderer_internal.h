@@ -200,6 +200,21 @@ typedef struct {
 /* The one renderer runtime. Every access holds g_runtime.lock. */
 extern RendererRuntime g_runtime;
 
+/* Saturating: a long-running counter sticks at UINT32_MAX instead of wrapping. */
+static inline void increment_counter(uint32_t *counter)
+{
+    if (*counter != UINT32_MAX) ++*counter;
+}
+
+/* open_navi_renderer.c; caller holds g_runtime.lock. */
+uint64_t open_navi_renderer_next_event_sequence_locked(void);
+
+/* open_navi_renderer_pointer.c: queue a pointer event (-1 dropped, -2 invalid),
+ * and drain the platform's pointer input into the queue (0 none left, 1 more,
+ * -1 window lost or failed). */
+int open_navi_renderer_enqueue_pointer(const OpenNaviBackendPointerV2 *pointer);
+int open_navi_renderer_drain_platform_pointer(void);
+
 /* open_navi_renderer_backend_table.c */
 void open_navi_renderer_activate_installed_locked(void);
 
