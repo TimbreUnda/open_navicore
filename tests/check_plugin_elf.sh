@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+# Byte order for sort/comm: the expected lists are in C-locale order.
+export LC_ALL=C
 
 extract_exports() {
     awk '($5 == "GLOBAL" || $5 == "WEAK" || $5 == "UNIQUE") && \

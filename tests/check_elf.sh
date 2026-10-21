@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+# Byte order for sort/comm: the expected lists are in C-locale order.
+export LC_ALL=C
 
 elf=${1:?usage: check_elf.sh path/to/libNaviCore.so}
 readelf_bin=${READELF:-readelf}

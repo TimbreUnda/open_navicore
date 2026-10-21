@@ -1,6 +1,8 @@
 #!/bin/sh
 # Deliberately separate from the stricter reference-plugin profile.
 set -eu
+# Byte order for sort/comm: the expected lists are in C-locale order.
+export LC_ALL=C
 plugin=${1:?usage: check_osmand_elf.sh plugin.so}
 readelf_bin=${READELF:-readelf}
 header=$($readelf_bin -h "$plugin")

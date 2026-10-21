@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+# Byte order for sort/comm: the expected lists are in C-locale order.
+export LC_ALL=C
 
 matrix=${1:?callback matrix path required}
 manifest=${2:?coverage manifest path required}
