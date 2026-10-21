@@ -82,7 +82,7 @@ static uint64_t monotonic_milliseconds(void)
            (uint64_t)now.tv_nsec / 1000000u;
 }
 
-static uint64_t next_event_sequence_locked(void)
+uint64_t open_navi_renderer_next_event_sequence_locked(void)
 {
     ++g_runtime.next_event_sequence;
     if (g_runtime.next_event_sequence == 0u)
@@ -131,7 +131,7 @@ static int request_frame(void *runtime_context)
         result = -1;
     } else if (g_runtime.frame_pending == 0) {
         g_runtime.frame_pending = 1;
-        g_runtime.frame_event_sequence = next_event_sequence_locked();
+        g_runtime.frame_event_sequence = open_navi_renderer_next_event_sequence_locked();
         (void)pthread_cond_signal(&g_runtime.condition);
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
@@ -363,168 +363,6 @@ static int take_event(RenderEvent *event)
     }
     (void)pthread_mutex_unlock(&g_runtime.lock);
     return result;
-}
-
-static void increment_counter(uint32_t *counter)
-{
-    if (*counter != UINT32_MAX) ++*counter;
-}
-
-static void remove_pointer_offset_locked(unsigned int offset)
-{
-    unsigned int index;
-    for (index = offset; index + 1u < g_runtime.pointer.count; ++index) {
-        unsigned int destination =
-            (g_runtime.pointer.head + index) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-        unsigned int source =
-            (g_runtime.pointer.head + index + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-        g_runtime.pointer.queue[destination] = g_runtime.pointer.queue[source];
-    }
-    --g_runtime.pointer.count;
-}
-
-static int evict_oldest_gesture_pair_locked(void)
-{
-    unsigned int offset;
-    for (offset = 0u; offset + 1u < g_runtime.pointer.count; ++offset) {
-        unsigned int first = (g_runtime.pointer.head + offset) %
-                             OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-        unsigned int second = (first + 1u) % OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-        if (g_runtime.pointer.queue[first].data.pointer.action ==
-                OPEN_NAVI_BACKEND_POINTER_PRESS &&
-            g_runtime.pointer.queue[second].data.pointer.action ==
-                OPEN_NAVI_BACKEND_POINTER_RELEASE) {
-            remove_pointer_offset_locked(offset);
-            remove_pointer_offset_locked(offset);
-            increment_counter(&g_runtime.pointer.dropped);
-            increment_counter(&g_runtime.pointer.dropped);
-            increment_counter(&g_runtime.pointer.gesture_pairs_evicted);
-            return 1;
-        }
-    }
-    return 0;
-}
-
-/* The queued move of the same contact a new move can replace: searched
- * back from the tail across moves only (other contacts' moves may be
- * passed, never a press or release), so per-contact order is kept. */
-static RenderEvent *coalescible_move_locked(uint32_t contact)
-{
-    unsigned int back;
-    for (back = 1u; back <= g_runtime.pointer.count; ++back) {
-        RenderEvent *event = &g_runtime.pointer.queue[
-            (g_runtime.pointer.head + g_runtime.pointer.count - back) %
-            OPEN_NAVI_POINTER_QUEUE_CAPACITY];
-        if (event->data.pointer.action != OPEN_NAVI_BACKEND_POINTER_MOVE)
-            return NULL;
-        if (event->data.pointer.contact_id == contact)
-            return event;
-    }
-    return NULL;
-}
-
-static int enqueue_pointer(const OpenNaviBackendPointerV2 *pointer)
-{
-    RenderEvent *event;
-    unsigned int tail;
-    int result = 0;
-
-    if (pointer == NULL ||
-        (pointer->action != OPEN_NAVI_BACKEND_POINTER_PRESS &&
-         pointer->action != OPEN_NAVI_BACKEND_POINTER_RELEASE &&
-         pointer->action != OPEN_NAVI_BACKEND_POINTER_MOVE)) return -2;
-    (void)pthread_mutex_lock(&g_runtime.lock);
-    if (g_runtime.accepting_state == 0 ||
-        (g_runtime.state != RENDERER_STARTING &&
-         g_runtime.state != RENDERER_RUNNING) || g_runtime.stop != 0) {
-        increment_counter(&g_runtime.pointer.dropped);
-        result = -1;
-    } else if (pointer->action == OPEN_NAVI_BACKEND_POINTER_MOVE &&
-               (event = coalescible_move_locked(pointer->contact_id)) != NULL) {
-        /* Keep the queued move's sequence: take_event() serves the oldest
-         * event first, and a move renumbered on every coalesce stays newer
-         * than the frame request the backend renews each frame, so during a
-         * drag it was only dispatched about once a second. Updating the
-         * position in place delivers the latest position every frame. */
-        event->data.pointer = *pointer;
-        increment_counter(&g_runtime.pointer.accepted);
-        increment_counter(&g_runtime.pointer.move_coalesced);
-        (void)pthread_cond_signal(&g_runtime.condition);
-    } else if (pointer->action == OPEN_NAVI_BACKEND_POINTER_MOVE &&
-               g_runtime.pointer.count >=
-                   OPEN_NAVI_POINTER_QUEUE_CAPACITY - OPEN_NAVI_POINTER_EDGE_RESERVE) {
-        increment_counter(&g_runtime.pointer.dropped);
-        increment_counter(&g_runtime.pointer.move_dropped);
-        result = -1;
-    } else {
-        if (g_runtime.pointer.count == OPEN_NAVI_POINTER_QUEUE_CAPACITY) {
-            unsigned int offset;
-            for (offset = 0u; offset < g_runtime.pointer.count; ++offset) {
-                if (g_runtime.pointer.queue[
-                        (g_runtime.pointer.head + offset) %
-                        OPEN_NAVI_POINTER_QUEUE_CAPACITY].data.pointer.action ==
-                    OPEN_NAVI_BACKEND_POINTER_MOVE) break;
-            }
-            if (offset == g_runtime.pointer.count) {
-                if (!evict_oldest_gesture_pair_locked()) {
-                    increment_counter(&g_runtime.pointer.dropped);
-                    increment_counter(&g_runtime.pointer.edge_dropped);
-                    result = -1;
-                }
-            } else {
-                remove_pointer_offset_locked(offset);
-                increment_counter(&g_runtime.pointer.dropped);
-                increment_counter(&g_runtime.pointer.move_evicted);
-            }
-        }
-        if (result == 0) {
-            tail = (g_runtime.pointer.head + g_runtime.pointer.count) %
-                   OPEN_NAVI_POINTER_QUEUE_CAPACITY;
-            event = &g_runtime.pointer.queue[tail];
-            memset(event, 0, sizeof(*event));
-            event->sequence = next_event_sequence_locked();
-            event->type = RENDER_EVENT_POINTER;
-            event->data.pointer = *pointer;
-            ++g_runtime.pointer.count;
-            increment_counter(&g_runtime.pointer.accepted);
-            (void)pthread_cond_signal(&g_runtime.condition);
-        }
-    }
-    (void)pthread_mutex_unlock(&g_runtime.lock);
-    return result;
-}
-
-static int drain_platform_pointer(void)
-{
-    unsigned int drained;
-    for (drained = 0u; drained < OPEN_NAVI_PLATFORM_DRAIN_LIMIT; ++drained) {
-        OpenNaviBackendPointerV2 pointer;
-        int result = open_navi_renderer_platform_poll_pointer(
-            &pointer, g_runtime.pointer_contacts, g_runtime.diagnostic,
-            sizeof(g_runtime.diagnostic));
-        if (result == 0) return 0;
-        if (result == 1) {
-            (void)enqueue_pointer(&pointer);
-        } else if (result == 2) {
-            (void)pthread_mutex_lock(&g_runtime.lock);
-            increment_counter(&g_runtime.counters.platform_ignored);
-            (void)pthread_mutex_unlock(&g_runtime.lock);
-        } else if (result == 3) {
-            (void)pthread_mutex_lock(&g_runtime.lock);
-            increment_counter(&g_runtime.counters.platform_errors);
-            (void)pthread_mutex_unlock(&g_runtime.lock);
-            return 0;
-        } else {
-            (void)pthread_mutex_lock(&g_runtime.lock);
-            if (result == -2)
-                increment_counter(&g_runtime.counters.platform_window_lost);
-            else
-                increment_counter(&g_runtime.counters.platform_errors);
-            (void)pthread_mutex_unlock(&g_runtime.lock);
-            return -1;
-        }
-    }
-    return 1;
 }
 
 static int active_abi_at_least(uint32_t first_version)
@@ -856,7 +694,7 @@ static int run_event_loop(uintptr_t service_token)
         int drain_result;
         int take_result;
         drain_result = open_navi_renderer_platform_input_pending()
-                           ? drain_platform_pointer() : 0;
+                           ? open_navi_renderer_drain_platform_pointer() : 0;
         if (drain_result < 0) return -1;
         /* A full bounded drain can be followed by another full batch forever.
          * Observe teardown between every batch rather than relying on a
@@ -1200,7 +1038,7 @@ int open_navi_renderer_notify_visibility_area(uint32_t display,
         slot->value.visibility = visibility;
         slot->value.interactivity = interactivity;
         window_area_from_points(points, &slot->value);
-        slot->sequence = next_event_sequence_locked();
+        slot->sequence = open_navi_renderer_next_event_sequence_locked();
         slot->pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1227,7 +1065,7 @@ int open_navi_renderer_notify_screen(uint32_t display, uint32_t screen_type,
         slot->value.display = display;
         slot->value.screen_type = screen_type;
         slot->value.animation = animation;
-        slot->sequence = next_event_sequence_locked();
+        slot->sequence = open_navi_renderer_next_event_sequence_locked();
         slot->pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1269,7 +1107,7 @@ int open_navi_renderer_notify_gps(const OpenNaviGpsSnapshot *snapshot)
         gps->travel_distance_raw = snapshot->travel_distance_raw;
         gps->altitude_change_raw = snapshot->altitude_change_raw;
         gps->noise_raw = snapshot->noise_raw;
-        g_runtime.gps.sequence = next_event_sequence_locked();
+        g_runtime.gps.sequence = open_navi_renderer_next_event_sequence_locked();
         g_runtime.gps.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1349,7 +1187,7 @@ static int notify_vehicle(uint32_t source_slot,
             vehicle->day_night_setting = (uint8_t)value;
         else
             vehicle->displayed_vehicle_speed_bits = value;
-        g_runtime.vehicle.sequence = next_event_sequence_locked();
+        g_runtime.vehicle.sequence = open_navi_renderer_next_event_sequence_locked();
         g_runtime.vehicle.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1398,7 +1236,7 @@ int open_navi_renderer_notify_gps_interval(uint32_t source_slot,
         gps_interval->struct_size = sizeof(*gps_interval);
         gps_interval->source_slot = source_slot;
         gps_interval->interval_ms = interval_ms;
-        g_runtime.gps_interval.sequence = next_event_sequence_locked();
+        g_runtime.gps_interval.sequence = open_navi_renderer_next_event_sequence_locked();
         g_runtime.gps_interval.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1426,7 +1264,7 @@ int open_navi_renderer_notify_audio(uint32_t source_slot,
         audio->request_handle = request_handle;
         audio->audio_source = audio_source;
         audio->volume = volume;
-        g_runtime.audio.sequence = next_event_sequence_locked();
+        g_runtime.audio.sequence = open_navi_renderer_next_event_sequence_locked();
         g_runtime.audio.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1460,7 +1298,7 @@ int open_navi_renderer_notify_internationalization(
             event->time_format_raw = settings_raw[3];
         }
         g_runtime.internationalization.sequence =
-            next_event_sequence_locked();
+            open_navi_renderer_next_event_sequence_locked();
         g_runtime.internationalization.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1486,7 +1324,7 @@ int open_navi_renderer_notify_cluster_display(uint32_t source_slot,
         event->source_slot = source_slot;
         event->request_handle = request_handle;
         event->enabled_raw = enabled_raw;
-        g_runtime.cluster_display.sequence = next_event_sequence_locked();
+        g_runtime.cluster_display.sequence = open_navi_renderer_next_event_sequence_locked();
         g_runtime.cluster_display.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1512,7 +1350,7 @@ int open_navi_renderer_notify_driver_distraction(uint32_t source_slot,
         event->source_slot = source_slot;
         event->request_handle = request_handle;
         event->distraction_status_raw = status_raw;
-        g_runtime.driver_distraction.sequence = next_event_sequence_locked();
+        g_runtime.driver_distraction.sequence = open_navi_renderer_next_event_sequence_locked();
         g_runtime.driver_distraction.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1538,7 +1376,7 @@ int open_navi_renderer_notify_guidance_stop(uint32_t source_slot,
         event->struct_size = sizeof(*event);
         event->source_slot = source_slot;
         event->request_handle = request_handle;
-        g_runtime.guidance_stop.sequence = next_event_sequence_locked();
+        g_runtime.guidance_stop.sequence = open_navi_renderer_next_event_sequence_locked();
         g_runtime.guidance_stop.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
     }
@@ -1567,7 +1405,7 @@ int open_navi_renderer_test_submit_contact(uint32_t action, int32_t x, int32_t y
     pointer.buttons = buttons;
     pointer.contact_id = contact;
     pointer.contact_count = count;
-    return enqueue_pointer(&pointer);
+    return open_navi_renderer_enqueue_pointer(&pointer);
 }
 
 uint32_t open_navi_renderer_test_pointer_accepted(void)
