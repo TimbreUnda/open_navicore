@@ -104,6 +104,7 @@ onc_test(voice_worker_test SOURCES voice_worker_test.cpp LIBS navigation_ui m)
 onc_test(voice_link_test SOURCES voice_link_test.cpp LIBS navigation_ui m rt)
 onc_test(process_focus_test SOURCES process_focus_test.cpp LIBS voice_daemon navigation_ui m)
 onc_test(camera_controller_test SOURCES camera_controller_test.cpp LIBS navigation_ui)
+onc_test(dev_menu_test SOURCES dev_menu_test.cpp LIBS navigation_ui)
 onc_test(labels_test SOURCES labels_test.cpp LIBS navigation_ui)
 onc_test(route_check_test SOURCES route_check_test.cpp LIBS navigation_ui m)
 # Address search index: built from a small dump fixture by the real builder.
