@@ -185,6 +185,12 @@ private:
     // toggles applied, the vector cache cleared a little each frame.
     void update_dev_menu();
     void apply_dev_action(std::size_t toggle);
+    ui::DevSection dev_gps_section(std::chrono::steady_clock::time_point now);
+    ui::DevSection dev_position_section(std::chrono::steady_clock::time_point now);
+    ui::DevSection dev_map_section();
+    ui::DevSection dev_platform_section(std::chrono::steady_clock::time_point now);
+    ui::DevSection dev_build_section();
+    std::vector<ui::DevToggle> dev_toggles();
     bool step_cache_clear();
     std::chrono::steady_clock::time_point dev_updated_at_{};
     std::array<float, 240> frame_intervals_ms_{};
@@ -1077,20 +1083,8 @@ void OsmAndEngine::publish_cluster()
     cluster_last_status_ = status;
 }
 
-void OsmAndEngine::update_dev_menu()
+ui::DevSection OsmAndEngine::dev_gps_section(std::chrono::steady_clock::time_point now)
 {
-    const bool clearing = step_cache_clear();
-    if (!navigation_->dev_menu_open())
-        return;
-    const auto now = std::chrono::steady_clock::now();
-    if (!clearing && dev_updated_at_ != std::chrono::steady_clock::time_point{} &&
-        now - dev_updated_at_ < std::chrono::milliseconds(500))
-        return;
-    dev_updated_at_ = now;
-    std::vector<ui::DevSection> sections;
-
-    // GPS: several fields are raw values without qualified units
-    // (api-ui-restrictions.md), shown raw and labelled so.
     ui::DevSection gps{"GPS", {}};
     const auto& g = latest_gps_;
     gps.rows.push_back({"Fix (raw)", printf_string("%u%s", g.fix_type,
@@ -1118,8 +1112,11 @@ void OsmAndEngine::update_dev_menu()
         gps.rows.push_back({"Rate", gps_time_count_ > 1 && span > 0.0
             ? printf_string("%.1f Hz", (gps_time_count_ - 1) / span) : std::string("-")});
     }
-    sections.push_back(std::move(gps));
+    return gps;
+}
 
+ui::DevSection OsmAndEngine::dev_position_section(std::chrono::steady_clock::time_point now)
+{
     ui::DevSection position{"POSITION AND CAMERA", {}};
     const double now_s = std::chrono::duration<double>(now - clock_origin_).count();
     const auto vehicle = motion_.predict(now_s);
@@ -1140,8 +1137,11 @@ void OsmAndEngine::update_dev_menu()
         ? printf_string("%.0f m%s", guidance.off_route_metres,
                         guidance.recalculating ? " · recalculating" : "")
         : std::string("not guiding")});
-    sections.push_back(std::move(position));
+    return position;
+}
 
+ui::DevSection OsmAndEngine::dev_map_section()
+{
     ui::DevSection map{"MAP DATA", {}};
     {
         struct stat info {};
@@ -1184,8 +1184,13 @@ void OsmAndEngine::update_dev_menu()
             heap.uordblks / 1048576.0, heap.arena / 1048576.0)});
     }
 #endif
-    sections.push_back(std::move(map));
+    return map;
+}
 
+ui::DevSection OsmAndEngine::dev_platform_section(std::chrono::steady_clock::time_point now)
+{
+    const auto vehicle = motion_.predict(
+        std::chrono::duration<double>(now - clock_origin_).count());
     ui::DevSection platform{"CAR AND HMI (RAW)", {}};
     const auto raw = [&](bool has, std::string text) { return has ? text : std::string("-"); };
     const auto& v = vehicle_in_.value;
@@ -1211,14 +1216,20 @@ void OsmAndEngine::update_dev_menu()
         cluster_last_status_, cluster_display_in_.has
             ? printf_string("%u", cluster_display_in_.value.enabled_raw).c_str() : "-")
         : std::string("no outbound services")});
-    sections.push_back(std::move(platform));
+    return platform;
+}
 
+ui::DevSection OsmAndEngine::dev_build_section()
+{
     ui::DevSection build{"BUILD", {}};
     build.rows.push_back({"Backend", build_git()});
     build.rows.push_back({"Built", build_date()});
     build.rows.push_back({"Interfaces", outbound_ ? "backend V5 · contacts" : "backend V2 · contacts"});
-    sections.push_back(std::move(build));
+    return build;
+}
 
+std::vector<ui::DevToggle> OsmAndEngine::dev_toggles()
+{
     std::vector<ui::DevToggle> toggles;
     toggles.push_back({"Night map", night_, ""});
     toggles.push_back({"3D view", camera_.tilted(), ""});
@@ -1229,7 +1240,27 @@ void OsmAndEngine::update_dev_menu()
                        !cache_clear_.empty() ? printf_string("clearing · %zu files", cache_cleared_files_)
                        : cache_clear_done_ ? printf_string("cleared %zu files", cache_cleared_files_)
                                            : std::string("rebuilds tiles from the map")});
-    (void)view_->set_dev_info(std::move(sections), std::move(toggles));
+    return toggles;
+}
+
+
+void OsmAndEngine::update_dev_menu()
+{
+    const bool clearing = step_cache_clear();
+    if (!navigation_->dev_menu_open())
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!clearing && dev_updated_at_ != std::chrono::steady_clock::time_point{} &&
+        now - dev_updated_at_ < std::chrono::milliseconds(500))
+        return;
+    dev_updated_at_ = now;
+    std::vector<ui::DevSection> sections;
+    sections.push_back(dev_gps_section(now));
+    sections.push_back(dev_position_section(now));
+    sections.push_back(dev_map_section());
+    sections.push_back(dev_platform_section(now));
+    sections.push_back(dev_build_section());
+    (void)view_->set_dev_info(std::move(sections), dev_toggles());
 
     std::size_t action = 0;
     while (navigation_->take_dev_action(action))
