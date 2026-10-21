@@ -200,6 +200,13 @@ typedef struct {
 /* The one renderer runtime. Every access holds g_runtime.lock. */
 extern RendererRuntime g_runtime;
 
+/* True when the active backend implements at least ABI `first_version`. */
+static inline int active_abi_at_least(uint32_t first_version)
+{
+    return g_runtime.backend.active_version >= first_version &&
+           g_runtime.backend.active_version <= OPEN_NAVI_BACKEND_ABI_V6;
+}
+
 /* Saturating: a long-running counter sticks at UINT32_MAX instead of wrapping. */
 static inline void increment_counter(uint32_t *counter)
 {
@@ -208,6 +215,15 @@ static inline void increment_counter(uint32_t *counter)
 
 /* open_navi_renderer.c; caller holds g_runtime.lock. */
 uint64_t open_navi_renderer_next_event_sequence_locked(void);
+
+/* open_navi_renderer.c: ask the render thread for a frame; `runtime_context` is
+ * the service token the backend was started with. */
+int open_navi_renderer_request_frame(void *runtime_context);
+
+/* open_navi_renderer_dispatch.c: hand one event to the active backend, then
+ * request another frame unless the event was itself a frame. */
+void open_navi_renderer_dispatch_event(const RenderEvent *event,
+                                       uintptr_t service_token);
 
 /* open_navi_renderer_pointer.c: queue a pointer event (-1 dropped, -2 invalid),
  * and drain the platform's pointer input into the queue (0 none left, 1 more,
