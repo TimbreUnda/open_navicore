@@ -44,7 +44,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 set(src ${ONC_ROOT}/src)
-set(HOST_RENDERER_SOURCES ${src}/renderer/open_navi_renderer.c ${src}/renderer/open_navi_renderer_backend_table.c ${src}/renderer/open_navi_renderer_pointer.c ${src}/renderer/open_navi_renderer_dispatch.c ${src}/renderer/open_navi_screen_input.c
+set(HOST_RENDERER_SOURCES ${src}/renderer/open_navi_renderer.c ${src}/renderer/open_navi_renderer_backend_table.c ${src}/renderer/open_navi_renderer_pointer.c ${src}/renderer/open_navi_renderer_dispatch.c ${src}/renderer/open_navi_renderer_lifecycle.c ${src}/renderer/open_navi_screen_input.c
     ${src}/backend/open_navi_default_backend.c ${src}/platform/host/open_navi_renderer_stub.c)
 set(HOST_PROVIDER_SOURCES ${src}/compat/qr39/navicore_compat.c ${src}/runtime/open_navi_api_telemetry.c
     ${src}/runtime/open_navi_callback_backend.c ${src}/runtime/open_navi_cluster_backend.c

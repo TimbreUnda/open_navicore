@@ -97,12 +97,12 @@ $cc $common_flags \
     src/backend/open_navi_backend_loader.c \
     src/compat/qr39/host_callbacks.c src/runtime/open_navi_gps_backend.c \
     src/runtime/open_navi_pointer_backend.c src/runtime/open_navi_scalar_backend.c \
-    src/renderer/open_navi_renderer.c src/renderer/open_navi_renderer_backend_table.c src/renderer/open_navi_renderer_pointer.c src/renderer/open_navi_renderer_dispatch.c src/renderer/open_navi_screen_input.c src/backend/open_navi_default_backend.c \
+    src/renderer/open_navi_renderer.c src/renderer/open_navi_renderer_backend_table.c src/renderer/open_navi_renderer_pointer.c src/renderer/open_navi_renderer_dispatch.c src/renderer/open_navi_renderer_lifecycle.c src/renderer/open_navi_screen_input.c src/backend/open_navi_default_backend.c \
     src/platform/host/open_navi_renderer_stub.c tests/plugin_lifecycle_smoke.c \
     -ldl -o "$build_dir/plugin-lifecycle-smoke"
 
 $cc $common_flags -DOPEN_NAVI_TESTING -DOPEN_NAVI_RENDERER_STUB \
-    src/backend/open_navi_backend_loader.c src/renderer/open_navi_renderer.c src/renderer/open_navi_renderer_backend_table.c src/renderer/open_navi_renderer_pointer.c src/renderer/open_navi_renderer_dispatch.c src/renderer/open_navi_screen_input.c \
+    src/backend/open_navi_backend_loader.c src/renderer/open_navi_renderer.c src/renderer/open_navi_renderer_backend_table.c src/renderer/open_navi_renderer_pointer.c src/renderer/open_navi_renderer_dispatch.c src/renderer/open_navi_renderer_lifecycle.c src/renderer/open_navi_screen_input.c \
     src/backend/open_navi_default_backend.c src/platform/host/open_navi_renderer_stub.c \
     tests/plugin_handshake_smoke.c -ldl \
     -o "$build_dir/plugin-handshake-smoke"
