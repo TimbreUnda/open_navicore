@@ -141,6 +141,13 @@ private:
     static void record_vector_timing(const navicore_vector::VectorFrameTiming& vt,
                                      FrameMeasurement& m);
     bool ensure_navigation_worker();
+    // Steps of apply_camera().
+    void apply_map_commands();
+    void update_maneuver_camera(ui::Screen screen);
+    bool pose_differs_from_applied(const CameraController::Pose& pose) const;
+    void apply_pose(const CameraController::Pose& pose);
+    void update_vehicle_marker(const CameraController::Vehicle& vehicle,
+                               const CameraController::Pose& pose);
     // Steps of initialize().
     void configure_language();
     void set_vector_cache_identity();
@@ -783,37 +790,8 @@ void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
     navigation_worker_->submit_route(revision, *navigation_->destination(), position, false);
 }
 
-bool OsmAndEngine::apply_camera()
+void OsmAndEngine::apply_map_commands()
 {
-    using Clock = std::chrono::steady_clock;
-    const auto now = Clock::now();
-    const double dt = camera_updated_at_ == Clock::time_point{} ? 0.0 :
-        std::chrono::duration<double>(now - camera_updated_at_).count();
-    camera_updated_at_ = now;
-    const double now_s =
-        std::chrono::duration<double>(now - clock_origin_).count();
-    const auto screen = navigation_->screen();
-    if (screen == ui::Screen::Search) {
-        vector_view_.tile_zoom_limit = -1.0;
-        return false;
-    }
-
-    const auto area = view_->map_area();
-    camera_.set_viewport({area.x, area.y, area.width, area.height});
-
-    // Outside guidance, raw GPS fixes drive free-drive following.
-    if (screen != ui::Screen::Guidance && has_valid_position_ && gps_dirty_) {
-        motion_.observe(static_cast<double>(latest_gps_.latitude_e7) / 1e7,
-                        static_cast<double>(latest_gps_.longitude_e7) / 1e7,
-                        now_s);
-        gps_dirty_ = false;
-    }
-    if (overview_pending_) {
-        camera_.overview(overview_box_[0], overview_box_[1],
-                         overview_box_[2], overview_box_[3]);
-        overview_pending_ = false;
-    }
-
     navigation_->take_map_commands(map_commands_);
     for (const auto command : map_commands_) {
         switch (command) {
@@ -849,42 +827,26 @@ bool OsmAndEngine::apply_camera()
         }
         }
     }
-    int dx = 0;
-    int dy = 0;
-    if (navigation_->take_pan(dx, dy))
-        camera_.pan(dx, dy);
-    bool dragging = false;
-    ui::MapDrag drag;
-    if (navigation_->take_drag(drag))
-        dragging = apply_drag(drag);
-    ui::MapPinch pinch;
-    if (navigation_->take_pinch(pinch))
-        dragging = apply_pinch(pinch) || dragging;
-    while (navigation_->take_map_touch(map_touch_))
-        handle_map_touch(map_touch_);
+}
 
-    {
-        // The coming turn shapes the 3D camera (steeper, a little closer).
-        const auto& guidance = navigation_->guidance();
-        const auto kind = guidance.maneuver.kind;
-        const bool turn = screen == ui::Screen::Guidance && guidance.position_available &&
-                          !guidance.arrived && kind != ui::ManeuverKind::Straight &&
-                          kind != ui::ManeuverKind::Arrive;
-        const bool tight = kind == ui::ManeuverKind::Roundabout ||
-                           kind == ui::ManeuverKind::SharpLeft ||
-                           kind == ui::ManeuverKind::SharpRight ||
-                           kind == ui::ManeuverKind::UTurn;
-        camera_.set_maneuver(turn, guidance.distance_to_maneuver_metres, tight);
-    }
-    const auto vehicle = motion_.predict(now_s);
-    if (!vehicle.valid) {
-        // No fix: the map rests where the car is believed to be.
-        const auto here = current_location();
-        camera_.set_resting_location(here.latitude, here.longitude);
-    }
-    const auto pose = camera_.update(vehicle, dt);
-    vector_view_.tile_zoom_limit = pose.tile_zoom;
-    const bool changed = !pose_applied_ ||
+// The coming turn shapes the 3D camera (steeper, a little closer).
+void OsmAndEngine::update_maneuver_camera(ui::Screen screen)
+{
+    const auto& guidance = navigation_->guidance();
+    const auto kind = guidance.maneuver.kind;
+    const bool turn = screen == ui::Screen::Guidance && guidance.position_available &&
+                      !guidance.arrived && kind != ui::ManeuverKind::Straight &&
+                      kind != ui::ManeuverKind::Arrive;
+    const bool tight = kind == ui::ManeuverKind::Roundabout ||
+                       kind == ui::ManeuverKind::SharpLeft ||
+                       kind == ui::ManeuverKind::SharpRight ||
+                       kind == ui::ManeuverKind::UTurn;
+    camera_.set_maneuver(turn, guidance.distance_to_maneuver_metres, tight);
+}
+
+bool OsmAndEngine::pose_differs_from_applied(const CameraController::Pose& pose) const
+{
+    return !pose_applied_ ||
         std::fabs(pose.latitude - applied_pose_.latitude) > 1e-8 ||
         std::fabs(pose.longitude - applied_pose_.longitude) > 1e-8 ||
         pose.anchor_x != applied_pose_.anchor_x ||
@@ -893,19 +855,24 @@ bool OsmAndEngine::apply_camera()
         std::fabs(static_cast<float>(CameraController::shortest_angle_delta(
             applied_pose_.azimuth_degrees, pose.azimuth_degrees))) > 0.25f ||
         pose.elevation_degrees != applied_pose_.elevation_degrees;
-    if (changed) {
-        const auto location = OsmAnd::Utilities::convertLatLonTo31(
-            OsmAnd::LatLon(pose.latitude, pose.longitude));
-        (void)renderer_->setMapTarget(
-            OsmAnd::PointI(pose.anchor_x, pose.anchor_y), location);
-        (void)renderer_->setZoom(pose.zoom);
-        (void)renderer_->setAzimuth(pose.azimuth_degrees);
-        (void)renderer_->setElevationAngle(pose.elevation_degrees);
-        applied_pose_ = pose;
-        pose_applied_ = true;
-    }
+}
 
-    // Vehicle marker: at the anchor while following, projected otherwise.
+void OsmAndEngine::apply_pose(const CameraController::Pose& pose)
+{
+    const auto location = OsmAnd::Utilities::convertLatLonTo31(
+        OsmAnd::LatLon(pose.latitude, pose.longitude));
+    (void)renderer_->setMapTarget(
+        OsmAnd::PointI(pose.anchor_x, pose.anchor_y), location);
+    (void)renderer_->setZoom(pose.zoom);
+    (void)renderer_->setAzimuth(pose.azimuth_degrees);
+    (void)renderer_->setElevationAngle(pose.elevation_degrees);
+    applied_pose_ = pose;
+    pose_applied_ = true;
+}
+
+void OsmAndEngine::update_vehicle_marker(const CameraController::Vehicle& vehicle,
+                                         const CameraController::Pose& pose)
+{
     if (vehicle.valid) {
         OsmAnd::PointI marker(pose.anchor_x, pose.anchor_y);
         bool visible = pose.following;
@@ -927,6 +894,69 @@ bool OsmAndEngine::apply_camera()
     } else {
         view_->set_vehicle_marker(false, 0, 0, 0.0f);
     }
+}
+
+bool OsmAndEngine::apply_camera()
+{
+    using Clock = std::chrono::steady_clock;
+    const auto now = Clock::now();
+    const double dt = camera_updated_at_ == Clock::time_point{} ? 0.0 :
+        std::chrono::duration<double>(now - camera_updated_at_).count();
+    camera_updated_at_ = now;
+    const double now_s =
+        std::chrono::duration<double>(now - clock_origin_).count();
+    const auto screen = navigation_->screen();
+    if (screen == ui::Screen::Search) {
+        vector_view_.tile_zoom_limit = -1.0;
+        return false;
+    }
+
+    const auto area = view_->map_area();
+    camera_.set_viewport({area.x, area.y, area.width, area.height});
+
+    // Outside guidance, raw GPS fixes drive free-drive following.
+    if (screen != ui::Screen::Guidance && has_valid_position_ && gps_dirty_) {
+        motion_.observe(static_cast<double>(latest_gps_.latitude_e7) / 1e7,
+                        static_cast<double>(latest_gps_.longitude_e7) / 1e7,
+                        now_s);
+        gps_dirty_ = false;
+    }
+    if (overview_pending_) {
+        camera_.overview(overview_box_[0], overview_box_[1],
+                         overview_box_[2], overview_box_[3]);
+        overview_pending_ = false;
+    }
+
+    apply_map_commands();
+    int dx = 0;
+    int dy = 0;
+    if (navigation_->take_pan(dx, dy))
+        camera_.pan(dx, dy);
+    bool dragging = false;
+    ui::MapDrag drag;
+    if (navigation_->take_drag(drag))
+        dragging = apply_drag(drag);
+    ui::MapPinch pinch;
+    if (navigation_->take_pinch(pinch))
+        dragging = apply_pinch(pinch) || dragging;
+    while (navigation_->take_map_touch(map_touch_))
+        handle_map_touch(map_touch_);
+
+    update_maneuver_camera(screen);
+    const auto vehicle = motion_.predict(now_s);
+    if (!vehicle.valid) {
+        // No fix: the map rests where the car is believed to be.
+        const auto here = current_location();
+        camera_.set_resting_location(here.latitude, here.longitude);
+    }
+    const auto pose = camera_.update(vehicle, dt);
+    vector_view_.tile_zoom_limit = pose.tile_zoom;
+    const bool changed = pose_differs_from_applied(pose);
+    if (changed)
+        apply_pose(pose);
+
+    // Vehicle marker: at the anchor while following, projected otherwise.
+    update_vehicle_marker(vehicle, pose);
     update_pin_marker();
 
     ui::MapViewState state;
