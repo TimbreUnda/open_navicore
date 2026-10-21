@@ -56,6 +56,38 @@ namespace {
 enum class Phase { Empty, Resources, CoreEntering, CoreReady,
                    RenderingEntering, Ready, Quarantined };
 
+// Arrival times of the most recent GPS fixes, for the developer menu's
+// last-fix age and fix rate.
+class GpsHistory {
+public:
+    using Clock = std::chrono::steady_clock;
+
+    void record(Clock::time_point at)
+    {
+        times_[next_] = at;
+        next_ = (next_ + 1) % times_.size();
+        count_ = std::min(count_ + 1, times_.size());
+    }
+    bool empty() const { return count_ == 0; }
+    Clock::time_point latest() const
+    {
+        return times_[(next_ + times_.size() - 1) % times_.size()];
+    }
+    // Fixes per second across the window; 0 until two fixes span some time.
+    double rate_hz() const
+    {
+        if (count_ < 2)
+            return 0.0;
+        const auto oldest = times_[count_ < times_.size() ? 0 : next_];
+        const double span = std::chrono::duration<double>(latest() - oldest).count();
+        return span > 0.0 ? (count_ - 1) / span : 0.0;
+    }
+
+private:
+    std::array<Clock::time_point, 16> times_{};
+    std::size_t count_ = 0, next_ = 0;
+};
+
 class OsmAndEngine final : public Engine {
 public:
     bool initialize(const Config&, const OpenNaviBackendRenderTargetV1&,
@@ -196,8 +228,7 @@ private:
     std::array<float, 240> frame_intervals_ms_{};
     std::size_t frame_interval_count_ = 0, frame_interval_next_ = 0;
     std::chrono::steady_clock::time_point last_presented_at_{};
-    std::array<std::chrono::steady_clock::time_point, 16> gps_times_{};
-    std::size_t gps_time_count_ = 0, gps_time_next_ = 0;
+    GpsHistory gps_history_;
     struct CacheClearDir { std::string path; };
     std::vector<CacheClearDir> cache_clear_;
     std::size_t cache_cleared_files_ = 0;
@@ -1100,17 +1131,15 @@ ui::DevSection OsmAndEngine::dev_gps_section(std::chrono::steady_clock::time_poi
                                                       g.speed_raw_masked)});
     gps.rows.push_back({"Quality / sync", printf_string("%u / %u", g.quality_status,
                                                         g.sync_counter)});
-    if (gps_time_count_ == 0) {
+    if (gps_history_.empty()) {
         gps.rows.push_back({"Last fix", "never"});
         gps.rows.push_back({"Rate", "-"});
     } else {
-        const auto last = gps_times_[(gps_time_next_ + gps_times_.size() - 1) % gps_times_.size()];
-        const auto first = gps_times_[gps_time_count_ < gps_times_.size() ? 0 : gps_time_next_];
         gps.rows.push_back({"Last fix", printf_string("%.1f s ago",
-            std::chrono::duration<double>(now - last).count())});
-        const double span = std::chrono::duration<double>(last - first).count();
-        gps.rows.push_back({"Rate", gps_time_count_ > 1 && span > 0.0
-            ? printf_string("%.1f Hz", (gps_time_count_ - 1) / span) : std::string("-")});
+            std::chrono::duration<double>(now - gps_history_.latest()).count())});
+        const double rate = gps_history_.rate_hz();
+        gps.rows.push_back({"Rate", rate > 0.0 ? printf_string("%.1f Hz", rate)
+                                               : std::string("-")});
     }
     return gps;
 }
@@ -2038,9 +2067,7 @@ int OsmAndEngine::gps(const OpenNaviBackendGpsV1& event)
     has_valid_position_ = valid_coordinates(event);
     if (has_valid_position_) last_location_ = current_location();
     gps_dirty_ = true;
-    gps_times_[gps_time_next_] = std::chrono::steady_clock::now();
-    gps_time_next_ = (gps_time_next_ + 1) % gps_times_.size();
-    gps_time_count_ = std::min(gps_time_count_ + 1, gps_times_.size());
+    gps_history_.record(std::chrono::steady_clock::now());
     if (!gps_state_observed_ || has_valid_position_ != last_logged_gps_valid_) {
         trace(has_valid_position_ ? "gps=position_received"
                                   : "gps=position_unavailable");
