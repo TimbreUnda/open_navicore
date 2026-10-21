@@ -91,6 +91,13 @@ private:
     bool update_guidance();
     void speak_guidance(const ui::GuidanceState& state);
     void reset_voice();
+    // Steps of frame().
+    void drain_navigation_results();
+    void end_guidance();
+    bool sync_navigation_to_screen();
+    void submit_navigation_requests();
+    static void record_vector_timing(const navicore_vector::VectorFrameTiming& vt,
+                                     FrameMeasurement& m);
     bool ensure_navigation_worker();
     // Where the car is, for search, routes and the map: the position the
     // car's GPS service reports (its own last known one included), else the
@@ -1513,48 +1520,8 @@ bool OsmAndEngine::ensure_navigation_worker()
     }
 }
 
-FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
+void OsmAndEngine::drain_navigation_results()
 {
-    using Clock = std::chrono::steady_clock;
-    const auto frame_started = Clock::now();
-    FrameMeasurement measurement;
-    // Render-thread CPU time: wall time far above it means the thread was
-    // preempted or blocked, not busy.
-    const auto thread_cpu_us = [] {
-        timespec now{};
-        (void)clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now);
-        return static_cast<std::int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
-    };
-    const std::int64_t cpu_started = thread_cpu_us();
-    const auto elapsed_us = [](Clock::time_point started) {
-        const auto value = std::chrono::duration_cast<std::chrono::microseconds>(
-            Clock::now() - started).count();
-        return static_cast<std::uint32_t>(std::min<std::int64_t>(
-            value, static_cast<std::int64_t>(UINT32_MAX)));
-    };
-    const auto finish = [&](FrameResult result,
-                            MeasuredFrameOutcome outcome) -> FrameResult {
-        if (outcome == MeasuredFrameOutcome::Presented) {
-            const auto now = Clock::now();
-            if (last_presented_at_ != Clock::time_point{}) {
-                frame_intervals_ms_[frame_interval_next_] =
-                    std::chrono::duration<float, std::milli>(now - last_presented_at_).count();
-                frame_interval_next_ = (frame_interval_next_ + 1) % frame_intervals_ms_.size();
-                frame_interval_count_ = std::min(frame_interval_count_ + 1,
-                                                 frame_intervals_ms_.size());
-            }
-            last_presented_at_ = now;
-        }
-        measurement.outcome = outcome;
-        measurement.total_us = elapsed_us(frame_started);
-        measurement.cpu_us = static_cast<std::uint32_t>(
-            std::max<std::int64_t>(0, thread_cpu_us() - cpu_started));
-        frame_metrics_.record(measurement);
-        return result;
-    };
-    if (phase_ != Phase::Ready)
-        return finish({FrameOutcome::Fault}, MeasuredFrameOutcome::Fault);
-    guidance_tracker_us_ = guidance_sync_us_ = guidance_apply_us_ = 0;
     NavigationWorker::SearchResult search_result;
     if (navigation_worker_ && navigation_worker_->take_search_result(search_result))
     {
@@ -1604,6 +1571,161 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
             }
         }
     }
+}
+
+// Guidance is over: stop voice and simulation, keep real GPS following.
+void OsmAndEngine::end_guidance()
+{
+    guidance_active_ = false;
+    guidance_tracker_.reset();
+    reset_voice();
+    simulation_running_ = false;
+    // Simulated motion ends with guidance; real GPS keeps following.
+    if (!has_valid_position_) motion_.reset();
+    pose_applied_ = false;
+}
+
+// Brings guidance, the drawn route and the map in line with the screen the
+// UI is on. Returns true when the next frame must redraw.
+bool OsmAndEngine::sync_navigation_to_screen()
+{
+    bool changed = false;
+    if (navigation_->screen() == ui::Screen::Guidance && !guidance_active_)
+        changed = update_guidance() || changed;
+    else if (navigation_->screen() != ui::Screen::Guidance &&
+             guidance_active_) {
+        end_guidance();
+        changed = true;
+    }
+    // The route is drawn in Route preview and Guidance only: End, arrival,
+    // preview Back and closing Search clear it.
+    if (route_shown_ && navigation_->screen() != ui::Screen::RoutePreview &&
+        navigation_->screen() != ui::Screen::Guidance)
+        changed = clear_route() || changed;
+    // Route preview: the map draws the selected route card's route.
+    if (route_shown_ && navigation_->screen() == ui::Screen::RoutePreview &&
+        navigation_->selected_route() != shown_route_index_ &&
+        navigation_->selected_route() < navigation_->routes().size()) {
+        shown_route_index_ = navigation_->selected_route();
+        show_route(navigation_->routes()[shown_route_index_], false);
+        changed = true;
+    }
+    return changed;
+}
+
+void OsmAndEngine::submit_navigation_requests()
+{
+    if (navigation_->screen() == ui::Screen::Search) {
+        const auto revision = navigation_->search_revision();
+        const auto now = std::chrono::steady_clock::now();
+        if (!search_revision_observed_ || revision != observed_search_revision_) {
+            observed_search_revision_ = revision;
+            search_revision_observed_at_ = now;
+            search_revision_observed_ = true;
+        } else if (revision != submitted_search_revision_ &&
+                   now - search_revision_observed_at_ >= search_debounce()) {
+            submitted_search_revision_ = revision;
+            if (!navigation_->query().empty()) {
+            trace_result("engine=search_submit", submitted_search_revision_,
+                         navigation_->query().size());
+                std::vector<ui::Destination> seeded;
+                if (seeded_destinations(navigation_->query(), seeded)) {
+                    trace_result("engine=seeded_results",
+                                 submitted_search_revision_, seeded.size());
+                    (void)view_->apply_search_results(
+                        submitted_search_revision_, std::move(seeded));
+                } else if (ensure_navigation_worker()) {
+                std::vector<ui::GeoPoint> recent;
+                for (const auto& r : navigation_->recents())
+                    recent.push_back({r.latitude, r.longitude});
+                navigation_worker_->submit_search(submitted_search_revision_,
+                                                   navigation_->query(), current_location(),
+                                                   std::move(recent));
+                }
+            }
+        }
+    } else {
+        search_revision_observed_ = false;
+    }
+    // A destination picked in Search, or directly from free drive (place
+    // card, recent destination).
+    if ((navigation_->screen() == ui::Screen::Search ||
+         navigation_->direct_routing()) &&
+        navigation_->calculating_route() &&
+        navigation_->route_revision() != submitted_route_revision_) {
+        submitted_route_revision_ = navigation_->route_revision();
+        trace_result("engine=route_submit", submitted_route_revision_, 1u);
+        if (ensure_navigation_worker()) {
+            navigation_worker_->submit_route(submitted_route_revision_,
+                                              *navigation_->destination(), current_location(),
+                                              true);
+        }
+    }
+}
+
+void OsmAndEngine::record_vector_timing(const navicore_vector::VectorFrameTiming& vt,
+                                        FrameMeasurement& m)
+{
+        m.vec_take_us = vt.take_us;
+        m.vec_uploads = vt.uploads;
+        m.vec_route_us = vt.route_us;
+        m.vec_want_us = vt.want_us;
+        m.vec_draw_us = vt.draw_us;
+        m.vec_labels_us = vt.labels_us;
+        m.vec_evict_us = vt.evict_us;
+        m.vec_upload_max_us = vt.upload_max_us;
+        m.vec_atlas_us = vt.atlas_us;
+        m.vec_label_buffers_us = vt.label_buffers_us;
+        m.vec_label_collect_us = vt.label_collect_us;
+        m.vec_label_candidates = vt.label_candidates;
+        m.vec_label_tests = vt.label_tests;
+        m.vec_label_reused = vt.label_reused;
+}
+
+
+FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
+{
+    using Clock = std::chrono::steady_clock;
+    const auto frame_started = Clock::now();
+    FrameMeasurement measurement;
+    // Render-thread CPU time: wall time far above it means the thread was
+    // preempted or blocked, not busy.
+    const auto thread_cpu_us = [] {
+        timespec now{};
+        (void)clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now);
+        return static_cast<std::int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
+    };
+    const std::int64_t cpu_started = thread_cpu_us();
+    const auto elapsed_us = [](Clock::time_point started) {
+        const auto value = std::chrono::duration_cast<std::chrono::microseconds>(
+            Clock::now() - started).count();
+        return static_cast<std::uint32_t>(std::min<std::int64_t>(
+            value, static_cast<std::int64_t>(UINT32_MAX)));
+    };
+    const auto finish = [&](FrameResult result,
+                            MeasuredFrameOutcome outcome) -> FrameResult {
+        if (outcome == MeasuredFrameOutcome::Presented) {
+            const auto now = Clock::now();
+            if (last_presented_at_ != Clock::time_point{}) {
+                frame_intervals_ms_[frame_interval_next_] =
+                    std::chrono::duration<float, std::milli>(now - last_presented_at_).count();
+                frame_interval_next_ = (frame_interval_next_ + 1) % frame_intervals_ms_.size();
+                frame_interval_count_ = std::min(frame_interval_count_ + 1,
+                                                 frame_intervals_ms_.size());
+            }
+            last_presented_at_ = now;
+        }
+        measurement.outcome = outcome;
+        measurement.total_us = elapsed_us(frame_started);
+        measurement.cpu_us = static_cast<std::uint32_t>(
+            std::max<std::int64_t>(0, thread_cpu_us() - cpu_started));
+        frame_metrics_.record(measurement);
+        return result;
+    };
+    if (phase_ != Phase::Ready)
+        return finish({FrameOutcome::Fault}, MeasuredFrameOutcome::Fault);
+    guidance_tracker_us_ = guidance_sync_us_ = guidance_apply_us_ = 0;
+    drain_navigation_results();
     measurement.results_us = elapsed_us(frame_started);
     auto logic_started = Clock::now();
     bool guidance_changed = false;
@@ -1613,14 +1735,8 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         guidance_changed = update_guidance();
     } else if (navigation_->screen() != ui::Screen::Guidance &&
                guidance_active_) {
-        guidance_active_ = false;
         sync_vector_guidance(nullptr);
-        guidance_tracker_.reset();
-        reset_voice();
-        simulation_running_ = false;
-        // Simulated motion ends with guidance; real GPS keeps following.
-        if (!has_valid_position_) motion_.reset();
-        pose_applied_ = false;
+        end_guidance();
     }
     measurement.guidance_us = elapsed_us(logic_started);
     if (target.width != width_ || target.height != height_)
@@ -1668,21 +1784,7 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
         stage_started = Clock::now();
         vector_wants_frames = render_vector_map(target);
         measurement.vector_us = elapsed_us(stage_started);
-        const auto vt = vector_map_->frame_timing();
-        measurement.vec_take_us = vt.take_us;
-        measurement.vec_uploads = vt.uploads;
-        measurement.vec_route_us = vt.route_us;
-        measurement.vec_want_us = vt.want_us;
-        measurement.vec_draw_us = vt.draw_us;
-        measurement.vec_labels_us = vt.labels_us;
-        measurement.vec_evict_us = vt.evict_us;
-        measurement.vec_upload_max_us = vt.upload_max_us;
-        measurement.vec_atlas_us = vt.atlas_us;
-        measurement.vec_label_buffers_us = vt.label_buffers_us;
-        measurement.vec_label_collect_us = vt.label_collect_us;
-        measurement.vec_label_candidates = vt.label_candidates;
-        measurement.vec_label_tests = vt.label_tests;
-        measurement.vec_label_reused = vt.label_reused;
+        record_vector_timing(vector_map_->frame_timing(), measurement);
     }
     view_->resize(target.width, target.height);
     stage_started = Clock::now();
@@ -1716,78 +1818,8 @@ FrameResult OsmAndEngine::frame(const OpenNaviBackendRenderTargetV1& target)
     // A Start/End click is dispatched by LVGL above. Apply the new camera and
     // guidance model now, then request the frame that presents that rebuild.
     const auto post_started = Clock::now();
-    if (navigation_->screen() == ui::Screen::Guidance && !guidance_active_)
-        guidance_changed = update_guidance() || guidance_changed;
-    else if (navigation_->screen() != ui::Screen::Guidance &&
-             guidance_active_) {
-        guidance_active_ = false;
-        guidance_tracker_.reset();
-        reset_voice();
-        simulation_running_ = false;
-        // Simulated motion ends with guidance; real GPS keeps following.
-        if (!has_valid_position_) motion_.reset();
-        pose_applied_ = false;
-        guidance_changed = true;
-    }
-    // The route is drawn in Route preview and Guidance only: End, arrival,
-    // preview Back and closing Search clear it.
-    if (route_shown_ && navigation_->screen() != ui::Screen::RoutePreview &&
-        navigation_->screen() != ui::Screen::Guidance)
-        guidance_changed = clear_route() || guidance_changed;
-    // Route preview: the map draws the selected route card's route.
-    if (route_shown_ && navigation_->screen() == ui::Screen::RoutePreview &&
-        navigation_->selected_route() != shown_route_index_ &&
-        navigation_->selected_route() < navigation_->routes().size()) {
-        shown_route_index_ = navigation_->selected_route();
-        show_route(navigation_->routes()[shown_route_index_], false);
-        guidance_changed = true;
-    }
-    if (navigation_->screen() == ui::Screen::Search) {
-        const auto revision = navigation_->search_revision();
-        const auto now = std::chrono::steady_clock::now();
-        if (!search_revision_observed_ || revision != observed_search_revision_) {
-            observed_search_revision_ = revision;
-            search_revision_observed_at_ = now;
-            search_revision_observed_ = true;
-        } else if (revision != submitted_search_revision_ &&
-                   now - search_revision_observed_at_ >= search_debounce()) {
-            submitted_search_revision_ = revision;
-            if (!navigation_->query().empty()) {
-            trace_result("engine=search_submit", submitted_search_revision_,
-                         navigation_->query().size());
-                std::vector<ui::Destination> seeded;
-                if (seeded_destinations(navigation_->query(), seeded)) {
-                    trace_result("engine=seeded_results",
-                                 submitted_search_revision_, seeded.size());
-                    (void)view_->apply_search_results(
-                        submitted_search_revision_, std::move(seeded));
-                } else if (ensure_navigation_worker()) {
-                std::vector<ui::GeoPoint> recent;
-                for (const auto& r : navigation_->recents())
-                    recent.push_back({r.latitude, r.longitude});
-                navigation_worker_->submit_search(submitted_search_revision_,
-                                                   navigation_->query(), current_location(),
-                                                   std::move(recent));
-                }
-            }
-        }
-    } else {
-        search_revision_observed_ = false;
-    }
-    // A destination picked in Search, or directly from free drive (place
-    // card, recent destination).
-    if ((navigation_->screen() == ui::Screen::Search ||
-         navigation_->direct_routing()) &&
-        navigation_->calculating_route() &&
-        navigation_->route_revision() != submitted_route_revision_) {
-        submitted_route_revision_ = navigation_->route_revision();
-        trace_result("engine=route_submit", submitted_route_revision_, 1u);
-        if (ensure_navigation_worker()) {
-            navigation_worker_->submit_route(submitted_route_revision_,
-                                              *navigation_->destination(), current_location(),
-                                              true);
-        }
-    }
+    guidance_changed = sync_navigation_to_screen() || guidance_changed;
+    submit_navigation_requests();
     advance_benchmark_autostart();
     publish_guidance_state();
     publish_cluster();
