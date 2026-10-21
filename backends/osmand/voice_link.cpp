@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <mqueue.h>
 #include <sys/stat.h>
@@ -16,6 +17,40 @@ namespace navicore_osmand {
 namespace {
 
 const char kMagic[] = "NVP1";
+
+// The radio runs the mq server (/dev/mq, used by PAS), not mqueue: libc's
+// mq_* fail there with ENOSYS and libmq's reach mq. libmq is looked up at run
+// time so the plugin's reviewed NEEDED set stays libc-only; without it (host,
+// mqueue systems) libc's functions are used.
+struct MqApi {
+    mqd_t (*open)(const char*, int, ...) = ::mq_open;
+    int (*close)(mqd_t) = ::mq_close;
+    int (*unlink)(const char*) = ::mq_unlink;
+    int (*send)(mqd_t, const char*, size_t, unsigned) = ::mq_send;
+    ssize_t (*timedreceive)(mqd_t, char*, size_t, unsigned*, const struct timespec*) =
+        ::mq_timedreceive;
+
+    MqApi() {
+        void* lib = dlopen("libmq.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (!lib) return;
+        void* o = dlsym(lib, "mq_open");
+        void* c = dlsym(lib, "mq_close");
+        void* u = dlsym(lib, "mq_unlink");
+        void* s = dlsym(lib, "mq_send");
+        void* r = dlsym(lib, "mq_timedreceive");
+        if (!o || !c || !u || !s || !r) return;  // all from one library or none
+        open = reinterpret_cast<decltype(open)>(o);
+        close = reinterpret_cast<decltype(close)>(c);
+        unlink = reinterpret_cast<decltype(unlink)>(u);
+        send = reinterpret_cast<decltype(send)>(s);
+        timedreceive = reinterpret_cast<decltype(timedreceive)>(r);
+    }
+};
+
+const MqApi& mq() {
+    static const MqApi api;
+    return api;
+}
 
 std::string single_line(const std::string& text) {
     std::string out = text;
@@ -71,7 +106,7 @@ Message decode_message(const char* data, std::size_t size, SpokenPrompt& prompt,
 // ---- client ---------------------------------------------------------------
 
 VoiceClient::~VoiceClient() {
-    if (fd_ >= 0) mq_close(static_cast<mqd_t>(fd_));
+    if (fd_ >= 0) mq().close(static_cast<mqd_t>(fd_));
 }
 
 bool VoiceClient::send_raw(const std::string& message, unsigned priority) {
@@ -80,19 +115,19 @@ bool VoiceClient::send_raw(const std::string& message, unsigned priority) {
         return false;
     }
     if (fd_ < 0) {
-        mqd_t q = mq_open(name_.c_str(), O_WRONLY | O_NONBLOCK);
+        mqd_t q = mq().open(name_.c_str(), O_WRONLY | O_NONBLOCK);
         if (q == static_cast<mqd_t>(-1)) {  // no daemon yet
             ++dropped_;
             return false;
         }
         fd_ = static_cast<int>(q);
     }
-    if (mq_send(static_cast<mqd_t>(fd_), message.data(), message.size(), priority) == 0) {
+    if (mq().send(static_cast<mqd_t>(fd_), message.data(), message.size(), priority) == 0) {
         ++sent_;
         return true;
     }
     if (errno != EAGAIN) {  // the queue went away (daemon restarted): reopen next time
-        mq_close(static_cast<mqd_t>(fd_));
+        mq().close(static_cast<mqd_t>(fd_));
         fd_ = -1;
     }
     ++dropped_;
@@ -109,19 +144,19 @@ bool VoiceClient::cancel() { return send_raw(encode_cancel(), 31); }  // jumps t
 
 VoiceServer::~VoiceServer() {
     if (fd_ >= 0) {
-        mq_close(static_cast<mqd_t>(fd_));
-        mq_unlink(name_.c_str());
+        mq().close(static_cast<mqd_t>(fd_));
+        mq().unlink(name_.c_str());
     }
 }
 
 bool VoiceServer::bind() {
-    mq_unlink(name_.c_str());  // a stale queue from an earlier run
+    mq().unlink(name_.c_str());  // a stale queue from an earlier run
     struct mq_attr attr;
     std::memset(&attr, 0, sizeof attr);
     attr.mq_maxmsg = kQueueDepth;
     attr.mq_msgsize = static_cast<long>(kMaxDatagram);
     mode_t old = umask(0);  // the plugin may run under another user than the daemon
-    mqd_t q = mq_open(name_.c_str(), O_CREAT | O_RDONLY, 0666, &attr);
+    mqd_t q = mq().open(name_.c_str(), O_CREAT | O_RDONLY, 0666, &attr);
     umask(old);
     if (q == static_cast<mqd_t>(-1)) {
         std::fprintf(stderr, "voice: mq_open %s: %s\n", name_.c_str(), std::strerror(errno));
@@ -144,7 +179,7 @@ void VoiceServer::run() {
             ++deadline.tv_sec;
         }
         unsigned priority = 0;
-        ssize_t n = mq_timedreceive(static_cast<mqd_t>(fd_), buffer, sizeof buffer - 1, &priority,
+        ssize_t n = mq().timedreceive(static_cast<mqd_t>(fd_), buffer, sizeof buffer - 1, &priority,
                                     &deadline);
         if (n < 0) {
             if (errno == ETIMEDOUT || errno == EINTR) continue;

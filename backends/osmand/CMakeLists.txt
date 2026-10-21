@@ -21,7 +21,8 @@ add_library(navigation_ui STATIC
   ui/navigation_view.cpp ui/overlay_occupancy.cpp ui/recents_store.cpp)
 target_include_directories(navigation_ui PUBLIC ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(Threads REQUIRED)
-target_link_libraries(navigation_ui PUBLIC lvgl Threads::Threads)
+# dlopen (voice_link.cpp looks up libmq): in libc on QNX, libdl on older glibc.
+target_link_libraries(navigation_ui PUBLIC lvgl Threads::Threads ${CMAKE_DL_LIBS})
 target_compile_options(navigation_ui PRIVATE ${ONC_WARNINGS})
 set_target_properties(navigation_ui PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(ONC_QNX)
