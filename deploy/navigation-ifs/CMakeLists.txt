@@ -46,7 +46,11 @@ add_custom_command(
   COMMENT "navigation.ifs payload"
   VERBATIM)
 
-# Mounted at / by the boot overlay; every path is under /open-navicore. The
+# Mounted at / (vp4r-loader: $VP4R_HOME/slots/<slot>/ifs/50-navicore.ifs, or
+# the older boot overlay); every path is under /open-navicore except
+# /pas/scfg/nv_navigation.cfg: mounted after the stock images, it shadows the
+# factory config, so System Manager starts nv_navigation with Open NaviCore
+# without boot.sh's link (boot.sh stays for the older overlay). The
 # libraries are stored uncompressed (+raw) to be mapped in place. The provider
 # loads the backend from /open-navicore and the backend's RPATH is
 # /open-navicore, so the core and bundle are found there.
@@ -60,6 +64,7 @@ add_ifs_package(navigation
     /open-navicore/libOsmAndCore_shared.so=${core}
     /open-navicore/libOsmAndCore_ResourcesBundle_shared.so=${OSMAND_RESOURCES_BUNDLE}
     /open-navicore/nv_navigation.cfg=${payload}/nv_navigation.cfg
+    /pas/scfg/nv_navigation.cfg=${payload}/nv_navigation.cfg
     /open-navicore/.open_navicore_navigation_v1=${payload}/marker.txt
     /open-navicore/boot.sh=${CMAKE_CURRENT_SOURCE_DIR}/boot.sh
     /open-navicore/.ifs_padding.txt=${payload}/padding.txt

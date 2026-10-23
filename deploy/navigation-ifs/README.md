@@ -21,6 +21,15 @@ and the C++ runtime are linked statically. All entries are stored `+raw`
 
 ## Boot
 
+**vp4r layer** (`/mnt/d/vp4r-loader`, `/mnt/d/ifs-build/docs/LAYOUT.md`): the
+image is installed as `$VP4R_HOME/slots/<slot>/ifs/50-navicore.ifs`; the loader
+mounts it at `/` after the stock images. The image carries the config twice,
+at `/open-navicore/nv_navigation.cfg` and at `/pas/scfg/nv_navigation.cfg`;
+the second shadows the factory file, so nothing needs to run at boot. Off:
+`$VP4R_HOME/flags/navicore.d/disabled` (native NaviCore returns).
+
+**Older boot overlay** (39.2 bench chain before 2026-10-23):
+
 The boot overlay is the only code that runs early at boot (the `/bin/cat`
 hook starts it before the stock services). For navigation it does two
 things, logging to `/datastore/boot_overlay.log`:
