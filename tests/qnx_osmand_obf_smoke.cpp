@@ -38,5 +38,21 @@ int main(int argc, char** argv)
     }
     std::printf("osmand-kyiv-obf:ok objects=%d highways=%d buildings=%d\n",
                 objects.size(), highways, buildings);
+
+    // The vector map reads one 2^17-unit block per zoom level, with the bounding box and the
+    // zoom range given to obtainDataInterface; print what each level returns for central Kyiv.
+    const OsmAnd::PointI centre = OsmAnd::Utilities::convertLatLonTo31(OsmAnd::LatLon(50.4501, 30.5234));
+    const OsmAnd::AreaI block(centre.y - 65536, centre.x - 65536, centre.y + 65536, centre.x + 65536);
+    for (int level = 9; level <= 17; ++level) {
+        const auto zoom = static_cast<OsmAnd::ZoomLevel>(level);
+        QList<std::shared_ptr<const OsmAnd::BinaryMapObject>> found;
+        OsmAnd::MapSurfaceType surface = OsmAnd::MapSurfaceType::Undefined;
+        const auto filtered = collection.obtainDataInterface(
+            &block, zoom, zoom, OsmAnd::ObfDataTypesMask().set(OsmAnd::ObfDataType::Map));
+        const bool loaded = filtered &&
+            filtered->loadBinaryMapObjects(&found, &surface, nullptr, zoom, &block);
+        std::printf("level %2d: interface=%d loaded=%d objects=%d\n", level, filtered ? 1 : 0,
+                    loaded ? 1 : 0, found.size());
+    }
     return objects.isEmpty() ? 5 : 0;
 }

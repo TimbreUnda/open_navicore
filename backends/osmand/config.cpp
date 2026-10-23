@@ -70,6 +70,12 @@ Config Config::from_environment()
     config.map = path("OPEN_NAVICORE_OSMAND_MAP", config.map);
     if (!map_overridden && obf_files(config.map).empty())
         config.map = "/datastore/navicore-backend/maps/kyiv.obf";
+    struct stat map_info {};
+    const bool map_is_directory = ::stat(config.map.c_str(), &map_info) == 0 && S_ISDIR(map_info.st_mode);
+    config.ch_sidecar = path("OPEN_NAVICORE_OSMAND_CH_SIDECAR",
+                             map_is_directory ? config.map + "/car.chr" : config.map + ".chr");
+    if (marker_or_environment("OPEN_NAVICORE_OSMAND_CH_DISABLE", "/datastore/navicore-backend/disable-ch"))
+        config.ch_sidecar.clear();
     config.fonts = path("OPEN_NAVICORE_OSMAND_FONTS", config.fonts);
     config.recents = path("OPEN_NAVICORE_OSMAND_RECENTS", config.recents);
     config.vector_cache = path("OPEN_NAVICORE_OSMAND_VECTOR_CACHE", config.vector_cache);
