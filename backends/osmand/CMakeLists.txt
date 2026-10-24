@@ -53,7 +53,9 @@ if(RHVOICE_BUILD AND RHVOICE_INCLUDE)
   target_include_directories(navi_voiced PRIVATE ${RHVOICE_INCLUDE})
   target_compile_options(navi_voiced PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})
   target_link_libraries(navi_voiced PRIVATE voice_daemon navigation_ui asound m)
-  target_link_options(navi_voiced PRIVATE -static-libstdc++ -static-libgcc)
+  # libasound needs libpps.so.1, which the linker only finds through -rpath-link.
+  target_link_options(navi_voiced PRIVATE -static-libstdc++ -static-libgcc
+    -Wl,-rpath-link,${CMAKE_SYSROOT}/armle-v7/lib)
   set_target_properties(navi_voiced PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     SKIP_BUILD_RPATH ON)
 endif()
