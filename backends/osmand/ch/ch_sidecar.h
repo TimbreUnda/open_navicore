@@ -178,7 +178,7 @@ private:
 
 class Sidecar {
 public:
-    struct Candidate { u32 node; double metres; };
+    struct Candidate { u32 node; double metres; int32_t x, y; };
 
     // Opens the file and checks it is a sidecar of this version and size.
     static std::unique_ptr<Sidecar> open(const char* path, std::string& error,
@@ -209,7 +209,11 @@ public:
         const int64_t cx = ((int64_t)x31 - header_.grid_min_x) >> header_.grid_shift;
         const int64_t cy = ((int64_t)y31 - header_.grid_min_y) >> header_.grid_shift;
         const int64_t cell = (int64_t)1 << header_.grid_shift;
-        std::vector<std::pair<int64_t, u32>> best;   // max-heap on squared distance, <= k entries
+        std::vector<std::pair<int64_t, SidecarGridEntry>> best;   // max-heap on squared distance, <= k entries
+        const auto by_distance = [](const std::pair<int64_t, SidecarGridEntry>& a,
+                                    const std::pair<int64_t, SidecarGridEntry>& b) {
+            return a.first != b.first ? a.first < b.first : a.second.node < b.second.node;
+        };
         auto scan = [&](int64_t gx, int64_t gy) {
             if (gx < 0 || gy < 0 || gx >= (int64_t)header_.grid_w || gy >= (int64_t)header_.grid_h) return;
             const u32 c = (u32)(gy * header_.grid_w + gx);
@@ -222,9 +226,9 @@ public:
                 const int64_t dx = (int64_t)e.x - x31, dy = (int64_t)e.y - y31;
                 const int64_t d = dx * dx + dy * dy;
                 if (best.size() == k && d >= best.front().first) continue;
-                best.push_back({d, e.node});
-                std::push_heap(best.begin(), best.end());
-                if (best.size() > k) { std::pop_heap(best.begin(), best.end()); best.pop_back(); }
+                best.push_back({d, e});
+                std::push_heap(best.begin(), best.end(), by_distance);
+                if (best.size() > k) { std::pop_heap(best.begin(), best.end(), by_distance); best.pop_back(); }
             }
         };
         const int max_ring = 128;   // about 50 km at a 400 m cell
@@ -238,9 +242,10 @@ public:
             // anything not scanned yet is at least r cells away
             if (best.size() == k && std::sqrt((double)best.front().first) <= (double)r * (double)cell) break;
         }
-        std::sort(best.begin(), best.end());
+        std::sort(best.begin(), best.end(), by_distance);
         const double scale = metres_per_unit((double)y31);
-        for (const auto& b : best) out.push_back({b.second, std::sqrt((double)b.first) * scale});
+        for (const auto& b : best)
+            out.push_back({b.second.node, std::sqrt((double)b.first) * scale, b.second.x, b.second.y});
     }
 
 private:
@@ -313,10 +318,13 @@ public:
     // Start and end are snapped to the nearest few nodes within kMaxSnapMetres (a point
     // farther from every road has no route); the snap distance counts as a slow walk
     // (120 ms per metre) against the route cost, so a far node does not win on route
-    // cost alone.  On success runs are the road stretches in travel order (empty when
-    // both ends snap to the same node: too short to route here) and cost is the routing
-    // cost in milliseconds.
-    Status route(int sx, int sy, int ex, int ey, std::vector<RoadRun>& runs, u32& cost)
+    // cost alone.  With a start heading (degrees clockwise from north) a start node more
+    // than 120 degrees off it, i.e. behind the car, costs kReversePenaltyMs more, as
+    // OsmAnd's own routers charge for starting against the initial direction.  On success
+    // runs are the road stretches in travel order (empty when both ends snap to the same
+    // node: too short to route here) and cost is the routing cost in milliseconds.
+    Status route(int sx, int sy, int ex, int ey, std::vector<RoadRun>& runs, u32& cost,
+                 double start_heading_degrees = kNoHeading)
     {
         runs.clear();
         sidecar_.nearest_nodes(sx, sy, kSnapNodes, from_);
@@ -331,7 +339,8 @@ public:
                 u32 meet = 0;
                 const u32 c = query_.run(s.node, t.node, meet);
                 if (c == INF) continue;
-                const double total = c + 120.0 * (s.metres + t.metres);
+                const double total = c + 120.0 * (s.metres + t.metres) +
+                                     reverse_penalty(sx, sy, s, start_heading_degrees);
                 if (total < best) { best = total; best_from = s.node; best_to = t.node; best_cost = c; }
             }
         }
@@ -347,9 +356,23 @@ public:
     const std::vector<u32>& edges() const { return edges_; }   // original edges of the last route
 
     static constexpr double kMaxSnapMetres = 1000.0;
+    static constexpr double kNoHeading = -1.0;
+    static constexpr double kReversePenaltyMs = 60000.0;   // OsmAnd's default 60 s
 
 private:
     static constexpr size_t kSnapNodes = 4;
+    static constexpr double kHeadingNearMetres = 10.0;   // a node this close has no direction
+
+    static double reverse_penalty(int sx, int sy, const Sidecar::Candidate& node,
+                                  double heading_degrees)
+    {
+        if (heading_degrees < 0.0 || node.metres < kHeadingNearMetres) return 0.0;
+        // 31-bit tile y grows southwards
+        const double bearing = std::atan2((double)node.x - sx, (double)sy - node.y) *
+                               180.0 / 3.14159265358979323846;
+        const double off = std::fabs(std::remainder(bearing - heading_degrees, 360.0));
+        return off > 120.0 ? kReversePenaltyMs : 0.0;
+    }
 
     // Consecutive original edges of one road become one stretch; junction
     // transitions (ids beyond the real edges) have no road and are skipped.

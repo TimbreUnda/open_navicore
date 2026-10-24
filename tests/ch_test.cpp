@@ -226,6 +226,40 @@ int main()
         unlink(path.c_str());
     }
 
+    // A start heading makes a start node behind the car cost the reverse penalty: halfway
+    // between a west and an east junction, the destination is cheaper through the west one
+    // unless the car is heading east.
+    {
+        Graph g;
+        g.n = 3;
+        g.x = {kBaseX, kBaseX + 2 * kSpacing, kBaseX};          // west, east, destination
+        g.y = {kBaseY, kBaseY, kBaseY - 100000};                // destination ~1.3 km north
+        add_edge(g, 0, 2, 1000, 10, 0, 1, 0);      // west -> destination, 1 s
+        add_edge(g, 1, 2, 30000, 20, 0, 1, 0);     // east -> destination, 30 s
+        Contractor contractor(g, 200);
+        contractor.run();
+        const Hierarchy h = contractor.finish();
+        const std::string path = temp_path();
+        std::string error;
+        assert(pack_sidecar(g, h, {}, 15, path.c_str(), error));
+        auto sidecar = Sidecar::open(path.c_str(), error);
+        assert(sidecar);
+        Router router(*sidecar);
+        std::vector<RoadRun> runs;
+        u32 cost = 0;
+        const int car_x = kBaseX + kSpacing, car_y = kBaseY;
+        assert(router.route(car_x, car_y, g.x[2], g.y[2], runs, cost) == Router::Status::Ok);
+        assert(runs.size() == 1 && runs[0].road == 10);
+        assert(router.route(car_x, car_y, g.x[2], g.y[2], runs, cost, 270.0) == Router::Status::Ok);
+        assert(runs.size() == 1 && runs[0].road == 10);
+        assert(router.route(car_x, car_y, g.x[2], g.y[2], runs, cost, 90.0) == Router::Status::Ok);
+        assert(runs.size() == 1 && runs[0].road == 20 && cost == 30000);
+        // sideways (north) neither junction is behind
+        assert(router.route(car_x, car_y, g.x[2], g.y[2], runs, cost, 0.0) == Router::Status::Ok);
+        assert(runs.size() == 1 && runs[0].road == 10);
+        unlink(path.c_str());
+    }
+
     // Damaged files are refused: wrong magic, truncated copy, too small.
     {
         Graph g = random_grid(4, 4, 3);
