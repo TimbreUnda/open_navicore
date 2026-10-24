@@ -520,9 +520,10 @@ allow it.
 ### Cluster agent client
 
 Open NaviCore can hand the cluster to the common cluster agent (`cagentd`, sibling checkout
-`cluster-agent`) instead of sending the PAS record itself. The mode is off by default and is
-selected by the marker file `/datastore/navicore-backend/cluster-agent` (re-read at most every
-five seconds and on reset). With the marker present `open_navi_cluster_backend_publish()` still
+`cluster-agent`) instead of sending the PAS record itself. The mode is on by default (vp4r
+layer rule) and is used while the agent's socket `/var/run/cluster-agent.sock` exists;
+`$VP4R_HOME/flags/navicore.d/no-cluster-agent` switches it off (both re-read at most every five
+seconds and on reset). In agent mode `open_navi_cluster_backend_publish()` still
 validates and serializes the state (so invalid input returns the same `OPEN_NAVI_CLUSTER_*`
 status), then sends the semantic state as one non-blocking AF_UNIX datagram (source NAVI) and
 returns 0 when the kernel accepted it, 1 when it was dropped; no local publication history is
@@ -532,17 +533,19 @@ after an update. Road text is passed as UTF-8, control characters become spaces 
 255 bytes is cut on a character boundary. The agent expires a silent source after its TTL
 (default 10 s), so a producer that keeps navigating should publish at least every few seconds.
 The client is compiled in when a `cluster-agent` checkout is found (`-DONC_CAGENT_DIR=`);
-otherwise the marker is ignored.
+otherwise the provider always publishes locally.
 
 The PAS path (adapter 17 slot 3) exists only inside nv_navigation, where this provider is
 loaded, so the agent's output backend is `relay`: `cagentd --backend relay` forwards the
-arbitrated state as UPDATE / RELEASE datagrams to `/var/run/cluster-agent-pas.sock`. In agent
-mode the provider serves that socket from a thread started at `panaInitialize` and stopped at
+arbitrated state as UPDATE / RELEASE datagrams to `/var/run/cluster-agent-pas.sock`. Unless
+switched off, the provider serves that socket from a thread started at `panaInitialize` (the
+agent may start later) and stopped at
 deinitialization (`open_navi_cluster_relay_*`); an UPDATE goes through the unchanged local
 publication (`open_navi_cluster_backend_publish_pas`: validation, change masks, history, PAS
 callback), a RELEASE publishes an empty state so the cluster drops its turn view. This lets
-Android Auto guidance reach the cluster while Open NaviCore itself is idle. Do not enable the
-marker unless `cagentd --backend relay` is running: the cluster would stay dark.
+Android Auto guidance reach the cluster while Open NaviCore itself is idle. The agent must use
+`--backend relay` (the waa runtime does): an agent with another backend would take the cluster
+from the provider without driving it.
 
 ## Native Screen/EGL milestone
 

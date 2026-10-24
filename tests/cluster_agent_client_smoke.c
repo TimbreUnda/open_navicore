@@ -1,8 +1,8 @@
 #define _POSIX_C_SOURCE 200112L
 
-/* Open NaviCore as a cluster-agent client: with the marker present the semantic cluster state goes
- * to the agent socket (decoded here with the agent's own decoder) and not to PAS; without it,
- * nothing changes. */
+/* Open NaviCore as a cluster-agent client: on by default, the semantic cluster state goes to the
+ * running agent's socket (decoded here with the agent's own decoder) and not to PAS; with the
+ * no-cluster-agent flag, or with no agent running, it goes to PAS as before. */
 #include <open_navicore/cluster.h>
 
 #include "open_navi_cluster_agent.h"
@@ -59,7 +59,7 @@ int main(void)
 #else
 
 static int g_rx = -1;
-static char g_dir[256], g_marker[300], g_sock[300];
+static char g_dir[256], g_off_flag[300], g_sock[300];
 
 static void touch(const char *path)
 {
@@ -123,20 +123,32 @@ int main(void)
 
     snprintf(g_dir, sizeof(g_dir), "%s/onc-cagent-%ld", tmp != NULL ? tmp : "/tmp", (long)getpid());
     assert(mkdir(g_dir, 0700) == 0);
-    snprintf(g_marker, sizeof(g_marker), "%s/marker", g_dir);
+    snprintf(g_off_flag, sizeof(g_off_flag), "%s/no-cluster-agent", g_dir);
     snprintf(g_sock, sizeof(g_sock), "%s/agent.sock", g_dir);
     open_agent_socket();
 
-    /* default: marker absent -> PAS path, nothing on the socket */
-    open_navi_cluster_agent_test_configure(g_marker, g_sock);
+    /* switched off (no-cluster-agent) -> PAS path, nothing on the socket */
+    touch(g_off_flag);
+    open_navi_cluster_agent_test_configure(g_off_flag, g_sock);
     assert(open_navi_cluster_agent_active() == 0);
     assert(open_navi_cluster_backend_publish(&state) == 0u);
     assert(g_pas_calls == 1u);
     assert(receive(&m) == -2);
 
-    /* marker present -> agent path, PAS untouched */
-    touch(g_marker);
-    open_navi_cluster_agent_test_configure(g_marker, g_sock);
+    /* on (default) but no agent running -> PAS path */
+    unlink(g_off_flag);
+    {
+        char missing[300];
+        snprintf(missing, sizeof(missing), "%s/no-agent.sock", g_dir);
+        open_navi_cluster_agent_test_configure(g_off_flag, missing);
+        assert(open_navi_cluster_agent_enabled() == 1);
+        assert(open_navi_cluster_agent_active() == 0);
+        calls = g_pas_calls;
+        assert(open_navi_cluster_backend_publish(&state) == 0u && g_pas_calls == calls + 1u);
+    }
+
+    /* on (default) and the agent is running -> agent path, PAS untouched */
+    open_navi_cluster_agent_test_configure(g_off_flag, g_sock);
     assert(open_navi_cluster_agent_active() == 1);
     calls = g_pas_calls;
     assert(open_navi_cluster_backend_publish(&state) == 0u);
@@ -182,9 +194,9 @@ int main(void)
     unlink(g_sock);
     assert(open_navi_cluster_backend_publish(&state) != 0u);
 
-    /* marker removed -> back to PAS */
-    unlink(g_marker);
-    open_navi_cluster_agent_test_configure(g_marker, g_sock);
+    /* switched off again -> back to PAS */
+    touch(g_off_flag);
+    open_navi_cluster_agent_test_configure(g_off_flag, g_sock);
     calls = g_pas_calls;
     assert(open_navi_cluster_backend_publish(&state) == 0u && g_pas_calls == calls + 1u);
 
@@ -195,8 +207,8 @@ int main(void)
         struct cagent_state s;
         int i;
         snprintf(relay_path, sizeof(relay_path), "%s/relay.sock", g_dir);
-        touch(g_marker);
-        open_navi_cluster_agent_test_configure(g_marker, g_sock);
+        unlink(g_off_flag);
+        open_navi_cluster_agent_test_configure(g_off_flag, g_sock);
         open_navi_cluster_relay_test_configure(relay_path);
         open_navi_cluster_relay_start();
         agent = cagent_client_open_at(CAGENT_SRC_AA, relay_path);
@@ -231,8 +243,12 @@ int main(void)
         open_navi_cluster_relay_stop();
         assert(access(relay_path, F_OK) != 0);
         cagent_client_close(agent);
-        unlink(g_marker);
-        open_navi_cluster_agent_test_configure(g_marker, g_sock);
+        /* switched off: the relay host is not served */
+        touch(g_off_flag);
+        open_navi_cluster_agent_test_configure(g_off_flag, g_sock);
+        open_navi_cluster_relay_start();
+        assert(access(relay_path, F_OK) != 0);
+        unlink(g_off_flag);
     }
 
     rmdir(g_dir);

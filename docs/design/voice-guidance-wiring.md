@@ -151,7 +151,7 @@ ProcessFocus -> as_alloc 2 8 1  (holds AllocateChannel while prompts are being s
 | `backends/osmand/qnx_pcm_out.*` | io-audio output, device opened lazily at the synthesized rate | QNX compile only |
 | `backends/osmand/rhvoice_engine.*` | RHVoice `TtsEngine`, engine loaded once | QNX compile only |
 | `backends/osmand/navi_voiced.cpp` | daemon `main`, `--selftest TEXT` | QNX compile and link only |
-| `osmand_engine.cpp`, `config.*` | plugin hook, off unless `/datastore/navicore-backend/enable-voice` or `OPEN_NAVICORE_OSMAND_VOICE=1` | compile (`-Werror`) only |
+| `osmand_engine.cpp`, `config.*` | plugin hook, on unless `$VP4R_HOME/flags/navicore.d/no-voice` or `OPEN_NAVICORE_OSMAND_VOICE=0` | compile (`-Werror`) only |
 
 Verified offline: host tests under ASan/UBSan (ThreadSanitizer cannot map memory on this
 WSL kernel); all new sources compile for QNX with the project's GCC 8.5 flags and `-Werror`;
@@ -189,5 +189,6 @@ route simulation marker. If (2) is silent try `--alloc-route 1 15 1 --device pcm
   (slots 6 and 8) and the provider slots that report the result and a focus loss.
 - Ducking of entertainment is whatever AllocateChannel does; not observed.
 - Prompt wording review by a native speaker; stage distances per speed band.
-- Packaging: `navi_voiced` and the voice data belong in `navigation.ifs`, started next to
-  the plugin; for now they live in `/tmp/tts` (volatile).
+- Packaging: done as the vp4r package `55-voice-uk.ifs` (repo `voice-uk-ifs`): `navi_voiced`,
+  `as_alloc` and the RHVoice data under `/voice-uk`, started by `55-voice-uk.daemon`; off with
+  `flags/voice-uk.d/disabled`, voice name in `flags/voice-uk.d/voice`.

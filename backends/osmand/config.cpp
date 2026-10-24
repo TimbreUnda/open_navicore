@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstdio>
 
+#include <open_navicore/vp4r_flags.h>
+
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -94,9 +96,12 @@ Config Config::from_environment()
     config.performance_metrics = marker_or_environment(
         "OPEN_NAVICORE_OSMAND_PERFORMANCE_METRICS",
         "/datastore/navicore-backend/enable-performance-metrics");
-    config.voice = marker_or_environment(
-        "OPEN_NAVICORE_OSMAND_VOICE",
-        "/datastore/navicore-backend/enable-voice");
+    // On by default (vp4r layer); $VP4R_HOME/flags/navicore.d/no-voice or
+    // OPEN_NAVICORE_OSMAND_VOICE=0 switches it off, =1 forces it on.
+    if (const char* voice = std::getenv("OPEN_NAVICORE_OSMAND_VOICE"))
+        config.voice = !(voice[0] == '0' && voice[1] == '\0');
+    else
+        config.voice = !open_navi_vp4r_flag_exists("navicore", "no-voice");
     config.voice_queue = path("OPEN_NAVICORE_OSMAND_VOICE_QUEUE", config.voice_queue);
 
     return config;

@@ -93,7 +93,7 @@ void open_navi_cluster_relay_start(void)
     struct sockaddr_un sa;
     int fd, fl;
     (void)pthread_mutex_lock(&g_lock);
-    if (g_running != 0 || open_navi_cluster_agent_active() == 0 ||
+    if (g_running != 0 || open_navi_cluster_agent_enabled() == 0 ||
         strlen(g_path) >= sizeof(sa.sun_path)) {
         (void)pthread_mutex_unlock(&g_lock);
         return;

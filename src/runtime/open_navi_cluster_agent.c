@@ -5,17 +5,18 @@
 #ifdef OPEN_NAVI_CLUSTER_AGENT
 
 #include <cagent/client.h>
+#include <open_navicore/vp4r_flags.h>
 
 #include <pthread.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
-enum { MARKER_RECHECK_SECONDS = 5 };
+enum { RECHECK_SECONDS = 5 };
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static const char *g_marker = OPEN_NAVI_CLUSTER_AGENT_MARKER;
-static const char *g_socket;
+static const char *g_off_flag; /* NULL: $VP4R_HOME/flags/navicore.d/no-cluster-agent */
+static const char *g_socket;   /* NULL: the agent's default socket */
 static struct cagent_client *g_client;
 static int g_active;
 static time_t g_checked;
@@ -31,17 +32,26 @@ static time_t now_seconds(void)
 static void refresh_locked(int force)
 {
     time_t now = now_seconds();
-    if (!force && g_checked != 0 && now - g_checked < MARKER_RECHECK_SECONDS) {
+    if (!force && g_checked != 0 && now - g_checked < RECHECK_SECONDS) {
         return;
     }
     g_checked = now != 0 ? now : 1;
-    g_active = access(g_marker, F_OK) == 0;
+    g_active = open_navi_cluster_agent_enabled() &&
+               access(g_socket != NULL ? g_socket : CAGENT_DEFAULT_SOCKET, F_OK) == 0;
     if (g_active && g_client == NULL) {
         g_client = cagent_client_open_at(CAGENT_SRC_NAVI, g_socket);
         if (g_client == NULL) {
             g_active = 0;
         }
     }
+}
+
+int open_navi_cluster_agent_enabled(void)
+{
+    if (g_off_flag != NULL) {
+        return access(g_off_flag, F_OK) != 0;
+    }
+    return !open_navi_vp4r_flag_exists("navicore", "no-cluster-agent");
 }
 
 int open_navi_cluster_agent_active(void)
@@ -142,10 +152,10 @@ void open_navi_cluster_agent_release(void)
 }
 
 #if defined(OPEN_NAVI_TESTING)
-void open_navi_cluster_agent_test_configure(const char *marker_path, const char *socket_path)
+void open_navi_cluster_agent_test_configure(const char *off_flag_path, const char *socket_path)
 {
     (void)pthread_mutex_lock(&g_lock);
-    g_marker = marker_path != NULL ? marker_path : OPEN_NAVI_CLUSTER_AGENT_MARKER;
+    g_off_flag = off_flag_path;
     g_socket = socket_path;
     if (g_client != NULL) {
         cagent_client_close(g_client);
@@ -157,7 +167,9 @@ void open_navi_cluster_agent_test_configure(const char *marker_path, const char 
 }
 #endif
 
-#else /* built without the cluster agent client: the marker is ignored */
+#else /* built without the cluster agent client: always the local PAS path */
+
+int open_navi_cluster_agent_enabled(void) { return 0; }
 
 int open_navi_cluster_agent_active(void) { return 0; }
 
@@ -170,9 +182,9 @@ uint32_t open_navi_cluster_agent_publish(const OpenNaviClusterNavigationState *s
 void open_navi_cluster_agent_release(void) {}
 
 #if defined(OPEN_NAVI_TESTING)
-void open_navi_cluster_agent_test_configure(const char *marker_path, const char *socket_path)
+void open_navi_cluster_agent_test_configure(const char *off_flag_path, const char *socket_path)
 {
-    (void)marker_path;
+    (void)off_flag_path;
     (void)socket_path;
 }
 #endif
