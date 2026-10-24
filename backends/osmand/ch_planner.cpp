@@ -85,14 +85,16 @@ std::unique_ptr<ChPlanner> ChPlanner::open(const std::string& sidecar_path,
 std::string ChPlanner::describe() const { return impl_->description; }
 
 ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingContext>& context,
-                                     int start_x, int start_y, int end_x, int end_y, std::string& why)
+                                     int start_x, int start_y, int end_x, int end_y, std::string& why,
+                                     double start_heading_degrees)
 {
     timing_ = Timing();
     why.clear();
     auto step = Clock::now();
     std::vector<onc_ch::RoadRun> runs;
     onc_ch::u32 cost = 0;
-    const auto status = impl_->router->route(start_x, start_y, end_x, end_y, runs, cost);
+    const auto status = impl_->router->route(start_x, start_y, end_x, end_y, runs, cost,
+                                             start_heading_degrees);
     timing_.search_ms = ms_since(step);
     timing_.settled = impl_->router->settled();
     timing_.base_edges = impl_->router->edges().size();

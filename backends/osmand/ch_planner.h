@@ -46,8 +46,11 @@ public:
     // when the sidecar cannot serve it (a point too far from every road,
     // start and end on one road node, a road missing from the loaded maps);
     // `why` then names the reason and the caller falls back to HH or A*.
+    // start_heading_degrees: the car's direction (clockwise from north), or
+    // negative when unknown; start nodes behind it cost a reverse penalty.
     Segments route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingContext>& context,
-                   int start_x, int start_y, int end_x, int end_y, std::string& why);
+                   int start_x, int start_y, int end_x, int end_y, std::string& why,
+                   double start_heading_degrees = -1.0);
 
     const Timing& last_timing() const { return timing_; }
     // One-line description for the log: nodes, edges, maps.

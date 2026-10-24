@@ -1,8 +1,42 @@
 #pragma once
 
 #include <chrono>
+#include <optional>
 
 namespace navicore_osmand {
+
+// The driving direction a new route starts with: the motion heading while the
+// car moves, kept for a while after it stops (lights, a queue) and forgotten
+// after that, since a parked car's last heading says little.
+class HeadingMemory {
+public:
+    using Clock = std::chrono::steady_clock;
+
+    static constexpr double kMinSpeedMps = 1.5;   // the camera's heading threshold
+    static constexpr std::chrono::seconds kKeepAfterStop{30};
+
+    void observe(bool valid, double speed_mps, double heading_degrees, Clock::time_point now)
+    {
+        if (!valid || speed_mps < kMinSpeedMps)
+            return;
+        heading_degrees_ = heading_degrees;
+        seen_at_ = now;
+        known_ = true;
+    }
+    // The heading if one was seen within max_age.
+    std::optional<double> heading(Clock::time_point now,
+                                  Clock::duration max_age = kKeepAfterStop) const
+    {
+        if (!known_ || now - seen_at_ > max_age)
+            return std::nullopt;
+        return heading_degrees_;
+    }
+
+private:
+    bool known_ = false;
+    double heading_degrees_ = 0.0;
+    Clock::time_point seen_at_{};
+};
 
 // When the car has left the route long enough to ask for a new one, and how
 // long to wait after a failed request.
