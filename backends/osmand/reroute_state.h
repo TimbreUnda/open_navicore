@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cmath>
 #include <optional>
 
 namespace navicore_osmand {
@@ -63,7 +64,48 @@ public:
         }
         return now - off_route_since_ >= kOffRouteTime;
     }
-    void clear_off_route() { off_route_ = false; }
+    void clear_off_route()
+    {
+        off_route_ = false;
+        wrong_way_ = false;
+    }
+
+    static constexpr double kWrongWayDegrees = 120.0;
+    static constexpr double kAlongDegrees = 60.0;
+    static constexpr std::chrono::seconds kWrongWayTime{5};
+
+    // Call each guidance update with the angle between the driving direction
+    // and the route's at the car's progress, or nothing while the car is not
+    // moving. Driving along a route stays near it, so the distance check never
+    // fires; this is true once the car has driven more than kWrongWayDegrees
+    // against the route for kWrongWayTime. It then waits until the car has
+    // driven along a route again: a new route that still starts with a U-turn
+    // is the router's answer, not a reason to ask again.
+    bool wrong_way_long_enough(bool arrived, std::optional<double> off_degrees,
+                               Clock::time_point now)
+    {
+        if (arrived || !off_degrees) {
+            wrong_way_ = false;
+            return false;
+        }
+        const double off = std::fabs(std::remainder(*off_degrees, 360.0));
+        if (off <= kAlongDegrees)
+            wrong_way_armed_ = true;
+        if (off < kWrongWayDegrees || !wrong_way_armed_) {
+            wrong_way_ = false;
+            return false;
+        }
+        if (!wrong_way_) {
+            wrong_way_ = true;
+            wrong_way_since_ = now;
+            return false;
+        }
+        if (now - wrong_way_since_ < kWrongWayTime)
+            return false;
+        wrong_way_ = false;
+        wrong_way_armed_ = false;
+        return true;
+    }
 
     // A failed request waits kRetryDelay before the next one.
     void request_failed(Clock::time_point now) { retry_at_ = now + kRetryDelay; }
@@ -72,6 +114,9 @@ public:
 private:
     bool off_route_ = false;
     Clock::time_point off_route_since_{};
+    bool wrong_way_ = false;
+    bool wrong_way_armed_ = true;
+    Clock::time_point wrong_way_since_{};
     Clock::time_point retry_at_{};
 };
 

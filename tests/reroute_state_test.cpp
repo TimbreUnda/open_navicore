@@ -115,6 +115,39 @@ void test_detour_ends_when_route_recovers()
 
 } // namespace
 
+void test_wrong_way_needs_sustained_reverse_driving()
+{
+    RerouteState state;
+    const auto t0 = Clock::now();
+    const auto at = [&](int seconds) { return t0 + std::chrono::seconds(seconds); };
+    // Along the route, sideways or not moving: nothing.
+    CHECK(!state.wrong_way_long_enough(false, 10.0, at(0)));
+    CHECK(!state.wrong_way_long_enough(false, 90.0, at(10)));
+    CHECK(!state.wrong_way_long_enough(false, std::nullopt, at(20)));
+    // Against it (either sign, any wrap) for 5 s.
+    CHECK(!state.wrong_way_long_enough(false, -175.0, at(30)));
+    CHECK(!state.wrong_way_long_enough(false, 535.0, at(34)));
+    CHECK(state.wrong_way_long_enough(false, 180.0, at(35)));
+    // Then not again on the new route until the car has driven along one.
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(36)));
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(60)));
+    state.clear_off_route();
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(61)));
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(70)));
+    CHECK(!state.wrong_way_long_enough(false, 0.0, at(71)));
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(72)));
+    CHECK(state.wrong_way_long_enough(false, 180.0, at(77)));
+    // Stopping, arriving or a turn back along it restart the timer.
+    CHECK(!state.wrong_way_long_enough(false, 0.0, at(80)));
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(81)));
+    CHECK(!state.wrong_way_long_enough(false, std::nullopt, at(84)));
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(85)));
+    CHECK(!state.wrong_way_long_enough(true, 180.0, at(88)));
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(89)));
+    CHECK(!state.wrong_way_long_enough(false, 180.0, at(93)));
+    CHECK(state.wrong_way_long_enough(false, 180.0, at(94)));
+}
+
 void test_heading_memory_keeps_a_moving_heading_for_a_while()
 {
     HeadingMemory memory;
@@ -144,6 +177,7 @@ int main()
     test_detour_starts_once_and_times_out();
     test_detour_boundaries();
     test_detour_ends_when_route_recovers();
+    test_wrong_way_needs_sustained_reverse_driving();
     test_heading_memory_keeps_a_moving_heading_for_a_while();
     std::puts("reroute_state_test passed");
     return 0;

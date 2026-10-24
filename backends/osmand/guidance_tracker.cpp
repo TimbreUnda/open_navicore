@@ -24,6 +24,32 @@ double distance(const ui::GeoPoint& a, const ui::GeoPoint& b) noexcept
     return std::hypot(x, y);
 }
 
+// Direction of the route geometry at `along` metres of its own length.
+bool bearing_at(const std::vector<ui::GeoPoint>& geometry, double along,
+                double& bearing_degrees) noexcept
+{
+    double walked = 0.0;
+    for (std::size_t index = 1; index < geometry.size(); ++index) {
+        const auto& a = geometry[index - 1];
+        const auto& b = geometry[index];
+        const double latitude = radians((a.latitude + b.latitude) * 0.5);
+        const double east = (b.longitude - a.longitude) *
+                            earth_metres_per_degree * std::cos(latitude);
+        const double north = (b.latitude - a.latitude) * earth_metres_per_degree;
+        const double length = std::hypot(east, north);
+        if (length <= 0.0)
+            continue;
+        walked += length;
+        if (walked >= along || index + 1 == geometry.size()) {
+            bearing_degrees = std::atan2(east, north) * 180.0 / 3.14159265358979323846;
+            if (bearing_degrees < 0.0)
+                bearing_degrees += 360.0;
+            return true;
+        }
+    }
+    return false;
+}
+
 void choose_maneuvers(const ui::RouteAlternative& route,
                       ui::GuidanceState& state) noexcept
 {
@@ -119,6 +145,11 @@ ui::GuidanceState GuidanceTracker::update(const ui::RouteAlternative& route,
     const double fraction = route.distance_metres > 0.0
         ? state.remaining_metres / route.distance_metres : 0.0;
     state.remaining_seconds = route.duration_seconds * fraction;
+    // At the progress point rather than the nearest segment: a route that
+    // comes back along the other carriageway is near but points the other way.
+    state.route_bearing_known = route.distance_metres > 0.0 &&
+        bearing_at(route.geometry, progress_metres_ / route.distance_metres * geometry_length,
+                   state.route_bearing_degrees);
     state.arrived = state.remaining_metres <= arrival_radius_metres ||
         distance(position, route.geometry.back()) <= arrival_radius_metres;
     choose_maneuvers(route, state);

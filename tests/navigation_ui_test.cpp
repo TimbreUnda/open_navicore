@@ -942,6 +942,17 @@ void test_reroute()
     assert(tracker.update(route, {50.005, 30.0}).off_route_metres < 1.0);
     const auto off = tracker.update(route, {50.005, 30.002});
     assert(off.off_route_metres > 100.0 && off.off_route_metres < 200.0);
+    // The route runs north here.
+    assert(off.route_bearing_known &&
+           (off.route_bearing_degrees < 1.0 || off.route_bearing_degrees > 359.0));
+    // Past the corner of a route that turns east, the direction there is east,
+    // also where the start of the route (heading north) is as near.
+    RouteAlternative corner = route;
+    corner.geometry = {{50.0, 30.0}, {50.01, 30.0}, {50.01, 30.02}};
+    corner.distance_metres = 1112.0 + 1430.0;
+    GuidanceTracker corner_tracker;
+    const auto east = corner_tracker.update(corner, {50.01, 30.01});
+    assert(east.route_bearing_known && std::fabs(east.route_bearing_degrees - 90.0) < 1.0);
 
     // One recalculation at a time; stale and wrong-screen results are ignored.
     const auto revision = model.request_reroute();

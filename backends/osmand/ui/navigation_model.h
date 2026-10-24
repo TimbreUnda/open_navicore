@@ -123,6 +123,10 @@ struct GuidanceState {
     // whether a new route from here is being calculated.
     double off_route_metres = 0.0;
     bool recalculating = false;
+    // The route's direction (degrees clockwise from north) where the car has
+    // got to along it; with the driving direction it tells a wrong way.
+    bool route_bearing_known = false;
+    double route_bearing_degrees = 0.0;
     // The road at the current position and its speed limit (0: unknown).
     std::string road;
     int speed_limit_kmh = 0;
