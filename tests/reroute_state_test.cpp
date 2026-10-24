@@ -115,6 +115,27 @@ void test_detour_ends_when_route_recovers()
 
 } // namespace
 
+void test_heading_memory_keeps_a_moving_heading_for_a_while()
+{
+    HeadingMemory memory;
+    const auto t0 = Clock::now();
+    CHECK(!memory.heading(t0));
+    // Too slow or no fix: no heading.
+    memory.observe(true, 1.0, 90.0, t0);
+    memory.observe(false, 10.0, 90.0, t0);
+    CHECK(!memory.heading(t0));
+    memory.observe(true, 10.0, 90.0, t0);
+    CHECK(memory.heading(t0) && *memory.heading(t0) == 90.0);
+    // Stopped at lights: the moving heading stays, the standstill one is ignored.
+    memory.observe(true, 0.2, 200.0, t0 + std::chrono::seconds(10));
+    CHECK(*memory.heading(t0 + std::chrono::seconds(30)) == 90.0);
+    CHECK(!memory.heading(t0 + std::chrono::seconds(31)));
+    // A shorter age asks whether the car moves now.
+    CHECK(!memory.heading(t0 + std::chrono::seconds(3), std::chrono::seconds(2)));
+    memory.observe(true, 5.0, 180.0, t0 + std::chrono::seconds(40));
+    CHECK(*memory.heading(t0 + std::chrono::seconds(41)) == 180.0);
+}
+
 int main()
 {
     test_off_route_needs_sustained_distance();
@@ -123,6 +144,7 @@ int main()
     test_detour_starts_once_and_times_out();
     test_detour_boundaries();
     test_detour_ends_when_route_recovers();
+    test_heading_memory_keeps_a_moving_heading_for_a_while();
     std::puts("reroute_state_test passed");
     return 0;
 }

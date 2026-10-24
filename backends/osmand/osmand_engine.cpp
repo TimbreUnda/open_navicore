@@ -250,6 +250,7 @@ private:
     bool simulation_arrival_reported_ = false;
     // Off-route recalculation.
     RerouteState reroute_;
+    HeadingMemory heading_memory_;
     BenchDetour bench_detour_;
     double simulation_progress_metres_ = 0.0;
     double simulation_geometry_length_metres_ = 0.0;
@@ -721,7 +722,8 @@ void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
     submitted_route_revision_ = revision;
     trace_result("reroute=submit", revision,
                  static_cast<std::size_t>(state.off_route_metres));
-    navigation_worker_->submit_route(revision, *navigation_->destination(), position, false);
+    navigation_worker_->submit_route(revision, *navigation_->destination(), position, false,
+                                     heading_memory_.heading(now));
 }
 
 void OsmAndEngine::apply_map_commands()
@@ -839,6 +841,11 @@ bool OsmAndEngine::apply_camera()
     camera_updated_at_ = now;
     const double now_s =
         std::chrono::duration<double>(now - clock_origin_).count();
+    {
+        // Also while searching: a destination picked there starts this way.
+        const auto moving = motion_.predict(now_s);
+        heading_memory_.observe(moving.valid, moving.speed_mps, moving.heading_degrees, now);
+    }
     const auto screen = navigation_->screen();
     if (screen == ui::Screen::Search) {
         vector_view_.tile_zoom_limit = -1.0;
@@ -1572,7 +1579,9 @@ void OsmAndEngine::submit_navigation_requests()
         if (ensure_navigation_worker()) {
             navigation_worker_->submit_route(submitted_route_revision_,
                                               *navigation_->destination(), current_location(),
-                                              true);
+                                              true,
+                                              heading_memory_.heading(
+                                                  std::chrono::steady_clock::now()));
         }
     }
 }

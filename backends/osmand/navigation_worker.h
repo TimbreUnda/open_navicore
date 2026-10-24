@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -55,9 +56,12 @@ public:
     // Searches take milliseconds with the index, seconds without.
     bool has_search_index() const;
     // alternatives: also offer up to two other routes (route preview; a
-    // reroute during guidance takes the fastest only).
+    // reroute during guidance takes the fastest only). heading_degrees: the
+    // car's driving direction (clockwise from north) when known; the route
+    // then prefers to start that way instead of turning back.
     void submit_route(std::uint64_t revision, ui::Destination destination,
-                      ui::GeoPoint origin, bool alternatives);
+                      ui::GeoPoint origin, bool alternatives,
+                      std::optional<double> heading_degrees);
     // Replaces a pending request like the others (one job at a time).
     void submit_address(std::uint64_t revision, ui::GeoPoint point);
     bool take_search_result(SearchResult& output);

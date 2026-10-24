@@ -420,13 +420,15 @@ public:
     }
 
     void submit_route(std::uint64_t revision, ui::Destination destination,
-                      ui::GeoPoint origin, bool alternatives)
+                      ui::GeoPoint origin, bool alternatives,
+                      std::optional<double> heading_degrees)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) return;
         if (active_) active_->cancel();
         pending_ = Request::route(revision, std::move(destination), origin);
         pending_.alternatives = alternatives;
+        pending_.heading_degrees = heading_degrees;
         has_pending_ = true;
         trace_result("worker=route_queued", revision, 1u);
         condition_.notify_one();
@@ -496,6 +498,7 @@ private:
         ui::GeoPoint origin;               // route start; search: "near"
         std::vector<ui::GeoPoint> recent;  // search: destinations picked before
         bool alternatives = false;  // route: also look for alternatives
+        std::optional<double> heading_degrees;  // route: driving direction at the origin
 
         static Request search(std::uint64_t revision, std::string query)
         {
@@ -759,11 +762,24 @@ private:
         RoutePlannerFrontEnd front_end;
         std::vector<Segments> found;
         const char* method = "ch";
-        if (ch_) {
+        // The routers read the start direction from the shared configuration
+        // (radians clockwise from north, as RouteDataObject::directionRoute),
+        // and HH clears it when done, so it is set again before each router.
+        const auto new_context = [&] {
+            routing_config_->initialDirection = request.heading_degrees
+                ? static_cast<float>(*request.heading_degrees * M_PI / 180.0) : NO_DIRECTION;
             auto context = front_end.buildRoutingContext(routing_config_);
             context->progress = std::make_shared<RouteProgress>(cancel);
+            return context;
+        };
+        if (request.heading_degrees)
+            trace_result("worker=route_heading", request.revision,
+                         static_cast<std::size_t>(*request.heading_degrees));
+        if (ch_) {
+            auto context = new_context();
             std::string why;
-            Segments segments = ch_->route(front_end, context, sx, sy, ex, ey, why);
+            Segments segments = ch_->route(front_end, context, sx, sy, ex, ey, why,
+                                           request.heading_degrees.value_or(-1.0));
             if (!segments.empty() && accept_route(segments, "ch")) {
                 const ChPlanner::Timing& timing = ch_->last_timing();
                 char line[160];
@@ -779,8 +795,7 @@ private:
         }
         if (found.empty() && !cancel->isAborted()) method = "hh";
         if (found.empty() && has_hh_) {
-            auto context = front_end.buildRoutingContext(routing_config_);
-            context->progress = std::make_shared<RouteProgress>(cancel);
+            auto context = new_context();
             found = route_hh(front_end, context, sx, sy, ex, ey,
                              request.alternatives && kAlternativeRoutes);
         }
@@ -789,8 +804,7 @@ private:
             method = "astar";
             trace(has_hh_ ? "worker=route_fallback why=hh_unusable"
                           : "worker=route_fallback why=no_hh_data");
-            auto context = front_end.buildRoutingContext(routing_config_);
-            context->progress = std::make_shared<RouteProgress>(cancel);
+            auto context = new_context();
             std::vector<int> intermediates_x;
             std::vector<int> intermediates_y;
             auto segments = front_end.searchRoute(context, sx, sy, ex, ey,
@@ -1037,9 +1051,11 @@ bool NavigationWorker::has_search_index() const
 
 void NavigationWorker::submit_route(std::uint64_t revision,
                                     ui::Destination destination,
-                                    ui::GeoPoint origin, bool alternatives)
+                                    ui::GeoPoint origin, bool alternatives,
+                                    std::optional<double> heading_degrees)
 {
-    impl_->submit_route(revision, std::move(destination), origin, alternatives);
+    impl_->submit_route(revision, std::move(destination), origin, alternatives,
+                        heading_degrees);
 }
 
 NavigationWorker::~NavigationWorker() = default;
