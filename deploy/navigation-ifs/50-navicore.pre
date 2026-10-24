@@ -1,0 +1,17 @@
+# .pre (vp4r layer): link the OsmAnd libraries into /open-navicore before System Manager starts
+# nv_navigation. They are plain files in the booted slot's data dir, not in the image: images are
+# mounted inside the boot barrier (~70 MB/s) and the barrier has to leave the J6 startup
+# notification inside the RH850's window (2026-10-24: with them in the image, boots ended
+# 'J6 Startup N'fn failed' / 'SW Reset'). Without the files the provider keeps its built-in backend.
+# $1 = VP4R_HOME; output goes to $1/log/navicore.log.
+H=${1:-/datastore/vp4r}
+read SLOT < $H/slot
+D=$H/slots/$SLOT/data/navicore
+for f in libOpenNaviBackendOsmAnd.so libOsmAndCore_shared.so libOsmAndCore_ResourcesBundle_shared.so; do
+    if [ -r $D/$f ]; then
+        /proc/boot/ln -sPf $D/$f /open-navicore/$f
+        print "link $f rc=$?"
+    else
+        print "missing $D/$f"
+    fi
+done

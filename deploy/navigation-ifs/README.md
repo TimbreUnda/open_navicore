@@ -19,6 +19,18 @@ finds the OsmAnd core; the backend opens the resource bundle there too. Qt
 and the C++ runtime are linked statically. All entries are stored `+raw`
 (uncompressed, page-aligned) so the libraries are mapped in place.
 
+## Boot time: the libraries are not in the image
+
+The vp4r loader mounts every image inside the boot barrier (about 70 MB/s), and the barrier has
+to leave the J6 startup notification inside the RH850's window: with the 107 MB image some
+boots ended `J6 Startup N'fn failed` / `SW Reset` and rolled back (2026-10-24; every boot already
+logs `missed 1..11 Startup Notifications`, the good ones answer at 11.5-11.8 s). So the image
+holds only the provider, the config and `etc/vp4r/init.d/50-navicore.pre`; the OsmAnd backend,
+core and resource bundle (~106 MB, target `navicore-data`) are plain files in
+`$VP4R_HOME/slots/<slot>/data/navicore/`, which the `.pre` script links into `/open-navicore`
+(`ln -sPf`, a few ms) before System Manager starts nv_navigation. Missing files leave the
+provider on its built-in backend.
+
 ## Boot
 
 **vp4r layer** (sibling checkouts `vp4r-loader` and `ifs-build`, see `ifs-build/docs/LAYOUT.md`): the
