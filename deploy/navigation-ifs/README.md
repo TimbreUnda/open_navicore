@@ -21,7 +21,7 @@ and the C++ runtime are linked statically. All entries are stored `+raw`
 
 ## Boot
 
-**vp4r layer** (`/mnt/d/vp4r-loader`, `/mnt/d/ifs-build/docs/LAYOUT.md`): the
+**vp4r layer** (sibling checkouts `vp4r-loader` and `ifs-build`, see `ifs-build/docs/LAYOUT.md`): the
 image is installed as `$VP4R_HOME/slots/<slot>/ifs/50-navicore.ifs`; the loader
 mounts it at `/` after the stock images. The image carries the config twice,
 at `/open-navicore/nv_navigation.cfg` and at `/pas/scfg/nv_navigation.cfg`;
