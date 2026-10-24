@@ -705,14 +705,26 @@ bool OsmAndEngine::update_guidance()
 }
 
 // More than 50 m from the route for 4 s (GPS noise and short parallel
-// stretches stay below that) asks for a new route from the position to the
-// same destination. One request at a time; a failed one waits 10 s.
+// stretches stay below that), or driving against it for 5 s, asks for a new
+// route from the position to the same destination, starting in the driving
+// direction. One request at a time; a failed one waits 10 s.
 void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
                                    const ui::GeoPoint& position)
 {
     const auto now = std::chrono::steady_clock::now();
-    if (!reroute_.off_route_long_enough(state.arrived, state.off_route_metres, now))
+    // Moving now: a heading from the last two seconds.
+    const auto heading = heading_memory_.heading(now, std::chrono::seconds(2));
+    std::optional<double> against;
+    if (heading && state.route_bearing_known)
+        against = *heading - state.route_bearing_degrees;
+    const bool off_route =
+        reroute_.off_route_long_enough(state.arrived, state.off_route_metres, now);
+    const bool wrong_way = reroute_.wrong_way_long_enough(state.arrived, against, now);
+    if (!off_route && !wrong_way)
         return;
+    if (wrong_way)
+        trace_result("reroute=wrong_way", navigation_->route_revision(),
+                     static_cast<std::size_t>(std::fabs(std::remainder(*against, 360.0))));
     if (navigation_->rerouting() || reroute_.retry_blocked(now) ||
         !navigation_->destination() || !ensure_navigation_worker())
         return;
