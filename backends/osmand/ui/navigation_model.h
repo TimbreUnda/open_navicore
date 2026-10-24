@@ -145,7 +145,7 @@ struct MapViewState {
     bool following = true;
     bool heading_up = true;
     bool tilted = false;
-    bool night = false;
+    bool night = true;
     // A heading is known, so heading-up can turn the map; until then the
     // heading-up button is shown dimmed (the map stays as it is).
     bool heading_known = true;

@@ -233,7 +233,7 @@ private:
         std::chrono::steady_clock::now();
     CameraController::Pose applied_pose_{};
     bool pose_applied_ = false;
-    bool night_ = false;
+    bool night_ = true;  // the dark map palette is the default
     bool overview_pending_ = false;
     bool route_shown_ = false;  // the vector map draws a route
     std::size_t shown_route_index_ = 0;  // which of the routes it draws
