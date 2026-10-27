@@ -248,6 +248,24 @@ public:
             out.push_back({b.second.node, std::sqrt((double)b.first) * scale, b.second.x, b.second.y});
     }
 
+    // The nodes at a road point (a junction splits into one node per arriving and
+    // per leaving edge, all at its coordinates); empty when the point is no node.
+    void nodes_at(int x31, int y31, std::vector<u32>& out)
+    {
+        out.clear();
+        const int64_t gx = ((int64_t)x31 - header_.grid_min_x) >> header_.grid_shift;
+        const int64_t gy = ((int64_t)y31 - header_.grid_min_y) >> header_.grid_shift;
+        if (gx < 0 || gy < 0 || gx >= (int64_t)header_.grid_w || gy >= (int64_t)header_.grid_h) return;
+        const u32 c = (u32)(gy * header_.grid_w + gx);
+        u32 bounds[2];
+        if (!file_->read(header_.off_grid_first + (uint64_t)c * 4, bounds, sizeof bounds) || bounds[1] <= bounds[0]) return;
+        entries_.resize(bounds[1] - bounds[0]);
+        if (!file_->read(header_.off_grid + (uint64_t)bounds[0] * sizeof(SidecarGridEntry), entries_.data(),
+                         entries_.size() * sizeof(SidecarGridEntry))) return;
+        for (const SidecarGridEntry& e : entries_)
+            if (e.x == x31 && e.y == y31) out.push_back(e.node);
+    }
+
 private:
     explicit Sidecar(std::unique_ptr<PageFile> file) : file_(std::move(file)) {}
 
@@ -341,16 +359,33 @@ public:
             sources_.push_back({s.node, (u32)std::lround(120.0 * s.metres +
                                                          reverse_penalty(sx, sy, s, start_heading_degrees))});
         for (const auto& t : to_) targets_.push_back({t.node, (u32)std::lround(120.0 * t.metres)});
-        u32 meet = 0;
-        const u32 total = query_.run(sources_.data(), sources_.size(), targets_.data(), targets_.size(),
-                                     meet, cancelled);
-        if (total == INF) return cancelled && cancelled() ? Status::Cancelled : Status::NoRoute;
-        const u32 from = query_.source_of(meet), to = query_.target_of(meet);
+        u32 from = 0, to = 0, total = 0;
+        const Status status = route_seeded(sources_, targets_, runs, total, cancelled, from, to);
+        if (status != Status::Ok) return status;
         u32 offsets = 0;
         for (const auto& s : sources_) if (s.node == from) offsets += s.cost;
         for (const auto& t : targets_) if (t.node == to) offsets += t.cost;
-        if (!query_.path_edges(from, to, meet, edges_)) return Status::Inconsistent;
         cost = total - std::min(total, offsets);
+        return status;
+    }
+
+    // The cheapest route from any source seed to any target seed, seeds' costs
+    // included (cost: the whole, in ms); from/to name the seeds it uses.  Runs are
+    // empty when both are one node.
+    Status route_seeded(const std::vector<BasicQuery<SidecarStore>::Seed>& sources,
+                        const std::vector<BasicQuery<SidecarStore>::Seed>& targets,
+                        std::vector<RoadRun>& runs, u32& cost, const std::function<bool()>& cancelled,
+                        u32& from, u32& to)
+    {
+        runs.clear();
+        u32 meet = 0;
+        const u32 total = query_.run(sources.data(), sources.size(), targets.data(), targets.size(),
+                                     meet, cancelled);
+        if (total == INF) return cancelled && cancelled() ? Status::Cancelled : Status::NoRoute;
+        from = query_.source_of(meet);
+        to = query_.target_of(meet);
+        if (!query_.path_edges(from, to, meet, edges_)) return Status::Inconsistent;
+        cost = total;
         return merge(runs) ? Status::Ok : Status::Inconsistent;
     }
 

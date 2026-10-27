@@ -816,11 +816,13 @@ private:
                                            request.heading_degrees.value_or(-1.0));
             if (!segments.empty() && accept_route(segments, "ch")) {
                 const ChPlanner::Timing& timing = ch_->last_timing();
-                char line[160];
+                char line[200];
                 std::snprintf(line, sizeof(line),
-                              "worker=ch_route search_ms=%.1f roads_ms=%.0f prepare_ms=%.0f runs=%zu edges=%zu settled=%zu",
-                              timing.search_ms, timing.roads_ms, timing.prepare_ms, timing.road_runs,
-                              timing.base_edges, timing.settled);
+                              "worker=ch_route snap=%s snap_ms=%.0f search_ms=%.1f roads_ms=%.0f prepare_ms=%.0f "
+                              "runs=%zu edges=%zu settled=%zu",
+                              timing.direct ? "same_road" : timing.road_snap ? "road" : "node",
+                              timing.snap_ms, timing.search_ms, timing.roads_ms, timing.prepare_ms,
+                              timing.road_runs, timing.base_edges, timing.settled);
                 trace(line);
                 found.push_back(std::move(segments));
             } else if (!cancel->isAborted()) {

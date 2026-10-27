@@ -7,36 +7,103 @@
 namespace navicore_osmand {
 
 // The driving direction a new route starts with: the motion heading while the
-// car moves, kept for a while after it stops (lights, a queue) and forgotten
-// after that, since a parked car's last heading says little.
+// car moves, and kept for a while after it stops (lights, a queue). A car that
+// stands where it stopped still points that way, so start_heading() also keeps
+// it there for good (parked, the nav restarted, a saved record), until the car
+// has moved away without a heading (a slow manoeuvre in a car park).
 class HeadingMemory {
 public:
     using Clock = std::chrono::steady_clock;
 
     static constexpr double kMinSpeedMps = 1.5;   // the camera's heading threshold
     static constexpr std::chrono::seconds kKeepAfterStop{30};
+    static constexpr double kSameSpotMetres = 30.0;   // GPS noise of a standing car
 
-    void observe(bool valid, double speed_mps, double heading_degrees, Clock::time_point now)
+    // Where the car stopped and which way it pointed.
+    struct Parked {
+        double heading_degrees = 0.0;
+        double latitude = 0.0;
+        double longitude = 0.0;
+    };
+
+    // position: the car's position with the motion, when known.
+    void observe(bool valid, double speed_mps, double heading_degrees, Clock::time_point now,
+                 const double* latitude = nullptr, const double* longitude = nullptr)
     {
-        if (!valid || speed_mps < kMinSpeedMps)
+        if (!valid || speed_mps < kMinSpeedMps) {
+            // Stopped: a new spot is worth saving once.
+            if (moving_ && position_known_ && (!saved_ || !near(saved_spot_, spot_.latitude, spot_.longitude))) {
+                saved_spot_ = spot_;
+                saved_ = true;
+                save_pending_ = true;
+            }
+            moving_ = false;
             return;
+        }
         heading_degrees_ = heading_degrees;
         seen_at_ = now;
         known_ = true;
+        live_ = true;
+        moving_ = true;
+        if (latitude && longitude) {
+            spot_ = {heading_degrees, *latitude, *longitude};
+            position_known_ = true;
+        }
     }
     // The heading if one was seen within max_age.
     std::optional<double> heading(Clock::time_point now,
                                   Clock::duration max_age = kKeepAfterStop) const
     {
-        if (!known_ || now - seen_at_ > max_age)
+        if (!live_ || now - seen_at_ > max_age)
             return std::nullopt;
         return heading_degrees_;
     }
+    // The direction a route from `latitude, longitude` starts with: the recent
+    // heading, or the one the car had where it stopped, while it is still there.
+    std::optional<double> start_heading(Clock::time_point now, double latitude,
+                                        double longitude) const
+    {
+        if (const auto recent = heading(now)) return recent;
+        if (!known_ || !position_known_ || !near(spot_, latitude, longitude)) return std::nullopt;
+        return spot_.heading_degrees;
+    }
+    // A saved record from before a restart; real motion replaces it.
+    void restore(const Parked& parked)
+    {
+        if (known_) return;
+        heading_degrees_ = parked.heading_degrees;
+        spot_ = parked;
+        saved_spot_ = parked;
+        known_ = position_known_ = saved_ = true;
+    }
+    // The spot to save, once per stop at a new spot.
+    bool take_save(Parked& parked)
+    {
+        if (!save_pending_) return false;
+        save_pending_ = false;
+        parked = saved_spot_;
+        return true;
+    }
 
 private:
-    bool known_ = false;
+    static bool near(const Parked& spot, double latitude, double longitude)
+    {
+        const double north = (latitude - spot.latitude) * 111320.0;
+        const double east = (longitude - spot.longitude) * 111320.0 *
+                            std::cos(spot.latitude * 3.14159265358979323846 / 180.0);
+        return std::sqrt(north * north + east * east) <= kSameSpotMetres;
+    }
+
+    bool known_ = false;   // a heading, seen or restored
+    bool live_ = false;    // seen in this run: heading() may use it
     double heading_degrees_ = 0.0;
     Clock::time_point seen_at_{};
+    bool moving_ = false;
+    bool position_known_ = false;
+    Parked spot_;          // the last moving position and heading
+    bool saved_ = false;
+    Parked saved_spot_;
+    bool save_pending_ = false;
 };
 
 // When the car has left the route long enough to ask for a new one, and how

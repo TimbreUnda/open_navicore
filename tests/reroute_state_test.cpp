@@ -169,9 +169,41 @@ void test_heading_memory_keeps_a_moving_heading_for_a_while()
     CHECK(*memory.heading(t0 + std::chrono::seconds(41)) == 180.0);
 }
 
+void test_heading_memory_keeps_a_parked_heading_at_its_spot()
+{
+    HeadingMemory memory;
+    const auto t0 = Clock::now();
+    const double lat = 50.4501, lon = 30.5234;
+    memory.observe(true, 10.0, 41.0, t0, &lat, &lon);
+    // Stopped: saved once, and kept at the spot long after the 30 s.
+    memory.observe(true, 0.0, 0.0, t0 + std::chrono::seconds(5));
+    HeadingMemory::Parked parked;
+    CHECK(memory.take_save(parked) && parked.heading_degrees == 41.0 && parked.latitude == lat);
+    CHECK(!memory.take_save(parked));
+    memory.observe(true, 0.0, 0.0, t0 + std::chrono::seconds(6));
+    CHECK(!memory.take_save(parked));   // still the same stop
+    const auto later = t0 + std::chrono::hours(3);
+    CHECK(!memory.heading(later));
+    CHECK(memory.start_heading(later, lat + 0.0001, lon) &&
+          *memory.start_heading(later, lat + 0.0001, lon) == 41.0);   // ~11 m: GPS noise
+    // Moved away (slowly, no heading): forgotten there.
+    CHECK(!memory.start_heading(later, lat + 0.001, lon));            // ~111 m
+    // After a restart the saved spot gives the heading, but only there.
+    HeadingMemory restarted;
+    restarted.restore(parked);
+    CHECK(!restarted.heading(t0));
+    CHECK(restarted.start_heading(t0, lat, lon) && *restarted.start_heading(t0, lat, lon) == 41.0);
+    CHECK(!restarted.start_heading(t0, lat + 0.001, lon));
+    CHECK(!restarted.take_save(parked));
+    // Real motion replaces the restored record.
+    restarted.observe(true, 8.0, 222.0, t0, &lat, &lon);
+    CHECK(*restarted.start_heading(t0, lat + 0.001, lon) == 222.0);
+}
+
 int main()
 {
     test_off_route_needs_sustained_distance();
+    test_heading_memory_keeps_a_parked_heading_at_its_spot();
     test_arrival_and_threshold_clear_the_timer();
     test_failed_request_backs_off();
     test_detour_starts_once_and_times_out();

@@ -328,6 +328,35 @@ ui::GeoPoint simulated_position(const ui::RouteAlternative& route,
     return route.geometry.back();
 }
 
+// The parked record: "heading latitude longitude" on one line, written to
+// "<path>.tmp" and renamed over the target, as the recents are.
+bool load_parked(const std::string& path, HeadingMemory::Parked& parked)
+{
+    std::FILE* input = std::fopen(path.c_str(), "r");
+    if (!input) return false;
+    const bool ok = std::fscanf(input, "%lf %lf %lf", &parked.heading_degrees, &parked.latitude,
+                                &parked.longitude) == 3;
+    std::fclose(input);
+    return ok && std::isfinite(parked.heading_degrees) && std::fabs(parked.latitude) <= 90.0 &&
+           std::fabs(parked.longitude) <= 180.0;
+}
+
+bool save_parked(const std::string& path, const HeadingMemory::Parked& parked)
+{
+    const std::string temporary = path + ".tmp";
+    std::FILE* output = std::fopen(temporary.c_str(), "w");
+    if (!output) return false;
+    bool ok = std::fprintf(output, "%.1f %.7f %.7f\n", parked.heading_degrees, parked.latitude,
+                           parked.longitude) > 0;
+    ok = std::fflush(output) == 0 && ok;
+    ok = std::fclose(output) == 0 && ok;
+    if (!ok) {
+        std::remove(temporary.c_str());
+        return false;
+    }
+    return std::rename(temporary.c_str(), path.c_str()) == 0;
+}
+
 bool seeded_destinations(const std::string& query,
                          std::vector<ui::Destination>& output)
 {
@@ -444,6 +473,16 @@ bool OsmAndEngine::initialize(const Config& config,
 {
     config_ = config;
     configure_language();
+    // Where the car was parked: the map opens there, and a first route from the
+    // spot starts the way the car points.
+    {
+        HeadingMemory::Parked parked;
+        if (load_parked(config.parked, parked)) {
+            heading_memory_.restore(parked);
+            last_location_ = {parked.latitude, parked.longitude};
+            trace("parked=restored");
+        }
+    }
     simulation_enabled_ = config.simulate_route;
     bench_detour_.enable(config.simulate_detour);
     if (config.voice) {
@@ -737,7 +776,8 @@ void OsmAndEngine::check_off_route(const ui::GuidanceState& state,
     trace_result("reroute=submit", revision,
                  static_cast<std::size_t>(state.off_route_metres));
     navigation_worker_->submit_route(revision, *navigation_->destination(), position, false,
-                                     heading_memory_.heading(now));
+                                     heading_memory_.start_heading(now, position.latitude,
+                                                                   position.longitude));
 }
 
 void OsmAndEngine::apply_map_commands()
@@ -858,7 +898,13 @@ bool OsmAndEngine::apply_camera()
     {
         // Also while searching: a destination picked there starts this way.
         const auto moving = motion_.predict(now_s);
-        heading_memory_.observe(moving.valid, moving.speed_mps, moving.heading_degrees, now);
+        const ui::GeoPoint here = current_location();
+        heading_memory_.observe(moving.valid, moving.speed_mps, moving.heading_degrees, now,
+                                has_valid_position_ ? &here.latitude : nullptr,
+                                has_valid_position_ ? &here.longitude : nullptr);
+        HeadingMemory::Parked parked;
+        if (heading_memory_.take_save(parked))
+            trace(save_parked(config_.parked, parked) ? "parked=saved" : "error=parked_save");
     }
     const auto screen = navigation_->screen();
     if (screen == ui::Screen::Search) {
@@ -1600,11 +1646,12 @@ void OsmAndEngine::submit_navigation_requests()
         submitted_route_revision_ = navigation_->route_revision();
         trace_result("engine=route_submit", submitted_route_revision_, 1u);
         if (ensure_navigation_worker()) {
+            const ui::GeoPoint origin = current_location();
             navigation_worker_->submit_route(submitted_route_revision_,
-                                              *navigation_->destination(), current_location(),
-                                              true,
-                                              heading_memory_.heading(
-                                                  std::chrono::steady_clock::now()));
+                                              *navigation_->destination(), origin, true,
+                                              heading_memory_.start_heading(
+                                                  std::chrono::steady_clock::now(),
+                                                  origin.latitude, origin.longitude));
         }
     }
 }
