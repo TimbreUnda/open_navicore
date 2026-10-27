@@ -357,6 +357,10 @@ void test_car_controls()
         // first row at y 336..400 on the left.
         tap(view, 200, 336 + 32);
         assert(model.destination() && model.destination()->id == "home");
+        // The pick set the query to its title: no search may follow and
+        // cancel the route being calculated.
+        assert(model.query() == "Home" && model.calculating_route());
+        assert(!model.search_wanted());
         assert(view.set_moving(false));
     }
 }

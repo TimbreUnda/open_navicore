@@ -158,6 +158,7 @@ private:
     std::uint64_t submitted_route_revision_ = 0;
     std::chrono::steady_clock::time_point search_revision_observed_at_{};
     bool search_revision_observed_ = false;
+    std::chrono::steady_clock::time_point ready_at_{};  // rendering came up
     GuidanceTracker guidance_tracker_;
     // Spoken guidance: the planner decides what to say, the client hands it to navi_voiced.
     PromptPlanner prompt_planner_;
@@ -526,6 +527,7 @@ bool OsmAndEngine::initialize(const Config& config,
     // Rendering now has a valid teardown contract. Mark it before allocations
     // below so an LVGL construction exception can still release OsmAnd.
     phase_ = Phase::Ready;
+    ready_at_ = std::chrono::steady_clock::now();
     trace("init=rendering");
     if (!init_vector_map(wakeup))
         return false;
@@ -1546,8 +1548,17 @@ bool OsmAndEngine::sync_navigation_to_screen()
     return changed;
 }
 
+// The worker opens the routing maps in the background (about 10 s for all of
+// Ukraine), so it starts before the first route is asked for: when a place
+// card or another screen opens, or a while after start-up, out of its way.
+constexpr std::chrono::seconds kWorkerWarmupDelay{30};
+
 void OsmAndEngine::submit_navigation_requests()
 {
+    if (!navigation_worker_ && !worker_creation_failed_ &&
+        (navigation_->screen() != ui::Screen::FreeDrive || navigation_->place_card() ||
+         std::chrono::steady_clock::now() - ready_at_ >= kWorkerWarmupDelay))
+        (void)ensure_navigation_worker();
     if (navigation_->screen() == ui::Screen::Search) {
         const auto revision = navigation_->search_revision();
         const auto now = std::chrono::steady_clock::now();
@@ -1555,7 +1566,7 @@ void OsmAndEngine::submit_navigation_requests()
             observed_search_revision_ = revision;
             search_revision_observed_at_ = now;
             search_revision_observed_ = true;
-        } else if (revision != submitted_search_revision_ &&
+        } else if (revision != submitted_search_revision_ && navigation_->search_wanted() &&
                    now - search_revision_observed_at_ >= search_debounce()) {
             submitted_search_revision_ = revision;
             if (!navigation_->query().empty()) {

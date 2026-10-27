@@ -311,7 +311,7 @@ inline const QArc* SidecarStore::arcs(bool forward, u32 node, u32& count, std::v
 // sidecar's page cache and the query state are not shared).
 class Router {
 public:
-    enum class Status { Ok, NoRoute, Inconsistent };
+    enum class Status { Ok, NoRoute, Inconsistent, Cancelled };
 
     explicit Router(Sidecar& sidecar) : sidecar_(sidecar), query_(sidecar.store()) {}
 
@@ -320,11 +320,14 @@ public:
     // (120 ms per metre) against the route cost, so a far node does not win on route
     // cost alone.  With a start heading (degrees clockwise from north) a start node more
     // than 120 degrees off it, i.e. behind the car, costs kReversePenaltyMs more, as
-    // OsmAnd's own routers charge for starting against the initial direction.  On success
-    // runs are the road stretches in travel order (empty when both ends snap to the same
-    // node: too short to route here) and cost is the routing cost in milliseconds.
+    // OsmAnd's own routers charge for starting against the initial direction.  All
+    // candidates seed one search with those costs (the best of every pair, in one run).
+    // On success runs are the road stretches in travel order (empty when both ends snap
+    // to the same node: too short to route here) and cost is the routing cost in
+    // milliseconds.  `cancelled`, when set, is asked during the search.
     Status route(int sx, int sy, int ex, int ey, std::vector<RoadRun>& runs, u32& cost,
-                 double start_heading_degrees = kNoHeading)
+                 double start_heading_degrees = kNoHeading,
+                 const std::function<bool()>& cancelled = {})
     {
         runs.clear();
         sidecar_.nearest_nodes(sx, sy, kSnapNodes, from_);
@@ -332,23 +335,22 @@ public:
         const auto too_far = [](const Sidecar::Candidate& c) { return c.metres > kMaxSnapMetres; };
         from_.erase(std::remove_if(from_.begin(), from_.end(), too_far), from_.end());
         to_.erase(std::remove_if(to_.begin(), to_.end(), too_far), to_.end());
-        double best = 1e18;
-        u32 best_from = 0, best_to = 0, best_cost = INF;
-        for (const auto& s : from_) {
-            for (const auto& t : to_) {
-                u32 meet = 0;
-                const u32 c = query_.run(s.node, t.node, meet);
-                if (c == INF) continue;
-                const double total = c + 120.0 * (s.metres + t.metres) +
-                                     reverse_penalty(sx, sy, s, start_heading_degrees);
-                if (total < best) { best = total; best_from = s.node; best_to = t.node; best_cost = c; }
-            }
-        }
-        if (best_cost == INF) return Status::NoRoute;
+        sources_.clear();
+        targets_.clear();
+        for (const auto& s : from_)
+            sources_.push_back({s.node, (u32)std::lround(120.0 * s.metres +
+                                                         reverse_penalty(sx, sy, s, start_heading_degrees))});
+        for (const auto& t : to_) targets_.push_back({t.node, (u32)std::lround(120.0 * t.metres)});
         u32 meet = 0;
-        query_.run(best_from, best_to, meet);   // path_edges reads the last run
-        if (!query_.path_edges(best_from, best_to, meet, edges_)) return Status::Inconsistent;
-        cost = best_cost;
+        const u32 total = query_.run(sources_.data(), sources_.size(), targets_.data(), targets_.size(),
+                                     meet, cancelled);
+        if (total == INF) return cancelled && cancelled() ? Status::Cancelled : Status::NoRoute;
+        const u32 from = query_.source_of(meet), to = query_.target_of(meet);
+        u32 offsets = 0;
+        for (const auto& s : sources_) if (s.node == from) offsets += s.cost;
+        for (const auto& t : targets_) if (t.node == to) offsets += t.cost;
+        if (!query_.path_edges(from, to, meet, edges_)) return Status::Inconsistent;
+        cost = total - std::min(total, offsets);
         return merge(runs) ? Status::Ok : Status::Inconsistent;
     }
 
@@ -397,6 +399,7 @@ private:
     Sidecar& sidecar_;
     BasicQuery<SidecarStore> query_;
     std::vector<Sidecar::Candidate> from_, to_;
+    std::vector<BasicQuery<SidecarStore>::Seed> sources_, targets_;
     std::vector<u32> edges_;
 };
 

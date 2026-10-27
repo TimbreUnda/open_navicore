@@ -295,6 +295,13 @@ public:
     {
         return has_destination_ && routes_.empty() && message_ == calculating_message;
     }
+    // The query still needs a search. Not once a destination is picked from
+    // it: a recent sets the query to its title, and a late search for that
+    // would cancel the destination's route on the one worker.
+    bool search_wanted() const noexcept
+    {
+        return screen_ == Screen::Search && !query_.empty() && !has_destination_;
+    }
     // Route preview Back: returns to where the route was picked (the search
     // results, or free drive with the place card).
     bool back_to_search() noexcept;
