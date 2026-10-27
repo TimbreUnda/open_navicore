@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <queue>
 #include <string>
 #include <utility>
@@ -106,18 +107,39 @@ class BasicQuery {
 public:
     explicit BasicQuery(Store store) : store_(std::move(store)) {}
 
+    // A start or end node and what reaching it costs already (snapping onto it).
+    struct Seed { u32 node, cost; };
+
     // Cheapest cost from source to target, INF when unreachable.  `meet` is
     // the node where the two upward searches met.
     u32 run(u32 source, u32 target, u32& meet)
+    {
+        const Seed s {source, 0}, t {target, 0};
+        return run(&s, 1, &t, 1, meet);
+    }
+
+    // Cheapest path from any source to any target, seeds' costs included: one
+    // search instead of one per pair.  INF when unreachable or when `cancelled`
+    // (asked every 1024 settled nodes) says stop.  source_of()/target_of()
+    // name the seeds the path starts and ends at.
+    u32 run(const Seed* sources, size_t source_count, const Seed* targets, size_t target_count,
+            u32& meet, const std::function<bool()>& cancelled = {})
     {
         settled = 0;
         f_.reset(); b_.reset();
         using Item = std::pair<u32, u32>;
         std::priority_queue<Item, std::vector<Item>, std::greater<Item>> qf, qb;
-        f_.set(source, 0, source); qf.push({0, source});
-        b_.set(target, 0, target); qb.push({0, target});
+        const auto seed = [](Table& table, auto& queue, const Seed& s) {
+            const Entry* known = table.find(s.node);
+            if (known && known->dist <= s.cost) return;
+            table.set(s.node, s.cost, s.node);
+            queue.push({s.cost, s.node});
+        };
+        for (size_t i = 0; i < source_count; ++i) seed(f_, qf, sources[i]);
+        for (size_t i = 0; i < target_count; ++i) seed(b_, qb, targets[i]);
         u32 best = INF; meet = INF;
         while (!qf.empty() || !qb.empty()) {
+            if ((settled & 1023u) == 1023u && cancelled && cancelled()) { meet = INF; return INF; }
             const u32 top = std::min(qf.empty() ? INF : qf.top().first, qb.empty() ? INF : qb.top().first);
             if (top >= best) break;
             const bool forward = !qf.empty() && (qb.empty() || qf.top().first <= qb.top().first);
@@ -173,6 +195,10 @@ public:
         return true;
     }
 
+    // The seed the last run()'s path starts at (seeds are their own parents).
+    u32 source_of(u32 meet) const { return root(f_, meet); }
+    u32 target_of(u32 meet) const { return root(b_, meet); }
+
     size_t settled = 0;   // nodes settled by the last run()
 
 private:
@@ -221,6 +247,12 @@ private:
         u32 stamp_ = 1;
         u32 used_ = 0;
     };
+
+    static u32 root(const Table& table, u32 v)
+    {
+        for (const Entry* e = table.find(v); e && e->parent != v; e = table.find(v)) v = e->parent;
+        return v;
+    }
 
     // The cheapest arc at -> to in the upward out (forward) or in arcs of `at`.
     bool find(bool forward, u32 at, u32 to, QArc& result)

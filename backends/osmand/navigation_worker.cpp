@@ -262,11 +262,15 @@ std::vector<ui::Lane> lanes_of(const SHARED_PTR<TurnType>& turn)
 // Routing runs for seconds. nv_navigation is pinned to one core, where the
 // render thread (priority 20) leaves it about half the CPU: a 15 km route
 // took 7.3 s there against 3.7 s free to use either core (route_bench,
-// 2026-10-15). Below the default priority 10 it only takes idle time from
-// the other core's services.
-constexpr int kWorkerPriority = 9;
+// 2026-10-15). At the default priority 10 it shares the other core with its
+// services in turn; at 9 it only got their idle time, and a busy Android
+// Auto session stretched a route by seconds.
+constexpr int kWorkerPriority = 10;
+// Opening the routing maps (about 10 s for all of Ukraine, 2026-10-27) runs
+// ahead of the first route on idle time only.
+constexpr int kWarmupPriority = 9;
 
-void place_worker_thread()
+void place_worker_thread(int priority = kWorkerPriority, const char* name = "worker=placed")
 {
     const unsigned cpus = _syspage_ptr ? _syspage_ptr->num_cpu : 1u;
     const unsigned mask = cpus >= 32u ? ~0u : (1u << cpus) - 1u;
@@ -276,12 +280,12 @@ void place_worker_thread()
     sched_param parameters{};
     bool lowered = false;
     if (pthread_getschedparam(pthread_self(), &policy, &parameters) == 0) {
-        parameters.sched_priority = kWorkerPriority;
+        parameters.sched_priority = priority;
         lowered = pthread_setschedparam(pthread_self(), policy, &parameters) == 0;
     }
     char line[80];
-    std::snprintf(line, sizeof(line), "worker=placed cpus=%u runmask=%d priority=%d",
-                  cpus, any_cpu ? 1 : 0, lowered ? kWorkerPriority : -1);
+    std::snprintf(line, sizeof(line), "%s cpus=%u runmask=%d priority=%d",
+                  name, cpus, any_cpu ? 1 : 0, lowered ? priority : -1);
     trace(line);
 }
 
@@ -399,6 +403,11 @@ public:
         // against later members such as has_pending_ and stopping_.
         thread_ = std::thread(&Impl::run, this);
         trace("worker=thread_started");
+        // The first route would otherwise wait for every map to open.
+        warmup_ = std::thread([this] {
+            place_worker_thread(kWarmupPriority, "worker=warmup_placed");
+            (void)prepare_router();
+        });
     }
 
     ~Impl() { stop(); }
@@ -481,6 +490,8 @@ public:
             if (active_) active_->cancel();
             condition_.notify_one();
         }
+        stop_warmup_ = true;
+        if (warmup_.joinable()) warmup_.join();
         if (thread_.joinable()) thread_.join();
         if (router_ready_) {
             for (const std::string& path : map_paths_)
@@ -626,10 +637,20 @@ private:
         return output;
     }
 
+    // Once, by the warm-up thread or the first route, whichever comes first;
+    // the other waits for it.
     bool prepare_router()
     {
+        std::lock_guard<std::mutex> lock(router_mutex_);
         if (router_ready_) return true;
-        if (routing_xml_.empty() || map_paths_.empty()) return false;
+        if (router_failed_ || routing_xml_.empty() || map_paths_.empty()) return false;
+        router_failed_ = !open_router();
+        return !router_failed_;
+    }
+
+    bool open_router()
+    {
+        const auto started = std::chrono::steady_clock::now();
         const std::string path = write_routing_xml(routing_xml_);
         // fileName namespaces imported configurations.  A non-empty value
         // would rename "car" and make build("car") return an empty router.
@@ -651,7 +672,15 @@ private:
         std::size_t routable = 0;
         std::size_t with_hh = 0;
         std::vector<std::string> routable_maps;
+        std::vector<std::string> opened;
         for (const std::string& path : map_paths_) {
+            if (stop_warmup_) {
+                // Shutting down: close what is open, route never.
+                for (const std::string& done : opened) (void)closeBinaryMapFile(done);
+                trace("worker=router_stopped");
+                return false;
+            }
+            opened.push_back(path);
             const auto map = initBinaryMapFile(path, false, true);
             if (map && !map->routingIndexes.empty()) {
                 ++routable;
@@ -671,9 +700,11 @@ private:
         // crosses into a file without it would have no network there.
         has_hh_ = with_hh == routable;
         {
-            char line[96];
-            std::snprintf(line, sizeof(line), "worker=router hh=%d routable=%zu hh_car=%zu",
-                          has_hh_ ? 1 : 0, routable, with_hh);
+            char line[128];
+            std::snprintf(line, sizeof(line), "worker=router hh=%d routable=%zu hh_car=%zu open_ms=%lld",
+                          has_hh_ ? 1 : 0, routable, with_hh,
+                          static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - started).count()));
             trace(line);
         }
         // Contraction-hierarchy routing: only with a sidecar built from exactly these maps.
@@ -775,6 +806,9 @@ private:
         if (request.heading_degrees)
             trace_result("worker=route_heading", request.revision,
                          static_cast<std::size_t>(*request.heading_degrees));
+        // Both ends on one sidecar node: a route of a few metres, which A* finds
+        // at once and HH (seconds over the whole network) often does not.
+        bool skip_hh = false;
         if (ch_) {
             auto context = new_context();
             std::string why;
@@ -791,10 +825,11 @@ private:
                 found.push_back(std::move(segments));
             } else if (!cancel->isAborted()) {
                 trace(("worker=ch_fallback why=" + (why.empty() ? std::string("route_rejected") : why)).c_str());
+                skip_hh = why == "too_short_for_sidecar";
             }
         }
         if (found.empty() && !cancel->isAborted()) method = "hh";
-        if (found.empty() && has_hh_) {
+        if (found.empty() && has_hh_ && !skip_hh && !cancel->isAborted()) {
             auto context = new_context();
             found = route_hh(front_end, context, sx, sy, ex, ey,
                              request.alternatives && kAlternativeRoutes);
@@ -802,8 +837,9 @@ private:
         if (found.empty() && !cancel->isAborted()) {
             // A* (no HH data, or HH found nothing usable).
             method = "astar";
-            trace(has_hh_ ? "worker=route_fallback why=hh_unusable"
-                          : "worker=route_fallback why=no_hh_data");
+            trace(skip_hh ? "worker=route_fallback why=too_short"
+                  : has_hh_ ? "worker=route_fallback why=hh_unusable"
+                            : "worker=route_fallback why=no_hh_data");
             auto context = new_context();
             std::vector<int> intermediates_x;
             std::vector<int> intermediates_y;
@@ -1018,6 +1054,10 @@ private:
     std::mutex mutex_;
     std::condition_variable condition_;
     std::thread thread_;
+    std::thread warmup_;                      // opens the routing maps once
+    std::mutex router_mutex_;                 // prepare_router: warm-up or first route
+    std::atomic<bool> stop_warmup_{false};
+    bool router_failed_ = false;              // under router_mutex_
     Request pending_;
     SearchResult result_;
     RouteResult route_result_;

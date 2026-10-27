@@ -106,6 +106,42 @@ int main()
             for (u32 e : edges) { assert(g.from[e] == at); at = g.to[e]; sum += g.cost[e]; }
             assert(at == t && sum == cost);
         }
+
+        // Seeded with several starts and ends (with their own costs), one search finds
+        // the best of every pair, and the path runs from the seeds it names.
+        for (int i = 0; i < 200; ++i) {
+            std::vector<Query::Seed> from, to;
+            for (int k = 0; k < 4; ++k) {
+                from.push_back({(u32)(rng() % g.n), (u32)(rng() % 3000)});
+                to.push_back({(u32)(rng() % g.n), (u32)(rng() % 3000)});
+            }
+            u32 brute = INF;
+            for (const auto& s : from)
+                for (const auto& t : to) {
+                    const u32 d = dijkstra(g, s.node, t.node);
+                    if (d != INF) brute = std::min(brute, d + s.cost + t.cost);
+                }
+            u32 meet = 0;
+            const u32 cost = query.run(from.data(), from.size(), to.data(), to.size(), meet);
+            assert(cost == brute);
+            if (cost == INF) continue;
+            const u32 s = query.source_of(meet), t = query.target_of(meet);
+            assert(query.path_edges(s, t, meet, edges));
+            u32 at = s, sum = 0;
+            for (u32 e : edges) { assert(g.from[e] == at); at = g.to[e]; sum += g.cost[e]; }
+            u32 offsets = INF;
+            for (const auto& a : from)
+                for (const auto& b : to)
+                    if (a.node == s && b.node == t) offsets = std::min(offsets, a.cost + b.cost);
+            assert(at == t && sum + offsets == cost);
+        }
+
+        // A cancelled search stops with no route.
+        {
+            const Query::Seed s {0, 0}, t {g.n - 1, 0};
+            u32 meet = 0;
+            assert(query.run(&s, 1, &t, 1, meet, [] { return true; }) == INF || query.settled < 1024);
+        }
     }
 
     // The sidecar round trip: counts, hierarchy, snap lookup against brute force, routing.

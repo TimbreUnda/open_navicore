@@ -93,14 +93,17 @@ ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHAR
     auto step = Clock::now();
     std::vector<onc_ch::RoadRun> runs;
     onc_ch::u32 cost = 0;
+    const auto progress = context->progress;
     const auto status = impl_->router->route(start_x, start_y, end_x, end_y, runs, cost,
-                                             start_heading_degrees);
+                                             start_heading_degrees,
+                                             [&progress] { return progress && progress->isCancelled(); });
     timing_.search_ms = ms_since(step);
     timing_.settled = impl_->router->settled();
     timing_.base_edges = impl_->router->edges().size();
     timing_.road_runs = runs.size();
     if (status == onc_ch::Router::Status::NoRoute) { why = "no_route_in_sidecar"; return {}; }
     if (status == onc_ch::Router::Status::Inconsistent) { why = "sidecar_inconsistent"; return {}; }
+    if (status == onc_ch::Router::Status::Cancelled) { why = "cancelled"; return {}; }
     if (runs.empty()) { why = "too_short_for_sidecar"; return {}; }
 
     // Each stretch needs its RouteDataObject: loading the tile at a point of the road
