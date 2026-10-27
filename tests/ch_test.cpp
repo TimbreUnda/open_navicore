@@ -188,6 +188,17 @@ int main()
         sidecar->nearest_nodes(2000000000, 2000000000, 4, found);
         assert(found.empty());
 
+        // nodes_at: the nodes at exactly a point (node ids are renumbered: compare counts)
+        for (u32 n = 0; n < g.n; n += 7) {
+            std::vector<u32> at;
+            sidecar->nodes_at(g.x[n], g.y[n], at);
+            size_t expected = 0;
+            for (u32 m = 0; m < g.n; ++m) expected += g.x[m] == g.x[n] && g.y[m] == g.y[n];
+            assert(at.size() == expected && expected >= 1);
+            sidecar->nodes_at(g.x[n] + 1, g.y[n], at);
+            for (u32 m = 0; m < g.n; ++m) assert(!(g.x[m] == g.x[n] + 1 && g.y[m] == g.y[n]) || !at.empty());
+        }
+
         // a route between two node positions costs what Dijkstra says (snapping onto the nodes
         // themselves is at distance zero, so the neighbours' snap penalty keeps them out)
         Router router(*sidecar);

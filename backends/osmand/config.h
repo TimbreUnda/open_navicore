@@ -16,6 +16,8 @@ struct Config {
     std::string map = "/navi_map/osm";
     std::string fonts = "/datastore/navicore-backend/fonts";
     std::string recents = "/datastore/navicore-backend/recents.tsv";
+    // Where the car stopped last and which way it pointed (HeadingMemory::Parked).
+    std::string parked = "/datastore/navicore-backend/parked.txt";
     // Address search index built from the maps (search/search_index.h);
     // without it search uses OsmAnd's slower name search.
     // Lives with the maps it is built from.

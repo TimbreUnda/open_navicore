@@ -26,12 +26,15 @@ public:
     using Segments = std::vector<SHARED_PTR<RouteSegmentResult>>;
 
     struct Timing {
-        double search_ms = 0;    // snap start/end, hierarchy query, unpack
+        double snap_ms = 0;      // start/end onto roads, along them to junctions
+        double search_ms = 0;    // hierarchy query, unpack
         double roads_ms = 0;     // load the route's roads from the maps
         double prepare_ms = 0;   // prepareResult + makeStartEndPointsPrecise
         std::size_t road_runs = 0;
         std::size_t base_edges = 0;
         std::size_t settled = 0;
+        bool road_snap = false;  // snapped onto roads (else to the nearest junctions)
+        bool direct = false;     // start and end on one road: no hierarchy needed
     };
 
     // Maps the sidecar and checks it was built from exactly these map files
