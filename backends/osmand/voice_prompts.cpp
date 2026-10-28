@@ -61,7 +61,7 @@ std::string action(ManeuverKind kind, int roundabout_exit, Language language) {
         case ManeuverKind::SharpRight: return "поверніть різко праворуч";
         case ManeuverKind::KeepLeft: return "тримайтеся лівіше";
         case ManeuverKind::KeepRight: return "тримайтеся правіше";
-        case ManeuverKind::UTurn: return "розвернітеся";
+        case ManeuverKind::UTurn: return "розверніться";
         case ManeuverKind::Roundabout: {
             static const char* const ordinal[] = {
                 "першому", "другому", "третьому", "четвертому",
