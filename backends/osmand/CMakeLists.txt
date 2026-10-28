@@ -31,7 +31,7 @@ endif()
 
 # Voice daemon pieces that the plugin does not link (it keeps an exact, reviewed
 # dependency set): the process-backed audio focus. Host-testable.
-add_library(voice_daemon STATIC process_focus.cpp stock_focus.cpp)
+add_library(voice_daemon STATIC process_focus.cpp stock_focus.cpp recorded_voice_engine.cpp)
 target_include_directories(voice_daemon PUBLIC ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(voice_daemon PUBLIC navigation_ui)
 target_compile_options(voice_daemon PRIVATE ${ONC_WARNINGS})
@@ -42,23 +42,25 @@ else()
   return()
 endif()
 
-# navi_voiced: the speech daemon (docs/design/voice-guidance-wiring.md). It needs
+# navi_voiced always supports recorded packs. Optional RHVoice synthesis needs
 # RHVoice built for QNX by uk-voice/tts/build.sh; pass the build tree and headers:
 #   -DRHVOICE_BUILD=<tts-qnx>/build/rhvoice-qnx -DRHVOICE_INCLUDE=<tts-qnx>/dl/RHVoice/src/include
+add_executable(navi_voiced navi_voiced.cpp)
 if(RHVOICE_BUILD AND RHVOICE_INCLUDE)
   file(GLOB_RECURSE ONC_RHVOICE_OBJECTS CONFIGURE_DEPENDS
     ${RHVOICE_BUILD}/src/core/*.o ${RHVOICE_BUILD}/src/hts_engine/*.o ${RHVOICE_BUILD}/src/lib/*.o)
   set_source_files_properties(${ONC_RHVOICE_OBJECTS} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-  add_executable(navi_voiced navi_voiced.cpp rhvoice_engine.cpp ${ONC_RHVOICE_OBJECTS})
+  target_sources(navi_voiced PRIVATE rhvoice_engine.cpp ${ONC_RHVOICE_OBJECTS})
+  target_compile_definitions(navi_voiced PRIVATE ONC_WITH_RHVOICE)
   target_include_directories(navi_voiced PRIVATE ${RHVOICE_INCLUDE})
-  target_compile_options(navi_voiced PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})
-  target_link_libraries(navi_voiced PRIVATE voice_daemon navigation_ui asound socket m)
-  # libasound needs libpps.so.1, which the linker only finds through -rpath-link.
-  target_link_options(navi_voiced PRIVATE -static-libstdc++ -static-libgcc
-    -Wl,-rpath-link,${CMAKE_SYSROOT}/armle-v7/lib)
-  set_target_properties(navi_voiced PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-    SKIP_BUILD_RPATH ON)
 endif()
+target_compile_options(navi_voiced PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})
+target_link_libraries(navi_voiced PRIVATE voice_daemon navigation_ui asound socket m)
+# libasound needs libpps.so.1, which the linker only finds through -rpath-link.
+target_link_options(navi_voiced PRIVATE -static-libstdc++ -static-libgcc
+  -Wl,-rpath-link,${CMAKE_SYSROOT}/armle-v7/lib)
+set_target_properties(navi_voiced PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+  SKIP_BUILD_RPATH ON)
 
 # ---- QNX: the plugin ------------------------------------------------------
 set(OSMAND_CORE_LIB_DIR ${OSMAND_QNX_ROOT}/source/binaries/qnx/gcc-armv7/Release)

@@ -1,5 +1,37 @@
 # Voice guidance: wiring Ukrainian TTS into Open NaviCore
 
+## Recorded Ukrainian voices, 2026-10-28
+
+`navi_voiced --engine recorded --recorded-data DIR --voice female` (or `male`)
+uses the locally generated ElevenLabs pack. `RecordedVoiceEngine` implements the
+existing `TtsEngine` interface: it maps the incoming sentence to one to three
+PCM clips, inserts the audition's 20 ms gaps, and hands the complete sentence to
+the existing voice worker, stock focus and io-audio path. No cloud access occurs
+on the radio. RHVoice remains an explicit `--engine rhvoice` choice when built in.
+Missing recipes, missing clips and invalid WAVs fail visibly; they never switch
+to another voice. Recorded playback rejects a non-default `--rate`.
+
+The compact pack has 61 clips per voice and covers the current 2,206 Ukrainian
+sentences. `tools/export_recorded_voice_pack.py SOURCE OUTPUT` validates the
+audition pack and exports both voices plus `recipes.tsv`. Lookup aliases cover
+digit-based planner output, the written-out audition sentences, and both old and
+corrected U-turn spellings. The output header is
+`NAVI-RECORDED-1<TAB>24000<TAB>480`; each following line is
+`sentence<TAB>clip-id[,clip-id[,clip-id]]`. Clips live at
+`DIR/{male,female}/clips/<clip-id>.wav`: mono, 24 kHz, PCM16 RIFF/WAVE.
+
+The sibling `voice-uk-ifs` package includes these assets as slot data, outside
+the small boot IFS. Its launcher defaults to recorded/female; flags
+`voice-uk.d/engine` and `voice-uk.d/voice` select engine and profile on the next
+daemon start. An existing RHVoice profile flag requires explicitly selecting
+`rhvoice`, or changing that profile to `female`/`male`, during migration.
+
+`recorded_voice_test` checks assembly, voice selection, unsupported input and
+malformed/missing files. Passing an exported pack directory as its argument
+also exercises actual planner output and real WAVs for both voices. Intonation
+differences at joins are known and await later recording refinement; structural
+tests do not establish perceived quality or speaker audibility.
+
 
 ## Implemented stock focus, 2026-10-28
 

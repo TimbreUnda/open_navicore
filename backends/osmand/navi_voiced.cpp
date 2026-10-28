@@ -3,8 +3,10 @@
 //   navi_voiced [--queue NAME] [--device PCM] [--rhvoice-data DIR] [--voice NAME]
 //               [--rate PERCENT] [--focus stock|none|alloc] [--alloc-cmd PATH]
 //               [--alloc-route CHANNEL SOURCE ZONE] [--selftest TEXT]
+//               [--engine recorded|rhvoice] [--recorded-data DIR]
 //
-// Receives messages (voice_link.h), synthesizes with RHVoice, plays on io-audio
+// Receives messages (voice_link.h), assembles recorded clips or synthesizes with
+// explicitly selected RHVoice, plays on io-audio
 // and waits for stock navigation allocation and preparation before playing.
 // --focus alloc is retained only for explicit diagnostics. --selftest speaks one
 // sentence through the same stack and exits; it is the first thing to run on the radio.
@@ -12,6 +14,7 @@
 #include "stock_focus.h"
 #include "qnx_pcm_out.h"
 #include "rhvoice_engine.h"
+#include "recorded_voice_engine.h"
 #include "voice_link.h"
 #include "voice_worker.h"
 
@@ -38,6 +41,8 @@ struct Options {
     std::string device = "pcmC7D0p";
     std::string rhvoice_data = "/tmp/tts/rhvoice";
     std::string voice = "Natalia";
+    std::string engine = "rhvoice";
+    std::string recorded_data;
     int rate_percent = 100;
     std::string focus = "stock";
     std::string alloc_cmd = "/tmp/tts/as_alloc";
@@ -57,6 +62,10 @@ bool parse(int argc, char** argv, Options& o) {
         else if (a == "--device") { if (!value(o.device)) return false; }
         else if (a == "--rhvoice-data") { if (!value(o.rhvoice_data)) return false; }
         else if (a == "--voice") { if (!value(o.voice)) return false; }
+        else if (a == "--engine") {
+            if (!value(o.engine) || (o.engine != "recorded" && o.engine != "rhvoice")) return false;
+        }
+        else if (a == "--recorded-data") { if (!value(o.recorded_data)) return false; }
         else if (a == "--rate") { std::string v; if (!value(v)) return false; o.rate_percent = std::atoi(v.c_str()); }
         else if (a == "--focus") {
             std::string v;
@@ -83,11 +92,29 @@ int main(int argc, char** argv) {
             "usage: %s [--queue NAME] [--device PCM] [--rhvoice-data DIR] [--voice NAME]\n"
             "          [--rate PERCENT] [--focus stock|none|alloc] [--alloc-cmd PATH]\n"
             "          [--alloc-route CHANNEL SOURCE ZONE] [--selftest TEXT]\n", argv[0]);
+        std::fprintf(stderr, "          [--engine recorded|rhvoice] [--recorded-data DIR] (recorded voices: male|female)\n");
         return 64;
     }
 
-    RhVoiceEngine engine(opt.rhvoice_data, opt.voice);
-    engine.set_rate_percent(opt.rate_percent);
+    std::unique_ptr<TtsEngine> engine;
+    if (opt.engine == "recorded") {
+        if (opt.rate_percent != 100) {
+            std::fprintf(stderr, "voice: --rate is unavailable for recorded clips\n");
+            return 64;
+        }
+        auto recorded = std::make_unique<RecordedVoiceEngine>(opt.recorded_data, opt.voice);
+        if (opt.recorded_data.empty() || !recorded->initialize()) return 78;
+        engine = std::move(recorded);
+    } else {
+#ifdef ONC_WITH_RHVOICE
+        auto rhvoice = std::make_unique<RhVoiceEngine>(opt.rhvoice_data, opt.voice);
+        rhvoice->set_rate_percent(opt.rate_percent);
+        engine = std::move(rhvoice);
+#else
+        std::fprintf(stderr, "voice: RHVoice support was not built; select --engine recorded\n");
+        return 78;
+#endif
+    }
 
     std::unique_ptr<AudioFocus> focus;
     if (opt.focus == "stock") {
@@ -103,7 +130,7 @@ int main(int argc, char** argv) {
         focus.reset(new AlwaysFocus());
     }
     QnxPcmOut out(opt.device, *focus);
-    VoiceWorker worker(engine, out);
+    VoiceWorker worker(*engine, out);
     worker.start();
 
     if (!opt.selftest.empty()) {
@@ -125,8 +152,8 @@ int main(int argc, char** argv) {
     sa.sa_handler = on_signal;  // sets an atomic flag; run() notices within 200 ms
     sigaction(SIGTERM, &sa, nullptr);
     sigaction(SIGINT, &sa, nullptr);
-    std::printf("navi_voiced ready queue=%s device=%s focus=%s voice=%s\n", opt.queue.c_str(),
-                opt.device.c_str(), opt.focus.c_str(), opt.voice.c_str());
+    std::printf("navi_voiced ready queue=%s device=%s focus=%s engine=%s voice=%s\n", opt.queue.c_str(),
+                opt.device.c_str(), opt.focus.c_str(), opt.engine.c_str(), opt.voice.c_str());
     std::fflush(stdout);
     server.run();
     g_server = nullptr;
