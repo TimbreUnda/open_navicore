@@ -32,9 +32,13 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QtGlobal>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 #include <chrono>
 #include <cmath>
@@ -58,6 +62,46 @@ namespace {
 
 enum class Phase { Empty, Resources, CoreEntering, CoreReady,
                    RenderingEntering, Ready, Quarantined };
+
+constexpr const char* kCrashLog = "/tmp/open-navicore-crash.log";
+constexpr const char* kPersistentCrashLog = "/datastore/navicore-backend/crash.log";
+
+// Set between InitializeCore and ReleaseCore. An exit() while it is set runs
+// OsmAndCore's static destructors over a live core (QThread qFatal, asserts).
+std::atomic<bool> core_live{false};
+QtMessageHandler previous_qt_handler = nullptr;
+
+void report_qt_message(QtMsgType type, const QMessageLogContext& context,
+                       const QString& message)
+{
+    if (type == QtFatalMsg || type == QtCriticalMsg) {
+        char line[320];
+        (void)std::snprintf(line, sizeof line, "qt %s: %s (%s:%d)",
+                            type == QtFatalMsg ? "fatal" : "critical",
+                            message.toLocal8Bit().constData(),
+                            context.file ? context.file : "?", context.line);
+        crash_report_line(line);
+    }
+    if (previous_qt_handler)
+        previous_qt_handler(type, context, message);
+}
+
+void report_exit()
+{
+    crash_report_line(core_live.load() ? "exit with OsmAnd core live"
+                                       : "exit after OsmAnd core release");
+}
+
+// Registered after InitializeCore, so it runs before OsmAndCore's own static
+// destructors.
+void install_exit_diagnostics()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+        previous_qt_handler = qInstallMessageHandler(report_qt_message);
+        (void)std::atexit(report_exit);
+    });
+}
 
 constexpr std::chrono::milliseconds kClusterPublishInterval{500};
 constexpr std::chrono::milliseconds kDevMenuRefreshInterval{500};
@@ -519,7 +563,10 @@ bool OsmAndEngine::initialize(const Config& config,
         return failure("error=initialize_core_partial");
     phase_ = Phase::CoreReady;
     trace("init=core");
-    install_crash_reporter("/tmp/open-navicore-crash.log");
+    install_crash_reporter(kCrashLog, kPersistentCrashLog);
+    core_live.store(true);
+    install_exit_diagnostics();
+    crash_report_line("OsmAnd core initialized");
     log_load_bases();
 
     obfs_ = std::make_shared<OsmAnd::ObfsCollection>();
@@ -2093,7 +2140,10 @@ ReleaseResult OsmAndEngine::release(ReleaseMode mode)
     basemap_obfs_.reset();
     if (phase_ == Phase::CoreReady) {
         phase_ = Phase::Quarantined;
+        crash_report_line("OsmAnd core release begin");
         OsmAnd::ReleaseCore();
+        core_live.store(false);
+        crash_report_line("OsmAnd core released");
     }
     resources_.reset();
     phase_ = Phase::Empty;
