@@ -9,25 +9,42 @@
 #include <OsmAndCore/ObfsCollection.h>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <thread>
 
 namespace {
 using Clock = std::chrono::steady_clock;
 const auto started = Clock::now();
 std::atomic<bool> ready{false};
+std::atomic<long long> deadline{120000};
+std::atomic<unsigned> turn_errors{0};
 bool wait_for_ch = true;
 long long elapsed() { return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count(); }
 void poll_pause() { std::this_thread::sleep_for(std::chrono::milliseconds(10)); }
+double metres(navicore_osmand::ui::GeoPoint a, navicore_osmand::ui::GeoPoint b) {
+    constexpr double rad = 3.14159265358979323846 / 180.0;
+    const double p = (b.latitude - a.latitude) * rad;
+    const double q = (b.longitude - a.longitude) * rad;
+    const double h = std::sin(p/2)*std::sin(p/2) + std::cos(a.latitude*rad)*std::cos(b.latitude*rad)*
+                     std::sin(q/2)*std::sin(q/2);
+    return 12742000.0 * std::asin(std::sqrt(std::min(1.0, std::max(0.0, h))));
+}
+struct Case {
+    std::string id;
+    navicore_osmand::ui::GeoPoint origin, destination;
+};
 }
 namespace navicore_osmand {
 // Keep diagnostic worker traces out of the running product's log.
 void trace(const char* message) noexcept {
     std::printf("%lld %s\n", elapsed(), message);
+    if (std::strncmp(message, "worker=omaps_error", 18) == 0) ++turn_errors;
     if (std::strncmp(message, "worker=ch ", 10) == 0 ||
         std::strncmp(message, "worker=ch_off ", 14) == 0) ready = true;
     if (!wait_for_ch && std::strncmp(message, "worker=router ", 14) == 0) ready = true;
@@ -43,15 +60,24 @@ int Wakeup::request() const noexcept { return 0; }
 
 extern "C" __attribute__((visibility("default")))
 int route_worker_bench_main(int argc, char** argv) {
-    if (argc != 10) {
-        std::fprintf(stderr, "usage: worker MAP XML SIDECAR LAT1 LON1 LAT2 LON2 route|reject|cold\n");
+    const bool batch = argc == 7 && std::strcmp(argv[6], "batch") == 0;
+    if (argc != 10 && !batch) {
+        std::fprintf(stderr, "usage: worker MAP XML SIDECAR LAT1 LON1 LAT2 LON2 route|reject|cold\n"
+                             "       worker MAP XML SIDECAR CASES.tsv batch\n");
         return 2;
     }
     wait_for_ch = std::strcmp(argv[4], "-") != 0;
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     // A timeout exits only this diagnostic process, never the navigation service.
-    std::thread([] { std::this_thread::sleep_for(std::chrono::seconds(120));
-        std::fprintf(stderr, "diagnostic timeout after 120 seconds\n"); std::_Exit(124); }).detach();
+    std::thread([] {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (elapsed() > deadline.load()) {
+                std::fprintf(stderr, "diagnostic timeout: no request completed within 120 seconds\n");
+                std::_Exit(124);
+            }
+        }
+    }).detach();
     using namespace navicore_osmand;
     auto resources = OsmAnd::CoreResourcesEmbeddedBundle::loadFromLibrary(
         QString::fromLatin1("/open-navicore/libOsmAndCore_ResourcesBundle_shared.so"));
@@ -62,25 +88,78 @@ int route_worker_bench_main(int argc, char** argv) {
     std::ifstream input(argv[3]);
     const std::string xml((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     if (xml.empty()) return 2;
-    const ui::GeoPoint origin{std::atof(argv[5]), std::atof(argv[6])};
-    ui::Destination destination;
-    destination.id = "bench"; destination.title = "Bench destination";
-    destination.latitude = std::atof(argv[7]); destination.longitude = std::atof(argv[8]);
-    std::printf("case=%s origin=%.7f,%.7f destination=%.7f,%.7f\n", argv[9],
-                origin.latitude, origin.longitude, destination.latitude, destination.longitude);
+    std::vector<Case> cases;
+    if (batch) {
+        std::ifstream file(argv[5]);
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            std::istringstream row(line);
+            Case item;
+            if (!(row >> item.id >> item.origin.latitude >> item.origin.longitude >>
+                  item.destination.latitude >> item.destination.longitude)) return 2;
+            cases.push_back(std::move(item));
+        }
+        if (cases.empty()) return 2;
+    } else {
+        Case item{"single", {std::atof(argv[5]), std::atof(argv[6])},
+                             {std::atof(argv[7]), std::atof(argv[8])}};
+        cases = {item, item};
+    }
+    std::printf("bench=cases count=%zu mode=%s\n", cases.size(), batch ? "batch" : argv[9]);
     {
         NavigationWorker worker(obfs, {}, maps, xml, std::string(argv[2]) + "/search.idx", wait_for_ch ? argv[4] : "");
-        if (std::strcmp(argv[9], "cold") != 0) while (!ready) poll_pause();
-        for (unsigned run = 0; run < 2; ++run) {
+        if (batch || std::strcmp(argv[9], "cold") != 0) while (!ready) poll_pause();
+        for (std::size_t run = 0; run < cases.size(); ++run) {
+            const auto& item = cases[run];
+            ui::Destination destination;
+            destination.id = item.id; destination.title = item.id;
+            destination.latitude = item.destination.latitude;
+            destination.longitude = item.destination.longitude;
+            turn_errors = 0;
+            deadline = elapsed() + 120000;
+            std::printf("batch=begin id=%s origin=%.8f,%.8f destination=%.8f,%.8f\n",
+                item.id.c_str(), item.origin.latitude, item.origin.longitude,
+                destination.latitude, destination.longitude);
             const auto submitted = Clock::now();
-            worker.submit_route(run + 2, destination, origin, false, {});
+            worker.submit_route(run + 2, destination, item.origin, false, {});
             NavigationWorker::RouteResult result;
             while (!worker.take_route_result(result)) poll_pause();
             const auto wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - submitted).count();
-            std::printf("bench=complete run=%u wall_ms=%lld routes=%zu distance_m=%.0f points=%zu\n", run,
+            std::printf("bench=complete run=%zu wall_ms=%lld routes=%zu distance_m=%.0f points=%zu\n", run,
                 static_cast<long long>(wall_ms), result.routes.size(),
                 result.routes.empty() ? 0.0 : result.routes.front().distance_metres,
                 result.routes.empty() ? 0u : result.routes.front().geometry.size());
+            if (batch) {
+                double start_gap = -1, end_gap = -1, geometry = 0, max_step = 0;
+                bool finite = true;
+                std::size_t maneuvers = 0;
+                if (!result.routes.empty()) {
+                    const auto& route = result.routes.front();
+                    maneuvers = route.maneuvers.size();
+                    if (!route.geometry.empty()) {
+                        start_gap = metres(item.origin, route.geometry.front());
+                        end_gap = metres(item.destination, route.geometry.back());
+                    }
+                    finite = std::isfinite(route.distance_metres) && std::isfinite(route.duration_seconds);
+                    for (std::size_t i = 0; i < route.geometry.size(); ++i) {
+                        const auto& point = route.geometry[i];
+                        finite = finite && std::isfinite(point.latitude) && std::isfinite(point.longitude) &&
+                            std::fabs(point.latitude) <= 90 && std::fabs(point.longitude) <= 180;
+                        if (i) {
+                            const double step = metres(route.geometry[i-1], point);
+                            geometry += step; max_step = std::max(max_step, step);
+                        }
+                    }
+                }
+                std::printf("batch=case id=%s status=%s wall_ms=%lld routes=%zu air_m=%.1f distance_m=%.1f "
+                    "start_gap_m=%.1f end_gap_m=%.1f geometry_m=%.1f max_step_m=%.1f finite=%d maneuvers=%zu omaps_errors=%u\n",
+                    item.id.c_str(), result.revision != run + 2 ? "revision_mismatch" : result.routes.empty() ? "no_route" : "ok",
+                    static_cast<long long>(wall_ms), result.routes.size(), metres(item.origin, item.destination),
+                    result.routes.empty() ? 0 : result.routes.front().distance_metres,
+                    start_gap, end_gap, geometry, max_step, finite ? 1 : 0, maneuvers, turn_errors.load());
+                continue;  // A failed route is a recorded observation, not the end of the survey.
+            }
             const bool reject = std::strcmp(argv[9], "reject") == 0;
             const char* limit = std::getenv("ROUTE_WORKER_MAX_MS");
             if (result.revision != run + 2 || result.routes.empty() != reject ||
@@ -91,7 +170,7 @@ int route_worker_bench_main(int argc, char** argv) {
         }
         worker.stop();
     }
-    std::printf("bench=passed\n");
+    std::printf("bench=%s\n", batch ? "batch_complete" : "passed");
     // OsmAnd's QNX global teardown is process-owned, as in route_bench.
     std::_Exit(0);
     return 0;

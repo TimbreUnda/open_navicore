@@ -190,3 +190,70 @@ cd /tmp; ./route_bench_run /datastore/navicore-backend/maps/kyiv.obf /tmp/routin
 
 `ROUTE_BENCH_CORE=/tmp/x/libOsmAndCore_shared.so` tries another core
 without installing it (the library's RPATH would otherwise win).
+
+## Ukraine worker survey, 2026-10-28
+
+The real navigation worker was run in separate diagnostic processes on the
+bench radio with the installed core, all 26 Ukraine maps, car CH sidecar and
+Organic Maps turns. Seed 20261028 sampled car-road points from the maps,
+including mid-segment points. The 128 requests comprise 52 regional, 52
+cross-region and 24 short same-road cases, with every pair reversed. Requests
+were sequential in batches of eight. Map initialization preceded each batch
+and is excluded from the request timings; rendering and interactive UI latency
+are not exercised by this helper. The production backend was not changed.
+
+| Cases | Returned / requested | Median request | Maximum request |
+|---|---:|---:|---:|
+| Regional | 52 / 52 | 0.551 s | 4.281 s |
+| Cross-region | 52 / 52 | 4.077 s | 30.405 s |
+| Short | 18 / 24 | 0.188 s | 0.540 s |
+
+Returned is not equivalent to correct. Of the 122 returned routes, 94 start
+or end more than 100 m from the requested road point (maximum 930.5 m).
+Six short requests publish no route after geometry collapses to fewer than
+two points; two further short requests return zero-length geometry. All eight
+log `worker=omaps_error why=route has fewer than two points`. The six empty
+results lack a `worker=route_failed` reason in the current product trace.
+
+The road snapper lets up to eight roads within 1 km compete on total route
+cost. Its 120 ms/m snap penalty permits a farther road to win by saving
+driving time. In `regional_000_f` the requested road is a zero-distance
+candidate, but the selected road is 194 m away. Short requests can select
+approaches that collapse onto the same junction instead of the requested
+short road. A diagnostic nearest-road-only run corrected all 18 selected
+problem cases: 18 returned routes, endpoint gaps below the output's 0.1 m
+resolution and no turn errors. Explicit HH also returned correct endpoints
+for seven selected cases. This establishes the snap-selection cause in those
+cases, not a validated general production policy for ambiguous locations,
+headings, disconnected roads or grade-separated crossings.
+
+The earlier `(46, 31)` destination is a different failure: diagnostics find
+zero eligible destination roads within the CH snap radius. CH rejects it in
+0.826 s. Explicit HH returns a route in 11.958 s, but its geometry ends
+24,653.4 m from the destination. That result is not evidence that fallback
+successfully reaches this point.
+
+The 30.405 s Lviv-region to Kherson-region request spent 0.132 s snapping,
+1.199 s in CH search, 7.334 s loading roads, 10.810 s preparing the result
+and 9.341 s annotating Organic Maps turns. It reproduces a long calculation
+without reverse-geocoding or router fallback; most time is after graph search.
+
+Reproduction inputs are `deploy/bench/ukraine-routing-20261028.tsv`.
+`tools/ch/sample_route_cases.py ROUTING_XML MAP_DIR OUTPUT_DIR [SEED]`
+generates new inputs and road provenance. After `make`, copy the worker bench
+library and launcher from `build/qnx/bench` to `/tmp` on the bench. Invoke:
+
+```sh
+ROUTE_BENCH_CORE=/open-navicore/libOsmAndCore_shared.so \
+LD_LIBRARY_PATH=/open-navicore:/usr/lib:/lib \
+    /tmp/route_bench_run worker /navi_map/osm /tmp/routing.xml \
+    /navi_map/osm/car.chr /tmp/cases.tsv batch
+```
+
+Use sidecar `-` for an explicit HH comparison. Only the diagnostic worker
+build enables snap traces and `ROUTE_BENCH_NEAREST_ONLY=1`; neither affects
+the production backend. Each request has a 120 s diagnostic process timeout.
+`tools/ch/summarize_route_batch.py EVIDENCE_DIR` reads `cases.json` and
+`batch-NN.log`, writing endpoint/geometry flags in `analysis.json` and
+`results.csv`. Flags require investigation. This survey checks offline map
+routing, not current road accessibility or all turn restrictions.
