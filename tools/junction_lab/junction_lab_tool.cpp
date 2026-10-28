@@ -156,8 +156,9 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
                 const auto& road = rs->getRoad();
                 const int at = rs->getSegmentStart();
                 const int n = static_cast<int>(road->getPointsLength());
-                std::fprintf(stderr, "   road=%lld \"%s\" %s oneway=%d point=%d/%d", (long long)road->getId(),
-                             road->getName().c_str(), road->getHighway().c_str(), road->getOneway(), at, n);
+                std::fprintf(stderr, "   road=%lld \"%s\" %s oneway=%d lanes=%d turn:lanes=\"%s\" point=%d/%d",
+                             (long long)road->getId(), road->getName().c_str(), road->getHighway().c_str(),
+                             road->getOneway(), road->getLanes(), road->getValue("turn:lanes").c_str(), at, n);
                 if (at + 1 < n)
                     std::fprintf(stderr, " fwd=%.0f", road->directionRoute(at, true, 10.0f) / M_PI * 180.0);
                 if (at > 0)
