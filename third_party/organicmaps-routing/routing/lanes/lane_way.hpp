@@ -3,6 +3,7 @@
 #include "base/assert.hpp"
 
 #include <bitset>
+#include <cstdint>
 #include <initializer_list>
 #include <string>
 #include <vector>
