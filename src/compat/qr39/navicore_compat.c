@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
@@ -40,6 +41,10 @@
 #ifndef OPEN_NAVI_TRACE_PATH
 #define OPEN_NAVI_TRACE_PATH "/tmp/open-navi.log"
 #endif
+#ifndef OPEN_NAVI_BREADCRUMB_PATH
+#define OPEN_NAVI_BREADCRUMB_PATH "/datastore/navicore-backend/lifecycle.log"
+#endif
+#define OPEN_NAVI_BREADCRUMB_LIMIT_BYTES (64 * 1024)
 #if defined(__QNXNTO__)
 /*
  * The QR39 consumer starts five proxy-worker singletons in parallel with the
@@ -705,6 +710,54 @@ static void open_navi_log(int priority, const char *format, ...)
 #else
     (void)priority;
 #endif
+    errno = saved_errno;
+#endif
+}
+
+/*
+ * Lifecycle breadcrumbs that survive a reboot. The /tmp trace is gone after
+ * the next boot, and a shutdown abort (2026-10-27, car) needs the deinit
+ * timing: System Manager allows nv_navigation 30 s to stop.
+ */
+static void open_navi_breadcrumb(const char *format, ...)
+{
+#if defined(OPEN_NAVI_DISABLE_LOG)
+    (void)format;
+#else
+    char message[200];
+    char line[256];
+    struct timespec monotonic;
+    struct stat status;
+    va_list arguments;
+    int saved_errno = errno;
+    int fd;
+    int length;
+    int truncate_result;
+    ssize_t write_result;
+
+    va_start(arguments, format);
+    (void)vsnprintf(message, sizeof(message), format, arguments);
+    va_end(arguments);
+    (void)clock_gettime(CLOCK_MONOTONIC, &monotonic);
+    length = snprintf(line, sizeof(line), "%ld mono_ms=%lld pid=%d tid=%d %s\n",
+                      (long)time(NULL),
+                      (long long)monotonic.tv_sec * 1000 +
+                          monotonic.tv_nsec / 1000000,
+                      (int)getpid(), (int)pthread_self(), message);
+    if (length > (int)sizeof(line) - 1) {
+        length = (int)sizeof(line) - 1;
+    }
+    fd = open(OPEN_NAVI_BREADCRUMB_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0) {
+        if (fstat(fd, &status) == 0 &&
+            status.st_size > OPEN_NAVI_BREADCRUMB_LIMIT_BYTES) {
+            truncate_result = ftruncate(fd, 0);
+            (void)truncate_result;
+        }
+        write_result = write(fd, line, (size_t)length);
+        (void)write_result;
+        (void)close(fd);
+    }
     errno = saved_errno;
 #endif
 }
@@ -2805,6 +2858,7 @@ uint32_t panaInitialize(const void *init_record)
     open_navi_clear_host_proxies_locked();
     (void)pthread_mutex_unlock(&g_lifecycle_lock);
 
+    open_navi_breadcrumb("panaInitialize");
     /* Log pointer values only. The provider does not own or dereference paths. */
     open_navi_log(LOG_NOTICE,
              "panaInitialize paths=%p/%p/%p/%p/%p/%p",
@@ -2871,6 +2925,7 @@ static void open_navi_finish_deinitialize(void)
     int join_worker;
     int self_worker;
 
+    open_navi_breadcrumb("deinitialize: finish begin");
     (void)pthread_mutex_lock(&g_worker_lock);
     g_worker_stop = 1;
     (void)pthread_cond_broadcast(&g_worker_condition);
@@ -2892,6 +2947,7 @@ static void open_navi_finish_deinitialize(void)
         (void)pthread_mutex_unlock(&g_worker_lock);
         open_navi_log(LOG_NOTICE, "readiness worker joined");
     }
+    open_navi_breadcrumb("deinitialize: readiness worker stopped");
     (void)pthread_mutex_lock(&g_worker_lock);
     g_worker_epoch = 0u;
     g_si_ready_sent = 0;
@@ -2906,6 +2962,7 @@ static void open_navi_finish_deinitialize(void)
     open_navi_renderer_destroy();
     open_navi_renderer_end_lifecycle();
     open_navi_log(LOG_NOTICE, "renderer destroyed");
+    open_navi_breadcrumb("deinitialize: renderer destroyed");
     open_navi_gps_backend_reset();
     open_navi_scalar_backend_reset();
     open_navi_api_telemetry_reset();
@@ -2913,12 +2970,14 @@ static void open_navi_finish_deinitialize(void)
     open_navi_callback_backend_reset();
     open_navi_cluster_relay_stop();
     open_navi_cluster_backend_reset();
+    open_navi_breadcrumb("deinitialize: finish end");
 }
 
 void panaDeinitialize(void)
 {
     int finish = 0;
 
+    open_navi_breadcrumb("panaDeinitialize");
     (void)pthread_mutex_lock(&g_lifecycle_lock);
     while (g_state == OPEN_NAVI_STARTING) {
         (void)pthread_cond_wait(&g_lifecycle_condition, &g_lifecycle_lock);
