@@ -18,6 +18,19 @@ double metres_between(double lat1, double lon1, double lat2, double lon2)
 
 } // namespace
 
+RouteExtentCheck check_route_extent(ui::GeoPoint origin, ui::GeoPoint destination,
+                                   ui::GeoPoint start, ui::GeoPoint end, double length_metres,
+                                   double max_start_gap, double max_end_gap)
+{
+    RouteExtentCheck check;
+    check.start_gap_metres = metres_between(origin.latitude, origin.longitude, start.latitude, start.longitude);
+    check.end_gap_metres = metres_between(destination.latitude, destination.longitude, end.latitude, end.longitude);
+    check.usable = std::isfinite(length_metres) && length_metres >= 1.0 &&
+        std::isfinite(check.start_gap_metres) && check.start_gap_metres <= max_start_gap &&
+        std::isfinite(check.end_gap_metres) && check.end_gap_metres <= max_end_gap;
+    return check;
+}
+
 RouteCheck check_route_legs(const std::vector<RouteLeg>& legs, double gap_tolerance_metres)
 {
     RouteCheck check;

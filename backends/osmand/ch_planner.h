@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "route_roads.h"
 
 // Core and core-legacy both ship a Logging.h with the same public names but
 // different include guards. The provider uses Core's logger consistently.
@@ -19,8 +20,8 @@ namespace navicore_osmand {
 // Routes with a contraction hierarchy built offline from the same OBF maps (a
 // "sidecar", tools/ch) and hands the result to the core's own result
 // preparation, so turn instructions, street names and attached roads are
-// exactly what the A* and HH routers give. The search itself takes well under
-// a millisecond; what remains is loading the route's roads from the maps.
+// exactly what the A* and HH routers give. Search, geometry loading and result preparation are measured separately;
+// long routes are dominated by map loading and turn preparation.
 class ChPlanner {
 public:
     using Segments = std::vector<SHARED_PTR<RouteSegmentResult>>;
@@ -28,12 +29,12 @@ public:
     struct Timing {
         double snap_ms = 0;      // start/end onto roads, along them to junctions
         double search_ms = 0;    // hierarchy query, unpack
-        double roads_ms = 0;     // load the route's roads from the maps
+        double roads_ms = 0;     // load route roads and optional junction snapshots
         double prepare_ms = 0;   // prepareResult + makeStartEndPointsPrecise
         std::size_t road_runs = 0;
         std::size_t base_edges = 0;
         std::size_t settled = 0;
-        bool road_snap = false;  // snapped onto roads (else to the nearest junctions)
+        bool road_snap = false;  // selected endpoint roads connected to the hierarchy
         bool direct = false;     // start and end on one road: no hierarchy needed
     };
 
@@ -53,7 +54,7 @@ public:
     // negative when unknown; start nodes behind it cost a reverse penalty.
     Segments route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingContext>& context,
                    int start_x, int start_y, int end_x, int end_y, std::string& why,
-                   double start_heading_degrees = -1.0);
+                   double start_heading_degrees = -1.0, RouteRoads* roads = nullptr);
 
     const Timing& last_timing() const { return timing_; }
     // One-line description for the log: nodes, edges, maps.

@@ -26,6 +26,7 @@
 // different include guards. The provider uses Core's logger consistently.
 #define _OSMAND_LOGGING_H_
 #include "binaryRead.h"
+#include "binaryRoutePlanner.h"
 #include "commonOsmAndCore.h"
 #include "hhRouteDataStructure.h"
 #include "hhRoutePlanner.h"
@@ -600,10 +601,25 @@ private:
         return true;
     }
 
-    bool accept_route(const Segments& segments, const char* which)
+    bool accept_route(const Segments& segments, const char* which, int sx, int sy, int ex, int ey,
+                      double start_limit = 1000.0, double end_limit = 1000.0)
     {
         const RouteCheck check = check_segments(segments);
-        if (check.ok()) return true;
+        if (check.ok()) {
+            double length = 0;
+            for (const auto& segment : segments) if (segment) length += segment->distance;
+            const auto start = segments.front()->getStartPoint();
+            const auto end = segments.back()->getEndPoint();
+            const auto extent = check_route_extent({get31LatitudeY(sy), get31LongitudeX(sx)},
+                {get31LatitudeY(ey), get31LongitudeX(ex)}, {start.lat, start.lon}, {end.lat, end.lon}, length, start_limit, end_limit);
+            if (extent.usable) return true;
+            char line[192];
+            std::snprintf(line, sizeof(line), "worker=route_rejected route=%s why=invalid_extent "
+                "length_m=%.1f start_gap_m=%.1f end_gap_m=%.1f", which, length,
+                extent.start_gap_metres, extent.end_gap_metres);
+            trace(line);
+            return false;
+        }
         char line[160];
         std::snprintf(line, sizeof(line),
                       "worker=route_rejected route=%s why=straight_legs legs=%zu filler=%zu gaps=%zu "
@@ -622,6 +638,27 @@ private:
                                    int sx, int sy, int ex, int ey, bool alternatives)
     {
         std::vector<Segments> routes;
+        // HH may silently choose a connected road farther away than the pin's
+        // own road. Bound its output by the actual nearest eligible road, too.
+        const auto snap_limit = [&](int x, int y) {
+            auto nearest = findRouteSegment(x, y, context.get());
+            if (!nearest) return -1.0;
+            auto candidates = nearest->others;
+            candidates.push_back(nearest);
+            double gap = 1001.0;
+            for (const auto& point : candidates) {
+                if (point && point->road && context->config->router->acceptLine(point->road))
+                    gap = std::min(gap, measuredDist31(x, y, point->preciseX, point->preciseY));
+            }
+            // Projection and geographic-distance helpers differ slightly.
+            return gap > 1000.0 ? -1.0 : std::min(1000.0, gap + 3.0);
+        };
+        const double start_limit = snap_limit(sx, sy), end_limit = snap_limit(ex, ey);
+        if (start_limit < 0 || end_limit < 0) {
+            trace(start_limit < 0 ? "worker=hh_rejected why=no_start_road" :
+                                   "worker=hh_rejected why=no_destination_road");
+            return routes;
+        }
         std::unique_ptr<HHRoutingConfig> config(HHRoutingConfig::astar(0));
         config->calcDetailed(HHRoutingConfig::CALCULATE_ALL_DETAILED);
         if (alternatives) config->calcAlternative();
@@ -651,13 +688,13 @@ private:
         // network nodes with a straight line; such a route crosses water and
         // forest. A bad main route fails the request; a bad
         // alternative is dropped.
-        if (!accept_route(main->detailed, "main")) return routes;
+        if (!accept_route(main->detailed, "main", sx, sy, ex, ey, start_limit, end_limit)) return routes;
         routes.push_back(std::move(main->detailed));
         for (auto& alt : others) {
             if (alt->detailed.empty()) continue;
             prepareResult(context.get(), alt->detailed);
             front_end.makeStartEndPointsPrecise(context.get(), alt->detailed, sx, sy, ex, ey);
-            if (!accept_route(alt->detailed, "alternative")) continue;
+            if (!accept_route(alt->detailed, "alternative", sx, sy, ex, ey, start_limit, end_limit)) continue;
             routes.push_back(std::move(alt->detailed));
         }
         return routes;
@@ -666,6 +703,10 @@ private:
     std::vector<ui::RouteAlternative> route(
         const Request& request, const std::shared_ptr<Cancellation>& cancel)
     {
+        if (metres_between(request.origin, {request.destination.latitude, request.destination.longitude}) < 1.0) {
+            trace("worker=route_failed why=already_at_destination");
+            return {};
+        }
         const auto preparing = std::chrono::steady_clock::now();
         if (!prepare_router() || cancel->isAborted()) return {};
         {
@@ -700,6 +741,12 @@ private:
         // Organic Maps' turns for each route found, while its routing context (the
         // roads at every node) is alive; parallel to |found|.
         std::vector<omaps::Result> found_turns;
+        RouteRoads road_cache;
+        RouteRoads* cached_roads = &road_cache;
+#ifdef ONC_ROUTE_DIAGNOSTICS
+        // Same corrected routes with/without the per-request cache for A/B tests.
+        if (std::getenv("ROUTE_BENCH_NO_ROAD_CACHE")) cached_roads = nullptr;
+#endif
         const auto annotate = [&](RoutingContext& context) {
             while (found_turns.size() < found.size()) {
                 if (!organic_turns_) {
@@ -710,7 +757,7 @@ private:
                 omaps::Result result = omaps::annotate(
                     context, found[found_turns.size()], request.origin.latitude,
                     request.origin.longitude, request.destination.latitude,
-                    request.destination.longitude);
+                    request.destination.longitude, ch_ ? cached_roads : nullptr);
                 const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - annotate_started).count();
                 char line[200];
@@ -735,8 +782,8 @@ private:
             auto context = new_context();
             std::string why;
             Segments segments = ch_->route(front_end, context, sx, sy, ex, ey, why,
-                                           request.heading_degrees.value_or(-1.0));
-            if (!segments.empty() && accept_route(segments, "ch")) {
+                                           request.heading_degrees.value_or(-1.0), cached_roads);
+            if (!segments.empty() && accept_route(segments, "ch", sx, sy, ex, ey)) {
                 const ChPlanner::Timing& timing = ch_->last_timing();
                 char line[200];
                 std::snprintf(line, sizeof(line),
@@ -770,7 +817,7 @@ private:
             std::vector<int> intermediates_y;
             auto segments = front_end.searchRoute(context, sx, sy, ex, ey,
                                                   intermediates_x, intermediates_y, nullptr);
-            if (!segments.empty()) {
+            if (!segments.empty() && accept_route(segments, "astar", sx, sy, ex, ey)) {
                 found.push_back(std::move(segments));
                 annotate(*context);
             }
@@ -810,9 +857,13 @@ private:
             // Organic Maps switched off: OsmAnd's own manoeuvres (no Result).
             const omaps::Result* turns = organic_turns_ ? &found_turns[index] : nullptr;
             ui::RouteAlternative alternative = convert(request, found, index, turns);
-            if (alternative.geometry.size() < 2) continue;
+            if (alternative.geometry.size() < 2) {
+                trace("worker=route_rejected why=empty_geometry");
+                continue;
+            }
             output.push_back(std::move(alternative));
         }
+        if (output.empty()) trace("worker=route_failed why=no_usable_geometry");
         if (output.size() > 1) {
             const double fastest_metres = output.front().distance_metres;
             for (std::size_t index = 1; index < output.size(); ++index)

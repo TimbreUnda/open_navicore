@@ -254,7 +254,7 @@ struct RouteEdgeSource
 class Builder
 {
 public:
-  Builder(RoutingContext & context) : m_context(context) {}
+  Builder(RoutingContext & context, RouteRoads const * roads) : m_context(context), m_cachedRoads(roads) {}
 
   Result Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, double startLat, double startLon,
              double finishLat, double finishLon);
@@ -272,6 +272,7 @@ private:
   void DumpPathSegments() const;
 
   RoutingContext & m_context;
+  RouteRoads const * m_cachedRoads;
   std::map<std::pair<uint32_t, uint32_t>, std::vector<RoadAtNode>> m_nodes;
   std::unordered_map<int64_t, uint32_t> m_featureIndex;
 
@@ -290,6 +291,16 @@ std::vector<RoadAtNode> const & Builder::RoadsAt(uint32_t x31, uint32_t y31)
   if (it != m_nodes.end())
     return it->second;
   std::vector<RoadAtNode> roads;
+  if (m_cachedRoads)
+  {
+    auto cached = m_cachedRoads->find(route_node_key(x31, y31));
+    if (cached != m_cachedRoads->end())
+    {
+      for (auto const & rs : cached->second)
+        roads.push_back({rs->object, rs->getStartPointIndex()});
+      return m_nodes.emplace(key, std::move(roads)).first->second;
+    }
+  }
   for (auto const & rs : m_context.loadRouteSegment(static_cast<int>(x31), static_cast<int>(y31)))
     roads.push_back({rs->getRoad(), rs->getSegmentStart()});
   return m_nodes.emplace(key, std::move(roads)).first->second;
@@ -918,11 +929,12 @@ Result Builder::Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, d
 }  // namespace
 
 Result annotate(RoutingContext & context, std::vector<std::shared_ptr<RouteSegmentResult>> const & route,
-                double start_latitude, double start_longitude, double finish_latitude, double finish_longitude)
+                double start_latitude, double start_longitude, double finish_latitude, double finish_longitude,
+                RouteRoads const * roads)
 {
   try
   {
-    Builder builder(context);
+    Builder builder(context, roads);
     return builder.Run(route, start_latitude, start_longitude, finish_latitude, finish_longitude);
   }
   // OM's CHECK failures (shim/base/assert.hpp) by their own type: a catch of

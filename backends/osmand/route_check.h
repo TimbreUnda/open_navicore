@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include "ui/navigation_model.h"
 
 namespace navicore_osmand {
 
@@ -29,5 +30,17 @@ struct RouteCheck {
 // nodes where a leg's detailed road geometry could not be loaded. Such a route
 // is drawn across water and forest, so it must never be shown as a route.
 RouteCheck check_route_legs(const std::vector<RouteLeg>& legs, double gap_tolerance_metres = 150.0);
+
+struct RouteExtentCheck {
+    bool usable = false;
+    double start_gap_metres = 0;
+    double end_gap_metres = 0;
+};
+
+// The selected router must actually reach both endpoints within its snap radius,
+// and return a travelled path, not two copies of the same junction.
+RouteExtentCheck check_route_extent(ui::GeoPoint origin, ui::GeoPoint destination,
+                                   ui::GeoPoint start, ui::GeoPoint end, double length_metres,
+                                   double max_start_gap = 1000.0, double max_end_gap = 1000.0);
 
 } // namespace navicore_osmand

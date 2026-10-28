@@ -257,3 +257,51 @@ the production backend. Each request has a 120 s diagnostic process timeout.
 `batch-NN.log`, writing endpoint/geometry flags in `analysis.json` and
 `results.csv`. Flags require investigation. This survey checks offline map
 routing, not current road accessibility or all turn restrictions.
+
+
+## Routing fixes and repeated survey, 2026-10-28
+
+Endpoint road selection now precedes journey-cost optimization. The nearest
+eligible road is used; roads within 1 m of the nearest projection remain tied
+for junction/overlap handling. Direction and one-way restrictions still apply.
+An endpoint road that cannot connect to the sidecar fails explicitly; the
+planner no longer substitutes a nearby graph node. The worker rejects collapsed
+geometry and results outside the endpoint snap limits before turn annotation.
+HH additionally validates its returned endpoints against the nearest eligible
+roads, and identical origin/destination requests stop without driving a loop.
+
+Long CH routes retain adjacent-road snapshots only for the current request.
+Snapshots contain road objects and node indexes, not mutable search wrappers.
+OsmAnd uses its existing pre-attached-road interface; Organic Maps reads the
+same snapshot. Both original turn-generation passes remain enabled, including
+OsmAnd roundabouts. No core library or map file changes are required.
+
+The same 128-case survey returned 126 routes with endpoint gaps below the
+0.1 m reporting resolution, zero turn errors and zero degenerate geometries.
+All 24 short requests passed. The two rejected requests are the forward/reverse
+pair involving Crimean service road 26164803745: its 21 map points share no
+node with any other road in that regional routing index. Previously the
+snapper silently selected a different street. Explicit HH likewise stopped
+98.2 m from this endpoint before the stricter validation was added.
+
+| Metric | Before | After |
+|---|---:|---:|
+| Returned routes with endpoint gap over 100 m | 94 | 0 |
+| Short requests returning a route | 18 / 24 | 24 / 24 |
+| Turn-generation errors | 8 | 0 |
+| Maximum request time | 30.405 s | 14.906 s |
+| 95th percentile of returned-route times | 15.258 s | 9.648 s |
+
+A separate nine-case cache A/B comparison used the same corrected snapping
+in both variants. Geometry and maneuver fingerprints, distance, duration and
+maneuver counts matched in every case. The four long requests improved from
+23.079 / 19.427 / 27.809 / 25.323 s to 13.278 / 9.703 / 13.971 / 11.573 s.
+For the 27.809 s request, preparation fell from 9.914 to 3.031 s and Organic
+Maps annotation from 8.559 to 0.871 s. The diagnostic-only
+`ROUTE_BENCH_NO_ROAD_CACHE=1` reproduces the uncached control. These are worker
+measurements on the bench; cold map opening and display latency are separate.
+
+`deploy/bench/ukraine-routing-controls.tsv` exercises headings, nearby off-road
+pins, a distant off-road destination and an identical origin/destination.
+The optional fifth numeric field after the case id is the starting heading
+in degrees. The distant and identical-point controls must be rejected.

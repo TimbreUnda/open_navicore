@@ -110,6 +110,7 @@ onc_test(dev_menu_test SOURCES dev_menu_test.cpp LIBS navigation_ui)
 onc_test(reroute_state_test SOURCES reroute_state_test.cpp INCLUDES ${ONC_ROOT}/backends/osmand)
 onc_test(labels_test SOURCES labels_test.cpp LIBS navigation_ui)
 onc_test(route_check_test SOURCES route_check_test.cpp LIBS navigation_ui m)
+onc_test(snap_policy_test SOURCES snap_policy_test.cpp INCLUDES ${ONC_ROOT}/backends/osmand)
 # Address search index: built from a small dump fixture by the real builder.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(_search_fixture ${CMAKE_CURRENT_BINARY_DIR}/search_fixture.idx)

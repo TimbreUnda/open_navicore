@@ -1,6 +1,7 @@
 #include "ch_planner.h"
 
 #include "ch/ch_sidecar.h"
+#include "snap_policy.h"
 
 #include "binaryRoutePlanner.h"
 #include "generalRouter.h"
@@ -43,7 +44,6 @@ constexpr double kSnapMsPerMetre = 120.0;      // the distance to the road, as t
 constexpr double kReversePenaltyMs = 60000.0;  // starting against the car's heading
 constexpr double kMaxSnapMetres = 1000.0;
 constexpr double kMaxApproachMetres = 5000.0;  // along a road to its first junction
-constexpr std::size_t kSnapRoads = 8;          // nearest roads tried at each end
 
 double metres_between(int x1, int y1, int x2, int y2)
 {
@@ -77,7 +77,6 @@ std::vector<RoadSnap> snap_roads(RoutingContext* context, int x, int y)
     points.insert(points.end(), nearest->others.begin(), nearest->others.end());
     const auto& router = context->config->router;
     for (const auto& point : points) {
-        if (snaps.size() >= kSnapRoads) break;
         if (!point || !point->road || !router->acceptLine(point->road)) continue;
         RoadSnap snap;
         snap.road = point->road;
@@ -92,6 +91,7 @@ std::vector<RoadSnap> snap_roads(RoutingContext* context, int x, int y)
             continue;
         snaps.push_back(snap);
     }
+    keep_nearest_roads(snaps);
 #ifdef ONC_ROUTE_DIAGNOSTICS
     // Causal probe for the route survey, never compiled into the backend.
     const char* nearest_only = std::getenv("ROUTE_BENCH_NEAREST_ONLY");
@@ -290,7 +290,7 @@ std::string ChPlanner::describe() const { return impl_->description; }
 
 ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingContext>& context,
                                      int start_x, int start_y, int end_x, int end_y, std::string& why,
-                                     double start_heading_degrees)
+                                     double start_heading_degrees, RouteRoads* roads)
 {
     timing_ = Timing();
     why.clear();
@@ -378,23 +378,42 @@ ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHAR
     } else if (has_direct) {
         use_direct = true;
     } else {
-        // No road near enough to snap onto: the nearest junctions, as before.
-        step = Clock::now();
-        const auto status = impl_->router->route(start_x, start_y, end_x, end_y, runs, cost,
-                                                 start_heading_degrees, cancelled);
-        timing_.search_ms = ms_since(step);
-        timing_.settled = impl_->router->settled();
-        if (status == onc_ch::Router::Status::NoRoute) { why = "no_route_in_sidecar"; return {}; }
-        if (status == onc_ch::Router::Status::Inconsistent) { why = "sidecar_inconsistent"; return {}; }
-        if (status == onc_ch::Router::Status::Cancelled) { why = "cancelled"; return {}; }
-        if (runs.empty()) { why = "too_short_for_sidecar"; return {}; }
+        // Do not silently bypass the selected endpoint road with a nearby node.
+        why = from_roads.empty() ? "no_start_road" : to_roads.empty() ? "no_destination_road" :
+              starts.empty() ? "start_road_not_connected" : "destination_road_not_connected";
+        return {};
     }
     timing_.base_edges = use_direct ? 0 : impl_->router->edges().size();
     timing_.road_runs = use_direct ? 0 : runs.size();
 
     Segments results;
+    // Capture adjacent roads as geometry is loaded in travel order. OsmAnd's
+    // prepareResult and OM can then share that snapshot instead of decoding
+    // the same long route's evicted tiles on two further passes.
+    const auto append = [&](const SHARED_PTR<RouteDataObject>& road, int start, int end) {
+        auto result = std::make_shared<RouteSegmentResult>(road, start, end);
+        if (roads) {
+            const int direction = start <= end ? 1 : -1;
+            result->preAttachedRoutes.reserve(std::abs(end - start) + 1);
+            for (int i = start;; i += direction) {
+                const auto key = route_node_key(road->pointsX[i], road->pointsY[i]);
+                auto found = roads->find(key);
+                if (found == roads->end()) {
+                    std::vector<std::shared_ptr<RouteSegmentResult>> adjacent;
+                    for (const auto& segment : context->loadRouteSegment(road->pointsX[i], road->pointsY[i])) {
+                        if (segment) adjacent.push_back(std::make_shared<RouteSegmentResult>(
+                            segment->getRoad(), segment->getSegmentStart(), segment->getSegmentStart()));
+                    }
+                    found = roads->emplace(key, std::move(adjacent)).first;
+                }
+                result->preAttachedRoutes.push_back(found->second);
+                if (i == end) break;
+            }
+        }
+        results.push_back(std::move(result));
+    };
     if (use_direct) {
-        results.push_back(std::make_shared<RouteSegmentResult>(direct.road, direct.start, direct.end));
+        append(direct.road, direct.start, direct.end);
         timing_.direct = true;
     } else {
         // Each stretch needs its RouteDataObject: loading the tile at a point of the road
@@ -402,8 +421,9 @@ ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHAR
         step = Clock::now();
         results.reserve(runs.size() + 2);
         if (first && first->start != first->end)
-            results.push_back(std::make_shared<RouteSegmentResult>(first->road, first->start, first->end));
+            append(first->road, first->start, first->end);
         for (const onc_ch::RoadRun& run : runs) {
+            if (cancelled()) { why = "cancelled"; return {}; }
             SHARED_PTR<RouteDataObject> road;
             for (const auto& segment : context->loadRouteSegment(run.anchor_x, run.anchor_y)) {
                 if (segment && segment->getRoad()->getId() == run.road) {
@@ -420,10 +440,10 @@ ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHAR
                 why = "road_missing_in_maps";
                 return {};
             }
-            results.push_back(std::make_shared<RouteSegmentResult>(road, run.start, run.end));
+            append(road, run.start, run.end);
         }
         if (last && last->start != last->end)
-            results.push_back(std::make_shared<RouteSegmentResult>(last->road, last->start, last->end));
+            append(last->road, last->start, last->end);
         timing_.roads_ms = ms_since(step);
         if (results.empty()) { why = "too_short_for_sidecar"; return {}; }
     }
