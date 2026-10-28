@@ -92,6 +92,24 @@ std::vector<std::string> map_files(const std::string& path)
     return files;
 }
 
+// TurnType values 1..11 by name (turnType.h).
+const char* turn_name(int value)
+{
+    static const char* const names[] = {"", "C", "TL", "TSLL", "TSHL", "TR", "TSLR", "TSHR",
+                                        "KL", "KR", "TU", "TRU"};
+    return value >= 0 && value <= 11 ? names[value] : "?";
+}
+
+// The incoming road's turn:lanes as OsmAnd reads it (getTurnLanesString in
+// routeResultPreparation.cpp, not exported). Empty: the lanes OsmAnd shows
+// are its own, made from the lanes count and the junction.
+std::string turn_lanes_tag(const SHARED_PTR<RouteSegmentResult>& segment)
+{
+    if (segment->object->getOneway() != 0) return segment->object->getValue("turn:lanes");
+    return segment->object->getValue(segment->isForwardDirection() ? "turn:lanes:forward"
+                                                                    : "turn:lanes:backward");
+}
+
 void print_maneuver(std::ostringstream& out, nav::Segments& segments, std::size_t index,
                     const nav::ui::Maneuver& m)
 {
@@ -113,8 +131,27 @@ void print_maneuver(std::ostringstream& out, nav::Segments& segments, std::size_
         << ",\"turn_angle\":" << m.turn_angle_degrees
         << ",\"left_side\":" << (m.left_side ? "true" : "false")
         << ",\"exit\":" << m.roundabout_exit
-        << ",\"lanes\":" << quoted(lanes)
-        << ",\"road\":" << quoted(segment->getStreetName("", false, segments, static_cast<int>(index)))
+        << ",\"lanes\":" << quoted(lanes) << ",\"lane_values\":[";
+    const auto& values = segment->turnType->getLanes();
+    for (std::size_t k = 0; k < values.size(); ++k) {
+        out << (k ? "," : "") << "{\"active\":" << ((values[k] & 1) ? "true" : "false") << ",\"turns\":[";
+        const int turns[] = {TurnType::getPrimaryTurn(values[k]), TurnType::getSecondaryTurn(values[k]),
+                             TurnType::getTertiaryTurn(values[k])};
+        bool first_turn = true;
+        for (const int t : turns) {
+            if (!t) continue;
+            out << (first_turn ? "" : ",") << "\"" << turn_name(t) << "\"";
+            first_turn = false;
+        }
+        out << "]}";
+    }
+    out << "]";
+    if (index > 0 && segments[index - 1] && segments[index - 1]->object) {
+        const auto& previous = segments[index - 1];
+        out << ",\"incoming_turn_lanes\":" << quoted(turn_lanes_tag(previous))
+            << ",\"incoming_lanes\":" << previous->object->getLanes();
+    }
+    out << ",\"road\":" << quoted(segment->getStreetName("", false, segments, static_cast<int>(index)))
         << ",\"incoming_bearing\":" << (std::isfinite(incoming) ? incoming : 0.0)
         << ",\"junction\":{\"valid\":" << (j.valid ? "true" : "false")
         << ",\"route_angle\":" << j.route_angle << ",\"branches\":[";
