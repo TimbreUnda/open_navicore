@@ -149,7 +149,8 @@ by the v11 provider trace and caller analysis:
 
 - VehicleData slot 4: raw `uint8_t day_night_status`, stock offset `0x263154`.
 - VehicleData slot 6: raw `uint8_t day_night_setting`, offset `0x263050`.
-- VehicleData slot 8: `float displayed_vehicle_speed`, offset `0x278e70`.
+- VehicleData slot 8: `float displayed_vehicle_speed, uint32_t unit`
+  (1 km/h, 2 mph); see [caller recovery](../contracts/native/vehicle-speed.md).
 - GPSData slot 6: raw `uint32_t interval_ms`, offset `0x2a0e7c` (observed 1000).
 - AudioHandling slot 19: raw `uint32_t audio_source` and `uint8_t volume`,
   offset `0x2eae18` (observed source 1, volume 15).
@@ -158,9 +159,11 @@ At the VehicleData slot-8 call site (`nv_navigation` `0x0812b3c6`), ARM/Thumb
 instructions load the provider object into `r0`, execute `vmov r1,s14`, load
 vtable byte offset `0x20`, and `blx` it. Thus this QNX soft-float boundary
 carries the float's exact 32-bit representation in `r1`; the typed C method and
-backend preserve both its float value and diagnostic bit pattern. Disassembly
+backend preserve both its float value and diagnostic bit pattern. The caller
+also passes its display unit in `r2`; the renderer retains this in the optional
+tail of `OpenNaviBackendVehicleV2`. Disassembly
 of the QNX ARM provider object independently shows `open_navi_vehicle_speed` moving
-incoming `r1` unchanged into the backend call.
+incoming `r1` and `r2` are consumed by the typed adapter.
 
 `open_navi_scalar_backend` synchronously copies these values under a mutex and is
 the isolated future seam for OsmAnd theme, feedback pacing, and prompt-volume
@@ -412,8 +415,25 @@ with any tried encoding). Bar fill is accepted only in `0..100`. The time
 bytes remain unbounded because static evidence proves only their byte width,
 not clock validation rules.
 
-During guidance with a position every record carries a symbol and a valid
-bar fill (the countdown, 100 from 400 m to 0 at the turn; 0 once arrived).
+During visible guidance the record carries a symbol and a valid bar fill
+(the countdown, 100 from 400 m to 0 at the turn; 0 once arrived).
+`ClusterGuidance` previews each new action for 12 seconds, then clears symbol,
+bar, manoeuvre-distance and next-road validity until the approach starts.
+The approach distance is speed times 25 seconds through 50 km/h, rising
+linearly to 45 seconds at 90 km/h, bounded to 150..2000 m. It stays latched
+through braking/stops, and across a following action within the greater of
+300 m and the current approach distance. A new route resets it; text and
+distance updates do not restart the preview. Recalculation and arrival remain
+visible. Missing/invalid vehicle speed keeps the instruction visible and is
+traced; simulation uses its configured speed. Native speed is a retained
+property, not a periodic GPS sample.
+
+Quiet guidance retains route ownership and destination/ETA data, with a
+2-second producer refresh even when stopped. The PAS publisher refreshes all
+supported attributes when the turn view reappears. Tests cover these state
+transitions and unit conversion; actual cluster timing still requires an
+in-car observation of the new build.
+
 The symbol is the junction-shape picture when the junction geometry gives
 one (below), otherwise the turn-type picture:
 

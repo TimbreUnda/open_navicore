@@ -48,7 +48,7 @@ typedef uint32_t (*TestByteCall)(void *, uint8_t);
 typedef uint32_t (*TestU32Call)(void *, uint32_t);
 typedef uint32_t (*TestU32ByteCall)(void *, uint32_t, uint8_t);
 typedef uint32_t (*TestU32U32ByteCall)(void *, uint32_t, uint32_t, uint8_t);
-typedef uint32_t (*TestFloatCall)(void *, float);
+typedef uint32_t (*TestFloatCall)(void *, float, uint32_t);
 typedef uint32_t (*TestPointerCall)(void *, uint32_t, const void *);
 typedef uint32_t (*TestGpsCall)(void *, const void *);
 typedef uint32_t (*TestHmiTransitionCall)(void *, uint32_t, uint32_t,
@@ -551,7 +551,7 @@ static void test_provider_v2_bridge(void)
     wait_for_count(&g_v2_vehicle_calls, 4u);
     assert(((TestFloatCall)
                (*(const PanaGenericVirtual **)g_interfaces[8])[8])(
-               g_interfaces[8], -13.25f) == 0u);
+               g_interfaces[8], -13.25f, 2u) == 0u);
     wait_for_count(&g_v2_vehicle_calls, 5u);
     memcpy(&speed_bits, &(float){ -13.25f }, sizeof(speed_bits));
     (void)pthread_mutex_lock(&g_hook_lock);
@@ -563,6 +563,7 @@ static void test_provider_v2_bridge(void)
             OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING |
             OPEN_NAVI_BACKEND_VEHICLE_SPEED));
     assert(vehicle.displayed_vehicle_speed_bits == speed_bits);
+    assert(vehicle.displayed_vehicle_speed_unit == 2u);
 
     assert(((TestU32Call)
                (*(const PanaGenericVirtual **)g_interfaces[9])[6])(
@@ -1130,7 +1131,7 @@ int main(void)
                g_interfaces[8], 4u) == 0u);
     assert(((TestFloatCall)
                (*(const PanaGenericVirtual **)g_interfaces[8])[8])(
-               g_interfaces[8], -13.25f) == 0u);
+               g_interfaces[8], -13.25f, 2u) == 0u);
     assert(((TestU32Call)
                (*(const PanaGenericVirtual **)g_interfaces[9])[6])(
                g_interfaces[9], 1000u) == 0u);
@@ -1159,7 +1160,7 @@ int main(void)
                g_interfaces[8], 4u) == 1u);
     assert(((TestFloatCall)
                (*(const PanaGenericVirtual **)g_interfaces[8])[8])(
-               g_interfaces[8], -13.25f) == 1u);
+               g_interfaces[8], -13.25f, 2u) == 1u);
     assert(((TestU32Call)
                (*(const PanaGenericVirtual **)g_interfaces[9])[6])(
                g_interfaces[9], 1000u) == 1u);
@@ -1318,7 +1319,7 @@ int main(void)
     assert(((TestByteCall)(*(const PanaGenericVirtual **)g_interfaces[8])[6])(
                g_interfaces[8], 1u) == 1u);
     assert(((TestFloatCall)(*(const PanaGenericVirtual **)g_interfaces[8])[8])(
-               g_interfaces[8], 1.0f) == 1u);
+               g_interfaces[8], 1.0f, 1u) == 1u);
     assert(((TestU32Call)(*(const PanaGenericVirtual **)g_interfaces[9])[6])(
                g_interfaces[9], 1000u) == 1u);
     assert(((TestU32U32ByteCall)

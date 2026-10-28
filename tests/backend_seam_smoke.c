@@ -474,7 +474,7 @@ int main(void)
     wait_count(&semantic, EVENT_VEHICLE, 4u);
     assert(semantic.vehicle.source_slot == 6u);
     speed_bits = 0xc1540000u; /* -13.25f */
-    assert(open_navi_renderer_notify_vehicle_speed(8u, speed_bits) == 0);
+    assert(open_navi_renderer_notify_vehicle_speed(8u, speed_bits, 2u) == 0);
     wait_count(&semantic, EVENT_VEHICLE, 5u);
     assert(semantic.vehicle.abi_version == OPEN_NAVI_BACKEND_ABI_V2);
     assert(semantic.vehicle.struct_size == sizeof(semantic.vehicle));
@@ -483,6 +483,16 @@ int main(void)
             OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING |
             OPEN_NAVI_BACKEND_VEHICLE_SPEED));
     assert(semantic.vehicle.displayed_vehicle_speed_bits == speed_bits);
+    assert(semantic.vehicle.displayed_vehicle_speed_unit == 2u);
+    /* Same numeric value in a new unit is a semantic speed change. */
+    assert(open_navi_renderer_notify_vehicle_speed(8u, speed_bits, 1u) == 0);
+    wait_count(&semantic, EVENT_VEHICLE, 6u);
+    assert(semantic.vehicle.displayed_vehicle_speed_unit == 1u);
+    assert(semantic.vehicle.changed_fields == OPEN_NAVI_BACKEND_VEHICLE_SPEED);
+    assert(open_navi_renderer_notify_vehicle_status(4u, 0u, 2u) == 0);
+    wait_count(&semantic, EVENT_VEHICLE, 7u);
+    assert(semantic.vehicle.displayed_vehicle_speed_bits == speed_bits);
+    assert(semantic.vehicle.displayed_vehicle_speed_unit == 1u);
     assert(open_navi_renderer_notify_gps_interval(6u, 250u) == 0);
     assert(open_navi_renderer_notify_audio(17u, 0xa017u, 1u, 15u) == 0);
     wait_count(&semantic, EVENT_GPS_INTERVAL, 1u);

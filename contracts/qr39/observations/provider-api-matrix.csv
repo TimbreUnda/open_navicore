@@ -6,7 +6,7 @@ adapter,si_name,domain,slot,count,first_seq,last_seq,caller_lr,caller_function,t
 8,SI_VehicleData,vehicle,4,1,64,64,0x0812b2ad,SI_VehicleData::notifyClientAdapter,0x7a363155,0x263154,"status(self,u8 day_night_status)",scalar_input,"3;5;6;11",high
 8,SI_VehicleData,vehicle,5,1,90,90,0x0812c6eb,SI_VehicleData::onSelfRequestDayNightSettingsCB,0x7a351415,0x251414,"status(self,u32 handle,u8 day_night_setting)",scalar_input,"3;5;6;11",high
 8,SI_VehicleData,vehicle,6,1,66,66,0x0812b2f1,SI_VehicleData::notifyClientAdapter,0x7a363051,0x263050,"status(self,u8 day_night_setting)",scalar_input,"3;5;6;11",high
-8,SI_VehicleData,vehicle,8,1,68,68,0x0812b3d3,SI_VehicleData::notifyClientAdapter,0x7a378e71,0x278e70,"status(self,float displayed_vehicle_speed)",scalar_input,"3;5;6;11",high
+8,SI_VehicleData,vehicle,8,1,68,68,0x0812b3d3,SI_VehicleData::notifyClientAdapter,0x7a378e71,0x278e70,"status(self,float displayed_vehicle_speed,uint32_t unit)",scalar_input,"3;5;6;11",high
 8,SI_VehicleData,vehicle,12,1,74,74,0x0812c5b7,SI_VehicleData::onSelfRequestVIN,0x7a36c841,0x26c840,"status(self,u32 handle,const char *vin)",input_pointer,"3;5;6;11",optional
 9,SI_GPSData,GPS/map,6,1,768,768,0x0810d285,SI_GPSData::subscribe,0x7a3a0e7d,0x2a0e7c,"status(self,u32 map_matched_feedback_interval_ms)",scalar_input,"3",critical
 10,SI_AudioHandling,audio,17,1,371,371,0x0812f09f,SI_AudioHandling::onRequestAudioSourceVolume,0x7a3eaf4d,0x2eaf4c,"status(self,u32 handle,u32 audio_source,u8 volume)",scalar_input,"3;19",high

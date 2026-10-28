@@ -222,7 +222,8 @@ private:
     void handle_map_tap(int x, int y);
     void handle_map_touch(const ui::MapTouch& touch);
     // Platform inputs, raw (meanings not qualified): kept for the
-    // developer menu and traced when they change; nothing acts on them.
+    // developer menu and traced when they change. Recovered vehicle speed
+    // and its unit also drive cluster presentation.
     template <typename T> using Raw = RawInput<T>;
     Raw<OpenNaviBackendVisibilityV2> visibility_in_;
     Raw<OpenNaviBackendScreenV1> screen_in_;
@@ -241,6 +242,9 @@ private:
     const OpenNaviBackendServicesV2* outbound_ = nullptr;
     void publish_cluster();
     ClusterPayload cluster_last_;
+    ClusterGuidance cluster_guidance_;
+    bool cluster_speed_reported_ = false;
+    bool cluster_speed_available_ = false;
     bool cluster_published_ = false;
     std::uint32_t cluster_last_status_ = 0;
     std::uint64_t cluster_publishes_ = 0;
@@ -669,6 +673,7 @@ void OsmAndEngine::show_route(const ui::RouteAlternative& route, bool fit)
     overview_box_[3] = max_longitude;
     overview_pending_ = fit;
     guidance_tracker_.reset();
+    cluster_guidance_.reset();
     reset_voice();
     reroute_.clear_off_route();
     guidance_active_ = false;
@@ -682,6 +687,7 @@ bool OsmAndEngine::clear_route()
     if (!route_shown_)
         return false;
     route_shown_ = false;
+    cluster_guidance_.reset();
     overview_pending_ = false;
     if (vector_map_) {
         vector_map_->set_route({});
@@ -1178,8 +1184,27 @@ void OsmAndEngine::publish_cluster()
     inputs.heading_valid = vehicle.valid && vehicle.speed_mps > 1.0;
     inputs.heading_degrees = vehicle.heading_degrees;
     inputs.now = std::time(nullptr);
+    // Native speed is a retained, change-notified property. A constant
+    // speed (including zero at a red light) must not expire on a timer.
+    double speed = cluster_vehicle_speed_mps(vehicle_in_.value);
+    if (inputs.guidance.simulated)
+        speed = simulation_speed_metres_per_second_;
+    const bool speed_available = std::isfinite(speed);
+    if (inputs.screen == ui::Screen::Guidance &&
+        (!cluster_speed_reported_ || speed_available != cluster_speed_available_)) {
+        trace(speed_available ? "cluster=speed_available" :
+              "cluster=speed_unavailable instruction_kept_visible");
+        cluster_speed_reported_ = true;
+        cluster_speed_available_ = speed_available;
+    }
+    inputs.phase = cluster_guidance_.update(inputs.screen, inputs.guidance, speed,
+        std::chrono::duration<double>(now - clock_origin_).count());
     ClusterPayload payload = build_cluster_payload(inputs);
-    if (cluster_published_ && payload.same_as(cluster_last_))
+    // Keep ownership while quiet or stopped; the cluster agent expires a
+    // producer after 10 seconds without updates.
+    if (cluster_published_ && payload.same_as(cluster_last_) &&
+        (inputs.screen != ui::Screen::Guidance ||
+         now - cluster_published_at_ < std::chrono::seconds(2)))
         return;
     // A new road text alone does not redraw the cluster: send it once with
     // a neighbouring symbol; the next publication (500 ms on) restores the

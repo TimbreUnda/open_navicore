@@ -98,6 +98,7 @@ onc_test(osmand_session_test SOURCES ${ONC_ROOT}/backends/osmand/config.cpp
          ${ONC_ROOT}/backends/osmand/session.cpp ${ONC_ROOT}/backends/osmand/osmand_backend.cpp
          osmand_session_test.cpp INCLUDES ${ONC_ROOT}/backends/osmand fixtures/fake_egl)
 onc_test(navigation_ui_test SOURCES navigation_ui_test.cpp LIBS navigation_ui m)
+onc_test(cluster_guidance_test SOURCES cluster_guidance_test.cpp LIBS navigation_ui m)
 onc_test(localization_test SOURCES localization_test.cpp LIBS navigation_ui m)
 onc_test(voice_prompts_test SOURCES voice_prompts_test.cpp LIBS navigation_ui m)
 onc_test(voice_worker_test SOURCES voice_worker_test.cpp LIBS navigation_ui m)

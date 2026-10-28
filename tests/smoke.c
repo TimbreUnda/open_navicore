@@ -28,7 +28,7 @@ typedef struct {
 
 typedef uint32_t (*TestGPSDataVirtual)(void *self, const void *gps_record);
 typedef uint32_t (*TestByteVirtual)(void *self, uint8_t value);
-typedef uint32_t (*TestFloatVirtual)(void *self, float value);
+typedef uint32_t (*TestFloatVirtual)(void *self, float value, uint32_t unit);
 typedef uint32_t (*TestU32Virtual)(void *self, uint32_t value);
 typedef uint32_t (*TestAudioVirtual)(void *self,
                                      uint32_t source,
@@ -849,7 +849,7 @@ int main(void)
                first_interfaces[8], 0x7fu) == 0u);
     assert(((TestFloatVirtual)
                (*(const PanaGenericVirtual **)first_interfaces[8])[8])(
-               first_interfaces[8], -13.25f) == 0u);
+               first_interfaces[8], -13.25f, 2u) == 0u);
     assert(((TestU32Virtual)
                (*(const PanaGenericVirtual **)first_interfaces[9])[6])(
                first_interfaces[9], 1000u) == 0u);
@@ -972,7 +972,7 @@ int main(void)
     assert_telemetry(8u, 4u, 2u, 1u, 0xfeu, 0u, 0u, 0u);
     assert_telemetry(8u, 5u, 1u, 2u, 0x80000005u, 0xf5u, 0u, 0u);
     assert_telemetry(8u, 6u, 2u, 1u, 0x7fu, 0u, 0u, 0u);
-    assert_telemetry(8u, 8u, 1u, 1u, speed_bits, 0u, 0u, 0u);
+    assert_telemetry(8u, 8u, 1u, 2u, speed_bits, 2u, 0u, 0u);
     assert_telemetry(9u, 6u, 2u, 1u, 250u, 0u, 0u, 0u);
     assert_telemetry(10u, 17u, 1u, 3u, 0x10u, 0xfeed0011u, 0xfdu, 0u);
     assert_telemetry(10u, 19u, 2u, 2u, 0xdeadbeefu, 0xffu, 0u, 0u);

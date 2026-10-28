@@ -15,7 +15,7 @@ endif()
 
 # Navigation UI and guidance logic without OsmAnd (host-testable).
 add_library(navigation_ui STATIC
-  diagnostics.cpp guidance_tracker.cpp cluster_payload.cpp junction_shape.cpp camera_controller.cpp dev_menu.cpp
+  diagnostics.cpp guidance_tracker.cpp cluster_payload.cpp cluster_guidance.cpp junction_shape.cpp camera_controller.cpp dev_menu.cpp
   route_check.cpp label_geometry.cpp search/search_index.cpp voice_prompts.cpp voice_worker.cpp
   voice_link.cpp qnx_pcm_out.cpp ui/compact_text.cpp ui/localization.cpp ui/navigation_model.cpp
   ui/navigation_view.cpp ui/overlay_occupancy.cpp ui/recents_store.cpp)

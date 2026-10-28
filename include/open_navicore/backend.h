@@ -296,6 +296,10 @@ typedef struct {
     uint8_t day_night_status;
     uint8_t day_night_setting;
     uint8_t reserved0[2];
+    /* Optional tail (original V2 prefix is 32 bytes). Stock VehicleData
+     * slot 8 supplies 1=km/h or 2=mph in r2. This is a retained property,
+     * not a periodic sample: valid until replaced or the lifecycle resets. */
+    uint32_t displayed_vehicle_speed_unit;
 } OpenNaviBackendVehicleV2;
 
 typedef struct {

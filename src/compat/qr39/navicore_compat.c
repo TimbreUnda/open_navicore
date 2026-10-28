@@ -101,7 +101,7 @@ static uint32_t open_navi_hmi_screen_theme_change(void *self,
 static uint32_t nc_provider_gps_data(void *self, const void *gps_record);
 static uint32_t open_navi_vehicle_day_night_status(void *self, uint8_t value);
 static uint32_t open_navi_vehicle_day_night_setting(void *self, uint8_t value);
-static uint32_t open_navi_vehicle_speed(void *self, float value);
+static uint32_t open_navi_vehicle_speed(void *self, float value, uint32_t unit);
 static uint32_t open_navi_gps_interval(void *self, uint32_t interval_ms);
 static uint32_t open_navi_audio_volume(void *self,
                                   uint32_t audio_source,
@@ -186,7 +186,7 @@ static void open_navi_lifecycle_release(OpenNaviLifecycleLease *lease);
 typedef uint32_t (*OpenNaviProviderSelf)(void *);
 typedef uint32_t (*OpenNaviProviderSelfU8)(void *, uint8_t);
 typedef uint32_t (*OpenNaviProviderSelfU32)(void *, uint32_t);
-typedef uint32_t (*OpenNaviProviderSelfFloat)(void *, float);
+typedef uint32_t (*OpenNaviProviderSelfFloatUnit)(void *, float, uint32_t);
 typedef uint32_t (*OpenNaviProviderSelfConstVoid)(void *, const void *);
 typedef uint32_t (*OpenNaviProviderSelfU32U8)(void *, uint32_t, uint8_t);
 typedef uint32_t (*OpenNaviProviderSelfU32U32)(void *, uint32_t, uint32_t);
@@ -237,7 +237,7 @@ OPEN_NAVI_PROVIDER_TYPECHECK(8, 4, open_navi_vehicle_day_night_status,
 OPEN_NAVI_PROVIDER_TYPECHECK(8, 5, nc_provider_vehicle_day_night_setting_reply, OpenNaviProviderSelfU32U8);
 OPEN_NAVI_PROVIDER_TYPECHECK(8, 6, open_navi_vehicle_day_night_setting,
                         OpenNaviProviderSelfU8);
-OPEN_NAVI_PROVIDER_TYPECHECK(8, 8, open_navi_vehicle_speed, OpenNaviProviderSelfFloat);
+OPEN_NAVI_PROVIDER_TYPECHECK(8, 8, open_navi_vehicle_speed, OpenNaviProviderSelfFloatUnit);
 OPEN_NAVI_PROVIDER_TYPECHECK(8, 12, open_navi_8_12, OpenNaviProviderU32ConstChar);
 OPEN_NAVI_PROVIDER_TYPECHECK(9, 4, nc_provider_gps_data, OpenNaviProviderSelfConstVoid);
 OPEN_NAVI_PROVIDER_TYPECHECK(9, 6, open_navi_gps_interval, OpenNaviProviderSelfU32);
@@ -1108,7 +1108,7 @@ static uint32_t open_navi_vehicle_day_night_setting(void *self, uint8_t value)
     return retained != 0 ? 0u : 1u;
 }
 
-static uint32_t open_navi_vehicle_speed(void *self, float value)
+static uint32_t open_navi_vehicle_speed(void *self, float value, uint32_t unit)
 {
     OpenNaviLifecycleLease lease;
     uint32_t bits;
@@ -1117,12 +1117,12 @@ static uint32_t open_navi_vehicle_speed(void *self, float value)
     if (!open_navi_lifecycle_acquire(&lease)) return 1u;
 
     memcpy(&bits, &value, sizeof(bits));
-    open_navi_api_telemetry_record(8u, 8u, 1u, bits, 0u, 0u, 0u);
+    open_navi_api_telemetry_record(8u, 8u, 2u, bits, unit, 0u, 0u);
     open_navi_scalar_backend_vehicle_speed(value);
-    retained = open_navi_renderer_notify_vehicle_speed(8u, bits) == 0;
+    retained = open_navi_renderer_notify_vehicle_speed(8u, bits, unit) == 0;
     open_navi_log(LOG_NOTICE,
-             "VehicleData slot=8 self=%p displayed_vehicle_speed_bits=%08x",
-             self, (unsigned int)bits);
+             "VehicleData slot=8 self=%p displayed_vehicle_speed_bits=%08x unit=%u",
+             self, (unsigned int)bits, (unsigned int)unit);
     open_navi_lifecycle_release(&lease);
     return retained != 0 ? 0u : 1u;
 }

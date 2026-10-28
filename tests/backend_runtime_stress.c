@@ -837,7 +837,7 @@ static void test_v2_semantic_coalescing_and_lifecycle(void)
                    19u, 0u, 7u + index, (uint8_t)(index + 1u)) == 0);
         assert(open_navi_renderer_notify_vehicle_setting(
                    6u, 0u, (uint8_t)(index + 2u)) == 0);
-        assert(open_navi_renderer_notify_vehicle_speed(8u, 0x3f800000u + index) == 0);
+        assert(open_navi_renderer_notify_vehicle_speed(8u, 0x3f800000u + index, 1u) == 0);
         gps.latitude_e7 = (int32_t)index;
         assert(open_navi_renderer_notify_gps(&gps) == 0);
     }

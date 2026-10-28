@@ -21,8 +21,10 @@ typedef char services_v1_must_be_16[
     sizeof(OpenNaviBackendServicesV1) == 16u ? 1 : -1];
 typedef char backend_v1_must_be_48[
     sizeof(OpenNaviBackendV1) == 48u ? 1 : -1];
-typedef char vehicle_v2_must_be_32[
-    sizeof(OpenNaviBackendVehicleV2) == 32u ? 1 : -1];
+typedef char vehicle_v2_must_be_36[
+    sizeof(OpenNaviBackendVehicleV2) == 36u ? 1 : -1];
+typedef char vehicle_v2_original_prefix_must_be_32[
+    offsetof(OpenNaviBackendVehicleV2, displayed_vehicle_speed_unit) == 32u ? 1 : -1];
 typedef char gps_interval_v2_must_be_16[
     sizeof(OpenNaviBackendGpsIntervalV2) == 16u ? 1 : -1];
 typedef char audio_v2_must_be_24[

@@ -200,9 +200,7 @@ ClusterPayload build_cluster_payload(const ClusterInputs& in)
         valid |= OPEN_NAVI_CLUSTER_NAVIGATION_STATUS;
         c.navigation_status = OPEN_NAVI_CLUSTER_NAV_DIRECTION_NOT_AVAILABLE;
     } else {
-        const auto kind = g.maneuver.kind;
-        const bool turn = kind != ui::ManeuverKind::Straight && kind != ui::ManeuverKind::Arrive;
-        const bool near = turn && !g.arrived && g.distance_to_maneuver_metres <= 400.0;
+        const bool near = in.phase == ClusterPhase::Approach && !g.arrived;
         valid |= OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE;
         c.route_guidance_state =
             g.arrived ? OPEN_NAVI_CLUSTER_ROUTE_DESTINATION_REACHED
@@ -279,6 +277,18 @@ ClusterPayload build_cluster_payload(const ClusterInputs& in)
                 std::floor(std::fmod(std::fmod(in.heading_degrees, 360.0) + 382.5, 360.0) / 45.0));
             valid |= OPEN_NAVI_CLUSTER_COMPASS;
             c.compass = static_cast<uint8_t>(OPEN_NAVI_CLUSTER_COMPASS_N + sector);
+        }
+        if (in.phase == ClusterPhase::Quiet && !g.arrived && !g.recalculating) {
+            // Route state alone does not dismiss the cluster view. Clear
+            // the bar and symbol validity (live evidence, 2026-10-19), while
+            // retaining route ownership, ETA and destination information.
+            valid &= ~(OPEN_NAVI_CLUSTER_ROUTE_SYMBOL | OPEN_NAVI_CLUSTER_BAR_PERCENT |
+                       OPEN_NAVI_CLUSTER_DISTANCE_MANEUVER | OPEN_NAVI_CLUSTER_NEXT_ROAD);
+            c.route_guidance_symbol = 0;
+            c.bar_percent = 0;
+            c.distance_maneuver_tenths = 0;
+            c.distance_maneuver_unit = 0;
+            out.next_road.clear();
         }
     }
     c.valid_attributes = valid;

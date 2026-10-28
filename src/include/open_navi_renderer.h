@@ -34,7 +34,7 @@ int open_navi_renderer_notify_vehicle_setting(uint32_t source_slot,
                                          uint32_t request_handle,
                                          uint8_t value);
 int open_navi_renderer_notify_vehicle_speed(uint32_t source_slot,
-                                       uint32_t speed_bits);
+                                       uint32_t speed_bits, uint32_t unit);
 int open_navi_renderer_notify_gps_interval(uint32_t source_slot,
                                       uint32_t interval_ms);
 int open_navi_renderer_notify_audio(uint32_t source_slot,

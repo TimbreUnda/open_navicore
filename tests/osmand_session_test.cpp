@@ -367,6 +367,13 @@ void c_boundary()
     CHECK_EVENT(api.gps_changed, OpenNaviBackendGpsV1, 1);
     CHECK_EVENT(api.pointer_changed, OpenNaviBackendPointerV1, 1);
     CHECK_EVENT(plugin.backend.vehicle_changed, OpenNaviBackendVehicleV2, 2);
+    // A legacy provider exposes exactly 32 bytes. Do not read a new tail
+    // from its memory; old day/night and raw speed still reach the engine.
+    alignas(OpenNaviBackendVehicleV2) uint32_t legacy_vehicle[8] = {2, 32};
+    assert(plugin.backend.vehicle_changed(context,
+        reinterpret_cast<const OpenNaviBackendVehicleV2*>(legacy_vehicle)) == 0);
+    assert(probe->vehicle.struct_size == 32);
+    assert(probe->vehicle.displayed_vehicle_speed_unit == 0);
     CHECK_EVENT(plugin.backend.gps_interval_changed, OpenNaviBackendGpsIntervalV2, 2);
     CHECK_EVENT(plugin.backend.audio_changed, OpenNaviBackendAudioV2, 2);
 #undef CHECK_EVENT

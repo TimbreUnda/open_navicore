@@ -87,6 +87,17 @@ int forward_event(void* context, const T* event) noexcept
     return static_cast<Session*>(context)->input(*event);
 }
 
+int backend_vehicle(void* context, const OpenNaviBackendVehicleV2* event) noexcept
+{
+    constexpr size_t prefix = offsetof(OpenNaviBackendVehicleV2, displayed_vehicle_speed_unit);
+    if (!context || !event || event->abi_version != OPEN_NAVI_BACKEND_ABI_V2 ||
+        event->struct_size < prefix)
+        return -1;
+    OpenNaviBackendVehicleV2 copy{};
+    std::memcpy(&copy, event, event->struct_size >= sizeof(copy) ? sizeof(copy) : prefix);
+    return static_cast<Session*>(context)->input(copy);
+}
+
 // Backend V3+: started with the outbound services (V2 prefix size).
 int backend_start_v2(void* context, const OpenNaviBackendServicesV2* services) noexcept
 {
@@ -220,7 +231,7 @@ void fill_v1_query(OpenNaviBackendPluginV1* output)
     output->backend.v1.gps_changed = backend_gps;
     output->backend.v1.pointer_changed = backend_pointer;
     output->backend.v1.render_frame = backend_render;
-    output->backend.vehicle_changed = forward_event<OpenNaviBackendVehicleV2, OPEN_NAVI_BACKEND_ABI_V2>;
+    output->backend.vehicle_changed = backend_vehicle;
     output->backend.gps_interval_changed =
         accept_event<OpenNaviBackendGpsIntervalV2, OPEN_NAVI_BACKEND_ABI_V2>;
     output->backend.audio_changed = accept_event<OpenNaviBackendAudioV2, OPEN_NAVI_BACKEND_ABI_V2>;

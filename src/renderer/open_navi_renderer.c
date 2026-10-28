@@ -419,7 +419,7 @@ static int renderer_v6_enabled_locked(void)
 static int notify_vehicle(uint32_t source_slot,
                           uint32_t request_handle,
                           uint32_t field,
-                          uint32_t value)
+                          uint32_t value, uint32_t unit)
 {
     OpenNaviBackendVehicleV2 *vehicle;
     uint32_t changed = 0u;
@@ -438,8 +438,8 @@ static int notify_vehicle(uint32_t source_slot,
         } else if (field == OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING) {
             changed = vehicle->day_night_setting != (uint8_t)value ? field : 0u;
         } else {
-            changed = vehicle->displayed_vehicle_speed_bits != value
-                          ? field : 0u;
+            changed = (vehicle->displayed_vehicle_speed_bits != value ||
+                       vehicle->displayed_vehicle_speed_unit != unit) ? field : 0u;
         }
         vehicle->abi_version = OPEN_NAVI_BACKEND_ABI_V2;
         vehicle->struct_size = sizeof(*vehicle);
@@ -454,8 +454,10 @@ static int notify_vehicle(uint32_t source_slot,
             vehicle->day_night_status = (uint8_t)value;
         else if (field == OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING)
             vehicle->day_night_setting = (uint8_t)value;
-        else
+        else {
             vehicle->displayed_vehicle_speed_bits = value;
+            vehicle->displayed_vehicle_speed_unit = unit;
+        }
         g_runtime.vehicle.sequence = open_navi_renderer_next_event_sequence_locked();
         g_runtime.vehicle.pending = 1;
         (void)pthread_cond_signal(&g_runtime.condition);
@@ -470,7 +472,7 @@ int open_navi_renderer_notify_vehicle_status(uint32_t source_slot,
 {
     return notify_vehicle(source_slot, request_handle,
                           OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_STATUS,
-                          (uint32_t)value);
+                          (uint32_t)value, 0u);
 }
 
 int open_navi_renderer_notify_vehicle_setting(uint32_t source_slot,
@@ -479,14 +481,14 @@ int open_navi_renderer_notify_vehicle_setting(uint32_t source_slot,
 {
     return notify_vehicle(source_slot, request_handle,
                           OPEN_NAVI_BACKEND_VEHICLE_DAY_NIGHT_SETTING,
-                          (uint32_t)value);
+                          (uint32_t)value, 0u);
 }
 
 int open_navi_renderer_notify_vehicle_speed(uint32_t source_slot,
-                                       uint32_t speed_bits)
+                                       uint32_t speed_bits, uint32_t unit)
 {
     return notify_vehicle(source_slot, 0u,
-                          OPEN_NAVI_BACKEND_VEHICLE_SPEED, speed_bits);
+                          OPEN_NAVI_BACKEND_VEHICLE_SPEED, speed_bits, unit);
 }
 
 int open_navi_renderer_notify_gps_interval(uint32_t source_slot,

@@ -357,6 +357,13 @@ static uint16_t calculate_changed(const uint8_t *current,
                                   : 0u;
     uint16_t changed = 0u;
     size_t index;
+    const uint16_t turn_view = OPEN_NAVI_CLUSTER_ROUTE_SYMBOL | OPEN_NAVI_CLUSTER_BAR_PERCENT;
+
+    /* A dismissed turn view needs its complete supported state republished
+     * when it reappears, even when its arrow/text have not changed. */
+    if ((current_valid & turn_view) == turn_view &&
+        (previous_valid & turn_view) != turn_view)
+        return OPEN_NAVI_CLUSTER_SEMANTIC_SUPPORTED_MASK;
 
     for (index = 0u; index < sizeof(g_fields) / sizeof(g_fields[0]); ++index) {
         const OpenNaviClusterField *field = &g_fields[index];

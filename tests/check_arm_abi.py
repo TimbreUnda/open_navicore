@@ -138,7 +138,8 @@ def main():
                       ('nc_provider_vehicle_day_night_status_reply', 'r2'),
                       ('nc_provider_vehicle_day_night_setting_reply', 'r2'),
                       ('open_navi_10_17', 'r3'),
-                      ('open_navi_audio_volume', 'r2')):
+                      ('open_navi_audio_volume', 'r2'),
+                      ('open_navi_vehicle_speed', 'r2')):
         c.expect(c.reads_register(name, reg), name, 'argument in %s not used' % reg)
 
     # Connectivity slot 3: the fourth word after self is the caller's sp[0].

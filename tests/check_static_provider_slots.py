@@ -15,7 +15,9 @@ FIELDS = [
     "status_behavior", "pointer_semantics",
 ]
 
-# Independent transcription of the QR39.6 nv_navigation call graph.  Keeping
+# Independent transcription of the QR39.6 nv_navigation call graph, with
+# VehicleData 8/8 corrected by QR39.5 caller recovery (contracts/native/vehicle-speed.md).
+# Keeping
 # this catalog in the verifier means deleting a manifest row cannot silently
 # redefine what "complete" means.
 REACHABLE_CATALOG = """
@@ -24,7 +26,7 @@ root:3/2,4/0,5/1,6/1,7/2,8/1,10/2
 4:3/1,4/1
 6:3/4
 7:3/2,4/1,5/1
-8:3/2,4/1,5/2,6/1,7/2,8/1,9/2,12/2,13/2,14/1
+8:3/2,4/1,5/2,6/1,7/2,8/2,9/2,12/2,13/2,14/1
 9:3/2,4/1,5/1,6/1
 10:3/3,5/3,7/3,8/3,17/3,18/3,19/2
 12:3/2,4/1,5/1,6/1,7/3

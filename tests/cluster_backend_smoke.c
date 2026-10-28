@@ -388,6 +388,12 @@ static void test_change_masks_status_and_ownership(void)
     publish_ok(&state, OPEN_NAVI_CLUSTER_SEMANTIC_SUPPORTED_MASK);
     publish_ok(&state, 0u);
 
+    /* Quiet -> approach must restore the same turn with a full refresh. */
+    state.valid_attributes &= ~(OPEN_NAVI_CLUSTER_ROUTE_SYMBOL | OPEN_NAVI_CLUSTER_BAR_PERCENT);
+    publish_ok(&state, OPEN_NAVI_CLUSTER_ROUTE_SYMBOL | OPEN_NAVI_CLUSTER_BAR_PERCENT);
+    state.valid_attributes |= OPEN_NAVI_CLUSTER_ROUTE_SYMBOL | OPEN_NAVI_CLUSTER_BAR_PERCENT;
+    publish_ok(&state, OPEN_NAVI_CLUSTER_SEMANTIC_SUPPORTED_MASK);
+
     state.route_guidance_state = OPEN_NAVI_CLUSTER_ROUTE_DESTINATION_REACHED;
     publish_ok(&state, OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE);
     state.navigation_status = OPEN_NAVI_CLUSTER_NAV_NO_DATA;

@@ -482,9 +482,8 @@ void check_cluster_valid(const navicore_osmand::ClusterPayload& payload)
     else
         assert(c.route_guidance_symbol == 0);
     // The cluster draws its turn view only with both bits (live, 2026-10-19).
-    if (valid & OPEN_NAVI_CLUSTER_ROUTE_GUIDANCE_STATE)
-        assert((valid & OPEN_NAVI_CLUSTER_ROUTE_SYMBOL) &&
-               (valid & OPEN_NAVI_CLUSTER_BAR_PERCENT));
+    assert(bool(valid & OPEN_NAVI_CLUSTER_ROUTE_SYMBOL) ==
+           bool(valid & OPEN_NAVI_CLUSTER_BAR_PERCENT));
     if (valid & OPEN_NAVI_CLUSTER_COMPASS)
         assert(c.compass >= 1 && c.compass <= 8);
     if (valid & OPEN_NAVI_CLUSTER_SPEED_LIMIT)
@@ -515,6 +514,7 @@ void test_cluster_payload()
     assert(p.cluster.navigation_status == OPEN_NAVI_CLUSTER_NAV_DIRECTION_NOT_AVAILABLE);
     // 250 m before a left turn, 2.4 km and 7 min to go, heading east.
     in.guidance.position_available = true;
+    in.phase = navicore_osmand::ClusterPhase::Approach;
     in.guidance.distance_to_maneuver_metres = 250.0;
     in.guidance.maneuver.kind = ManeuverKind::Left;
     in.guidance.maneuver.road = "вулиця Антоновича";
@@ -550,6 +550,7 @@ void test_cluster_payload()
     assert(build_cluster_payload(in).cluster.route_guidance_state ==
            OPEN_NAVI_CLUSTER_ROUTE_MANOEUVRE);
     in.guidance.distance_to_maneuver_metres = 1250.0;
+    in.phase = navicore_osmand::ClusterPhase::Preview;
     p = build_cluster_payload(in);
     check_cluster_valid(p);
     assert(p.cluster.route_guidance_state == OPEN_NAVI_CLUSTER_ROUTE_FOLLOW_STREET);

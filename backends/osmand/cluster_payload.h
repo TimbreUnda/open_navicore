@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/navigation_model.h"
+#include "cluster_guidance.h"
 
 #include <open_navicore/backend.h>
 
@@ -11,8 +12,8 @@ namespace navicore_osmand {
 
 // The instrument-cluster payload for the current navigation state, using
 // only the recovered fields (include/open_navicore/cluster.h semantic mask;
-// no lanes). During guidance it always carries a route-guidance symbol and
-// a valid bar fill: the cluster draws its turn view only with both. The road
+// no lanes). Visible guidance carries a route-guidance symbol and a valid
+// bar fill; quiet guidance clears both to dismiss the turn view. The road
 // spans point into the strings, so keep the payload object alive (and
 // unmoved) while publishing.
 struct ClusterPayload {
@@ -31,6 +32,7 @@ struct ClusterInputs {
     bool heading_valid = false;  // vehicle moving with a known heading
     double heading_degrees = 0.0;
     std::time_t now = 0;         // for the arrival clock time
+    ClusterPhase phase = ClusterPhase::Preview;
 };
 
 ClusterPayload build_cluster_payload(const ClusterInputs& inputs);
