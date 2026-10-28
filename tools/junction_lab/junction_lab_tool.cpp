@@ -24,6 +24,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -139,6 +140,32 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
         get31TileNumberY(lat2), ix, iy, nullptr);
     if (segments.empty())
         return "{\"ok\":false,\"error\":\"no route\"}";
+    // JUNCTION_LAB_ROADS=1: every road the map has at each segment start
+    // (stderr), including those the router does not attach (one-way roads
+    // that only enter the node).
+    if (std::getenv("JUNCTION_LAB_ROADS")) {
+        for (std::size_t i = 1; i < segments.size(); ++i) {
+            const auto& s = segments[i];
+            if (!s || !s->object) continue;
+            const int start = s->getStartPointIndex();
+            const ::LatLon p = s->getPoint(start);
+            std::fprintf(stderr, "node %.6f,%.6f route road=%lld turn=%s\n", p.lat, p.lon,
+                         (long long)s->object->getId(),
+                         s->turnType ? s->turnType->toString().c_str() : "-");
+            for (auto& rs : context->loadRouteSegment(s->object->pointsX[start], s->object->pointsY[start])) {
+                const auto& road = rs->getRoad();
+                const int at = rs->getSegmentStart();
+                const int n = static_cast<int>(road->getPointsLength());
+                std::fprintf(stderr, "   road=%lld \"%s\" %s oneway=%d point=%d/%d", (long long)road->getId(),
+                             road->getName().c_str(), road->getHighway().c_str(), road->getOneway(), at, n);
+                if (at + 1 < n)
+                    std::fprintf(stderr, " fwd=%.0f", road->directionRoute(at, true, 10.0f) / M_PI * 180.0);
+                if (at > 0)
+                    std::fprintf(stderr, " back=%.0f", road->directionRoute(at, false, 10.0f) / M_PI * 180.0);
+                std::fprintf(stderr, "\n");
+            }
+        }
+    }
     std::ostringstream out;
     out.precision(8);
     out << "{\"ok\":true,\"geometry\":[";
@@ -163,6 +190,23 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
         if (!first) out << ",";
         first = false;
         print_maneuver(out, segments, i, maneuver);
+    }
+    // Every junction on the route, also where OsmAnd gives no turn: what
+    // the router saw where the driver may expect a manoeuvre.
+    out << "],\"junctions\":[";
+    first = true;
+    for (std::size_t i = 1; i < segments.size(); ++i) {
+        if (!segments[i]) continue;
+        const auto j = nav::junction_of(segments, i);
+        if (!j.valid || j.branch_count == 0) continue;
+        const ::LatLon p = segments[i]->getPoint(segments[i]->getStartPointIndex());
+        out << (first ? "" : ",") << "{\"segment\":" << i << ",\"lat\":" << p.lat << ",\"lon\":" << p.lon
+            << ",\"turn\":" << quoted(segments[i]->turnType ? segments[i]->turnType->toString() : "-")
+            << ",\"route_angle\":" << j.route_angle << ",\"branches\":[";
+        for (std::size_t k = 0; k < j.branch_count; ++k)
+            out << (k ? "," : "") << j.branches[k];
+        out << "]}";
+        first = false;
     }
     out << "]}";
     return out.str();
