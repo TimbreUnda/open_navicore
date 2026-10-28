@@ -1,5 +1,6 @@
 #pragma once
 
+#include "omaps_turns.h"
 #include "ui/navigation_model.h"
 
 #include <cstddef>
@@ -28,5 +29,28 @@ ui::JunctionShape junction_of(Segments& segments, std::size_t index);
 // carries none (no turn type, or OsmAnd's "continue"). Fills everything but
 // the road name and the route position, which the caller knows.
 bool maneuver_at(Segments& segments, std::size_t index, ui::Maneuver& maneuver);
+
+// A manoeuvre and where it is: the OsmAnd segment that leaves it and its index in
+// the route's points (every segment's points, consecutive duplicates once: the
+// worker's RouteAlternative::geometry).
+struct PlacedManeuver {
+    std::size_t segment = 0;
+    std::size_t route_point = 0;
+    ui::Maneuver maneuver;
+};
+
+// The index of each segment's start point among the route's points.
+std::vector<std::size_t> segment_start_points(const Segments& segments);
+
+// The manoeuvre for one of Organic Maps' turns: its kind and lanes, and the junction
+// shape from OM's route angle and other roads (the cluster picture).
+ui::Maneuver maneuver_from(const omaps::Turn& turn);
+
+// The route's manoeuvres in route order, without the arrival: Organic Maps' turns
+// with OsmAnd's roundabouts (OsmAnd gives the exit and its angle). |turns| null:
+// Organic Maps is switched off, OsmAnd's own (maneuver_at). An OM result that
+// failed gives none: no silent fallback, the route visibly has no turns (the
+// worker traces the error).
+std::vector<PlacedManeuver> route_maneuvers(Segments& segments, const omaps::Result* turns);
 
 } // namespace navicore_osmand

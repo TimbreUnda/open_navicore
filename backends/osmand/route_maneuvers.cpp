@@ -2,6 +2,7 @@
 
 #include "junction_shape.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace navicore_osmand {
@@ -100,6 +101,80 @@ bool maneuver_at(Segments& segments, std::size_t index, ui::Maneuver& maneuver)
         summarize_lanes(maneuver.lanes, maneuver.junction);
     }
     return true;
+}
+
+std::vector<std::size_t> segment_start_points(const Segments& segments)
+{
+    std::vector<std::size_t> starts(segments.size(), 0);
+    std::size_t points = 0;
+    int last_x = 0, last_y = 0;
+    for (std::size_t s = 0; s < segments.size(); ++s) {
+        const auto& segment = segments[s];
+        if (!segment || !segment->object) {
+            starts[s] = points ? points - 1 : 0;
+            continue;
+        }
+        const int start = segment->getStartPointIndex();
+        const int end = segment->getEndPointIndex();
+        const int step = start <= end ? 1 : -1;
+        for (int i = start;; i += step) {
+            const int x = static_cast<int>(segment->object->pointsX[i]);
+            const int y = static_cast<int>(segment->object->pointsY[i]);
+            const bool same = points > 0 && x == last_x && y == last_y;
+            if (i == start) starts[s] = same ? points - 1 : points;
+            if (!same) {
+                ++points;
+                last_x = x;
+                last_y = y;
+            }
+            if (i == end) break;
+        }
+    }
+    return starts;
+}
+
+ui::Maneuver maneuver_from(const omaps::Turn& turn)
+{
+    ui::Maneuver maneuver;
+    maneuver.kind = turn.kind;
+    maneuver.road = turn.road;
+    maneuver.lanes = turn.lanes;
+    maneuver.left_side = turn.left_side;
+    maneuver.turn_angle_degrees = turn.route_angle;
+    if (turn.kind != ui::ManeuverKind::Roundabout) {
+        maneuver.junction = make_junction_shape(turn.route_angle, turn.other_roads);
+        summarize_lanes(maneuver.lanes, maneuver.junction);
+    }
+    return maneuver;
+}
+
+std::vector<PlacedManeuver> route_maneuvers(Segments& segments, const omaps::Result* turns)
+{
+    const std::vector<std::size_t> starts = segment_start_points(segments);
+    std::vector<PlacedManeuver> placed;
+    if (turns && !turns->ok) return placed;  // no silent fallback to OsmAnd's turns
+    const bool organic = turns != nullptr;
+    for (std::size_t i = 0; i < segments.size(); ++i) {
+        PlacedManeuver p;
+        if (!maneuver_at(segments, i, p.maneuver)) continue;
+        if (organic && p.maneuver.kind != ui::ManeuverKind::Roundabout) continue;
+        p.segment = i;
+        p.route_point = starts[i];
+        placed.push_back(std::move(p));
+    }
+    if (!organic) return placed;
+    for (const auto& turn : turns->turns) {
+        if (turn.roundabout) continue;  // OsmAnd's roundabout, above
+        PlacedManeuver p;
+        p.segment = turn.segment;
+        p.route_point = turn.route_point;
+        p.maneuver = maneuver_from(turn);
+        placed.push_back(std::move(p));
+    }
+    std::stable_sort(placed.begin(), placed.end(), [](const PlacedManeuver& a, const PlacedManeuver& b) {
+        return a.route_point < b.route_point;
+    });
+    return placed;
 }
 
 } // namespace navicore_osmand

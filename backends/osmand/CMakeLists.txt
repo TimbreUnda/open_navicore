@@ -99,6 +99,17 @@ add_custom_target(build_info_git
           -P ${ONC_ROOT}/cmake/build_info.cmake
   BYPRODUCTS ${_build_info} VERBATIM)
 
+# Turn instructions: Organic Maps' car turn generator on OsmAnd's routes
+# (omaps_turns.cpp; the vendored OM code in third_party/organicmaps-routing). A
+# static library so that OM's shim headers stay out of the backend's include path.
+include(${ONC_ROOT}/third_party/organicmaps-routing/sources.cmake)
+add_library(organicmaps_turns STATIC omaps_turns.cpp ${ONC_ORGANICMAPS_SOURCES})
+target_include_directories(organicmaps_turns PRIVATE ${ONC_ORGANICMAPS_INCLUDES}
+                           ${ONC_OSMAND_INCLUDES} ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(organicmaps_turns PRIVATE ${ONC_OSMAND_DEFINES})
+# Vendored code: its warnings are upstream's.
+target_compile_options(organicmaps_turns PRIVATE ${ONC_OSMAND_FLAGS} -w)
+
 add_library(osmand_backend SHARED
   osmand_backend.cpp config.cpp session.cpp osmand_engine.cpp navigation_worker.cpp ch_planner.cpp
   route_maneuvers.cpp
@@ -112,7 +123,7 @@ target_include_directories(osmand_backend PRIVATE ${ONC_OSMAND_INCLUDES}
                            ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_definitions(osmand_backend PRIVATE ${ONC_OSMAND_DEFINES})
 target_compile_options(osmand_backend PRIVATE ${ONC_WARNINGS} ${ONC_OSMAND_FLAGS})
-target_link_libraries(osmand_backend PRIVATE navigation_ui osmand_core EGL GLESv2 z c)
+target_link_libraries(osmand_backend PRIVATE navigation_ui organicmaps_turns osmand_core EGL GLESv2 z c)
 set_target_properties(osmand_backend PROPERTIES OUTPUT_NAME OpenNaviBackendOsmAnd
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} SKIP_BUILD_RPATH ON)
 target_link_options(osmand_backend PRIVATE -Wl,--as-needed -static-libstdc++ -static-libgcc

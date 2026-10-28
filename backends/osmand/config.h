@@ -35,6 +35,10 @@ struct Config {
     // cannot serve a route. Empty when disabled (marker
     // /datastore/navicore-backend/disable-ch, or OPEN_NAVICORE_OSMAND_CH_DISABLE=1).
     std::string ch_sidecar = "";
+    // Turn instructions come from Organic Maps' turn generator (omaps_turns.h).
+    // OsmAnd's own only with the marker /datastore/navicore-backend/osmand-turns
+    // (or OPEN_NAVICORE_OSMAND_TURNS=1); never as a fallback when OM fails.
+    bool osmand_turns = false;
 
     // Bench tools (markers in /datastore/navicore-backend, see README).
     bool simulate_route = false;       // enable-route-simulation

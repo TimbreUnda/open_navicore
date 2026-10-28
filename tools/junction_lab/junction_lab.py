@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -27,7 +28,8 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 BUILD = ROOT / "build" / "junction_lab"
-DEFAULT_MAPS = Path("/mnt/d/osmand-maps/ukraine")
+# $OPEN_NAVICORE_MAPS, else osmand-maps/ukraine next to this repository.
+DEFAULT_MAPS = Path(os.environ.get("OPEN_NAVICORE_MAPS", ROOT.parent / "osmand-maps" / "ukraine"))
 
 KINDS = {"straight", "left", "slight_left", "sharp_left", "right", "slight_right",
          "sharp_right", "keep_left", "keep_right", "uturn", "roundabout", "arrive"}
@@ -114,18 +116,41 @@ def make_handler(router: Router):
 
 
 def describe(result: dict) -> str:
+    """The radio's manoeuvres (Organic Maps' turns) with their cluster symbols."""
     if not result.get("ok"):
         return f"no route: {result.get('error')}"
+    if result.get("omaps_error"):
+        return f"Organic Maps failed (the radio shows no turns): {result['omaps_error']}"
     lines = []
-    for m in result["maneuvers"]:
+    for m in result.get("omaps", []):
         j = m["junction"]
         arms = ",".join(f"{a:.0f}" for a in j["branches"])
         lines.append(
-            f"{m['lat']:.6f},{m['lon']:.6f} {m['turn']:<6} kind={m['kind']} angle={m['turn_angle']:.0f} "
+            f"{m['lat']:.6f},{m['lon']:.6f} {m['turn']:<20} kind={m['kind']} "
             f"route={j['route_angle']:.0f} arms={arms or '-'}{'+' if j['truncated'] else ''} "
-            f"lanes={m['lanes'] or '-'} -> junction={m['junction_symbol']} "
-            f"turn_type={m['turn_type_symbol']} SYMBOL={m['symbol']}  road={m['road']!r}")
+            f"-> junction={m['junction_symbol']} turn_type={m['turn_type_symbol']} SYMBOL={m['symbol']}"
+            f"  road={m['road']!r}")
     return "\n".join(lines) or "route has no manoeuvres"
+
+
+def check(router: Router, path: Path) -> int:
+    """Runs every case of a cases.tsv; returns the number that differ."""
+    failed = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        start, finish, expected, why = (line.split("\t") + ["", ""])[:4]
+        result = router.route(parse_point(start), parse_point(finish))
+        got = " ".join(m["turn"] for m in result.get("omaps", [])) if result.get("ok") else "no route"
+        if result.get("omaps_error"):
+            got = "omaps_error: " + result["omaps_error"]
+        ok = got == expected.strip()
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} {start} {finish}  {why}")
+        if not ok:
+            print(f"     expected: {expected.strip()}\n     got:      {got}")
+    print(f"{failed} case(s) differ" if failed else "all cases match")
+    return failed
 
 
 def main() -> int:
@@ -134,6 +159,7 @@ def main() -> int:
     parser.add_argument("--routing-xml", type=Path, default=BUILD / "routing.xml")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--route", nargs=2, metavar=("FROM", "TO"), help="print the manoeuvres and exit")
+    parser.add_argument("--check", type=Path, metavar="CASES", help="run a cases.tsv and exit (1 if any differ)")
     args = parser.parse_args()
     tool = BUILD / "junction_lab_tool"
     if not tool.exists():
@@ -144,6 +170,8 @@ def main() -> int:
     if args.route:
         print(describe(router.route(parse_point(args.route[0]), parse_point(args.route[1]))))
         return 0
+    if args.check:
+        return 1 if check(router, args.check) else 0
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(router))
     print(f"junction lab: http://localhost:{args.port}/", file=sys.stderr)
     server.serve_forever()

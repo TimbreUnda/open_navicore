@@ -255,6 +255,16 @@ void place_worker_thread(int priority = kWorkerPriority, const char* name = "wor
 // description, the junction picture (0: none) and the symbol sent.
 constexpr std::size_t kJunctionTraceMax = 40;
 
+// Metres between two route points (equirectangular; route points are metres apart).
+double metres_between(const ui::GeoPoint& a, const ui::GeoPoint& b)
+{
+    constexpr double kDegrees = M_PI / 180.0;
+    const double mean = (a.latitude + b.latitude) * 0.5 * kDegrees;
+    const double dy = (b.latitude - a.latitude) * 111320.0;
+    const double dx = (b.longitude - a.longitude) * 111320.0 * std::cos(mean);
+    return std::sqrt(dx * dx + dy * dy);
+}
+
 void trace_junction(std::size_t number, const ui::Maneuver& maneuver)
 {
     const auto& j = maneuver.junction;
@@ -311,11 +321,13 @@ public:
          std::vector<std::string> map_paths,
          std::string routing_xml,
          const std::string& search_index,
-         std::string ch_sidecar)
+         std::string ch_sidecar,
+         bool organic_turns)
         : obfs_(std::move(obfs)), wakeup_(std::move(wakeup)),
           map_paths_(std::move(map_paths)), routing_xml_(std::move(routing_xml)),
-          ch_sidecar_(std::move(ch_sidecar))
+          ch_sidecar_(std::move(ch_sidecar)), organic_turns_(organic_turns)
     {
+        trace(organic_turns_ ? "worker=turns source=organic_maps" : "worker=turns source=osmand");
         // Opened here, read only by the worker thread started below.
         trace(index_.open(search_index) ? "worker=search_index" : "worker=no_search_index");
         // Start only after every request/result flag below has completed
@@ -726,6 +738,33 @@ private:
         if (request.heading_degrees)
             trace_result("worker=route_heading", request.revision,
                          static_cast<std::size_t>(*request.heading_degrees));
+        // Organic Maps' turns for each route found, while its routing context (the
+        // roads at every node) is alive; parallel to |found|.
+        std::vector<omaps::Result> found_turns;
+        const auto annotate = [&](RoutingContext& context) {
+            while (found_turns.size() < found.size()) {
+                if (!organic_turns_) {
+                    found_turns.emplace_back();
+                    continue;
+                }
+                const auto annotate_started = std::chrono::steady_clock::now();
+                omaps::Result result = omaps::annotate(
+                    context, found[found_turns.size()], request.origin.latitude,
+                    request.origin.longitude, request.destination.latitude,
+                    request.destination.longitude);
+                const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - annotate_started).count();
+                char line[200];
+                if (result.ok)
+                    std::snprintf(line, sizeof(line), "worker=omaps turns=%zu ms=%lld",
+                                  result.turns.size(), ms);
+                else
+                    std::snprintf(line, sizeof(line), "worker=omaps_error why=%.150s ms=%lld",
+                                  result.error.c_str(), ms);
+                trace(line);
+                found_turns.push_back(std::move(result));
+            }
+        };
         // Both ends on one sidecar node: a route of a few metres, which A* finds
         // at once and HH (seconds over the whole network) often does not.
         bool skip_hh = false;
@@ -745,6 +784,7 @@ private:
                               timing.road_runs, timing.base_edges, timing.settled);
                 trace(line);
                 found.push_back(std::move(segments));
+                annotate(*context);
             } else if (!cancel->isAborted()) {
                 trace(("worker=ch_fallback why=" + (why.empty() ? std::string("route_rejected") : why)).c_str());
                 skip_hh = why == "too_short_for_sidecar";
@@ -755,6 +795,7 @@ private:
             auto context = new_context();
             found = route_hh(front_end, context, sx, sy, ex, ey,
                              request.alternatives && kAlternativeRoutes);
+            annotate(*context);
         }
         if (found.empty() && !cancel->isAborted()) {
             // A* (no HH data, or HH found nothing usable).
@@ -767,7 +808,10 @@ private:
             std::vector<int> intermediates_y;
             auto segments = front_end.searchRoute(context, sx, sy, ex, ey,
                                                   intermediates_x, intermediates_y, nullptr);
-            if (!segments.empty()) found.push_back(std::move(segments));
+            if (!segments.empty()) {
+                found.push_back(std::move(segments));
+                annotate(*context);
+            }
         }
         if (cancel->isAborted() || found.empty()) return {};
         {
@@ -780,12 +824,26 @@ private:
             trace(line);
         }
         // Fastest first; the others are labelled against it.
-        std::stable_sort(found.begin(), found.end(), [](const Segments& a, const Segments& b) {
-            return duration_of(a) < duration_of(b);
+        std::vector<std::size_t> order(found.size());
+        for (std::size_t index = 0; index < order.size(); ++index) order[index] = index;
+        std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+            return duration_of(found[a]) < duration_of(found[b]);
         });
+        {
+            std::vector<Segments> sorted;
+            std::vector<omaps::Result> sorted_turns;
+            for (const std::size_t index : order) {
+                sorted.push_back(std::move(found[index]));
+                sorted_turns.push_back(std::move(found_turns[index]));
+            }
+            found = std::move(sorted);
+            found_turns = std::move(sorted_turns);
+        }
         std::vector<ui::RouteAlternative> output;
         for (std::size_t index = 0; index < found.size() && index < kMaxRoutes; ++index) {
-            ui::RouteAlternative alternative = convert(request, found, index);
+            // Organic Maps switched off: OsmAnd's own manoeuvres (no Result).
+            const omaps::Result* turns = organic_turns_ ? &found_turns[index] : nullptr;
+            ui::RouteAlternative alternative = convert(request, found, index, turns);
             if (alternative.geometry.size() < 2) continue;
             output.push_back(std::move(alternative));
         }
@@ -803,8 +861,10 @@ private:
 
     // One routing result as a UI route; geometry shorter than two points
     // means unusable.
+    // turns: Organic Maps' turns for this route (omaps_turns.h); null or failed:
+    // OsmAnd's own manoeuvres.
     ui::RouteAlternative convert(const Request& request, std::vector<Segments>& found,
-                                 std::size_t route_index)
+                                 std::size_t route_index, const omaps::Result* turns)
     {
         Segments& segments = found[route_index];  // getStreetName takes it non-const
         ui::RouteAlternative alternative;
@@ -812,15 +872,22 @@ private:
                                           : "car-alternative-" + std::to_string(route_index);
         alternative.reason = "Fastest";
         alternative.arrival = "--";
+        // Per segment: route distance and geometry index at its start, its road.
+        std::vector<double> distance_at(segments.size(), 0.0);
+        std::vector<std::size_t> geometry_at(segments.size(), 0);
+        std::vector<std::string> road_of(segments.size());
         for (std::size_t segment_index = 0; segment_index < segments.size();
              ++segment_index) {
             const auto& segment = segments[segment_index];
+            distance_at[segment_index] = alternative.distance_metres;
+            geometry_at[segment_index] =
+                alternative.geometry.empty() ? 0 : alternative.geometry.size() - 1u;
             if (!segment) continue;
             const double distance_at_start = alternative.distance_metres;
-            const std::size_t geometry_at_start = alternative.geometry.size();
             // Native road names (the design fonts include Cyrillic).
             std::string road = segment->getStreetName(
                 "", false, segments, static_cast<int>(segment_index));
+            road_of[segment_index] = road;
             int limit = 0;
             if (segment->object) {
                 const float metres_per_second =
@@ -831,15 +898,6 @@ private:
             if (alternative.roads.empty() || alternative.roads.back().name != road ||
                 alternative.roads.back().speed_limit_kmh != limit)
                 alternative.roads.push_back({distance_at_start, road, limit});
-            ui::Maneuver maneuver;
-            if (maneuver_at(segments, segment_index, maneuver)) {
-                maneuver.road = road;
-                maneuver.distance_from_start_metres = distance_at_start;
-                maneuver.geometry_index = geometry_at_start;
-                if (route_index == 0 && alternative.maneuvers.size() < kJunctionTraceMax)
-                    trace_junction(alternative.maneuvers.size(), maneuver);
-                alternative.maneuvers.push_back(std::move(maneuver));
-            }
             alternative.distance_metres += segment->distance;
             alternative.duration_seconds += segment->segmentTime;
             const int start = segment->getStartPointIndex();
@@ -857,6 +915,23 @@ private:
         alternative.duration = duration_label(alternative.duration_seconds);
         alternative.distance = distance_label(alternative.distance_metres);
         if (alternative.geometry.size() < 2) return alternative;
+        // The manoeuvres: at their route point, a segment's start or (Organic Maps'
+        // turns) any point in it; the distance along the geometry from the segment start.
+        for (auto& placed : route_maneuvers(segments, turns)) {
+            if (placed.segment >= segments.size()) continue;
+            ui::Maneuver maneuver = std::move(placed.maneuver);
+            const std::size_t at = std::min(placed.route_point, alternative.geometry.size() - 1u);
+            const std::size_t from = std::min(geometry_at[placed.segment], at);
+            double metres = distance_at[placed.segment];
+            for (std::size_t i = from; i < at; ++i)
+                metres += metres_between(alternative.geometry[i], alternative.geometry[i + 1]);
+            maneuver.road = road_of[placed.segment];
+            maneuver.distance_from_start_metres = std::min(metres, alternative.distance_metres);
+            maneuver.geometry_index = at;
+            if (route_index == 0 && alternative.maneuvers.size() < kJunctionTraceMax)
+                trace_junction(alternative.maneuvers.size(), maneuver);
+            alternative.maneuvers.push_back(std::move(maneuver));
+        }
         ui::Maneuver arrive;
         arrive.kind = ui::ManeuverKind::Arrive;
         arrive.road = request.destination.title;
@@ -961,6 +1036,8 @@ private:
     std::vector<std::string> map_paths_;
     std::string routing_xml_;
     std::string ch_sidecar_;  // empty: contraction-hierarchy routing is off
+    // Turn instructions from Organic Maps' generator (omaps_turns.h); false: OsmAnd's.
+    bool organic_turns_ = true;
     std::unique_ptr<ChPlanner> ch_;
     SHARED_PTR<RoutingConfiguration> routing_config_;
     std::mutex mutex_;
@@ -990,9 +1067,11 @@ NavigationWorker::NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
                                    std::vector<std::string> map_paths,
                                    std::string routing_xml,
                                    std::string search_index,
-                                   std::string ch_sidecar)
+                                   std::string ch_sidecar,
+                                   bool organic_turns)
     : impl_(new Impl(std::move(obfs), std::move(wakeup), std::move(map_paths),
-                     std::move(routing_xml), search_index, std::move(ch_sidecar)))
+                     std::move(routing_xml), search_index, std::move(ch_sidecar),
+                     organic_turns))
 {
 }
 
