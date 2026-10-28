@@ -1539,7 +1539,7 @@ bool OsmAndEngine::ensure_navigation_worker()
         navigation_worker_ = std::unique_ptr<NavigationWorker>(
             new NavigationWorker(obfs_, navigation_wakeup_, navigation_maps_,
                                  navigation_routing_xml_, config_.search_index,
-                                 config_.ch_sidecar));
+                                 config_.ch_sidecar, !config_.osmand_turns));
         trace("worker=ready");
         return true;
     } catch (...) {

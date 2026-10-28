@@ -61,14 +61,15 @@
 
     <div id="detail" hidden>
       <div id="omaps-part" hidden>
-        <h2>Organic Maps</h2>
+        <h2>Organic Maps (what the radio uses)</h2>
+        <div id="omaps-glyph"></div>
         <div class="kv" id="omaps-facts"></div>
         <div id="omaps-lanes" style="margin-top:6px"></div>
       </div>
       <div id="osmand-none" class="fallback" hidden><h2>OsmAnd</h2>No OsmAnd manoeuvre here: the voice says
         nothing and the cluster keeps the previous picture.</div>
       <div id="osmand-part">
-      <h2>Cluster (OsmAnd)</h2>
+      <h2>OsmAnd (for comparison)</h2>
       <div class="big"><div id="glyph"></div><div><div class="num" id="sym-num"></div><div id="sym-name"></div>
         <div id="sym-source"></div></div></div>
       <div class="kv" id="facts"></div>
@@ -363,7 +364,9 @@ async function route() {
     const o = row.omaps !== null ? omaps[row.omaps] : null;
     const button = document.createElement('button');
     button.className = 'item';
-    if (m) button.appendChild(glyph(m.symbol, 34));
+    // the radio's picture: Organic Maps' manoeuvre when there is one
+    if (o && o.symbol) button.appendChild(glyph(o.symbol, 34));
+    else if (m && !result.omaps) button.appendChild(glyph(m.symbol, 34));
     else button.insertAdjacentHTML('beforeend', '<span style="display:inline-block;width:34px"></span>');
     const left = m ? `<b>${m.turn.split('(')[0]}</b> → #${m.symbol}` : '<span class="fallback">OsmAnd: nothing</span>';
     const right = result.omaps ? (o ? `<b style="color:#c792ea">${o.turn}</b>` : '<span style="color:var(--muted)">OM: nothing</span>') : '';
@@ -510,9 +513,18 @@ function select(r) {
   document.getElementById('omaps-part').hidden = !result.omaps;
   if (result.omaps) {
     document.getElementById('omaps-facts').innerHTML = (o
-      ? [['turn', `<b style="color:#c792ea">${o.turn}</b>${o.exit ? ` (exit ${o.exit})` : ''}`], ['road', o.road || '—']]
+      ? [['turn', `<b style="color:#c792ea">${o.turn}</b> → ${o.kind}${o.exit ? ` (exit ${o.exit})` : ''}`],
+         ['cluster (radio)', `#${o.symbol} ${(SYMBOLS[o.symbol] || [''])[0]}` +
+           (o.junction_symbol ? '' : ' <span class="fallback">(turn-type picture)</span>')],
+         ['junction', o.junction && o.junction.valid
+           ? `route ${o.junction.route_angle.toFixed(0)}°, other roads ${o.junction.branches.map(a => a.toFixed(0) + '°').join(', ') || '—'}`
+           : '—'],
+         ['road', o.road || '—']]
       : [['turn', '<span style="color:var(--muted)">nothing here</span>']])
       .map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+    const og = document.getElementById('omaps-glyph');
+    og.innerHTML = '';
+    if (o && o.symbol) og.appendChild(glyph(o.symbol, 90));
     const box = document.getElementById('omaps-lanes');
     if (o) drawLanes(box, o.lanes || []); else box.innerHTML = '';
   }

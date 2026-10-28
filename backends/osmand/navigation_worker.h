@@ -39,12 +39,15 @@ public:
 
     // search_index: the address index file (search/search_index.h); when it
     // is missing or unreadable, search falls back to OsmAnd's name search.
+    // organic_turns: turn instructions from Organic Maps' generator
+    // (omaps_turns.h); false: OsmAnd's own.
     NavigationWorker(std::shared_ptr<OsmAnd::ObfsCollection> obfs,
                      std::shared_ptr<Wakeup> wakeup,
                      std::vector<std::string> map_paths,
                      std::string routing_xml,
                      std::string search_index,
-                     std::string ch_sidecar = std::string());
+                     std::string ch_sidecar = std::string(),
+                     bool organic_turns = true);
     ~NavigationWorker();
     NavigationWorker(const NavigationWorker&) = delete;
     NavigationWorker& operator=(const NavigationWorker&) = delete;
