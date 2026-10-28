@@ -141,10 +141,16 @@ def check(router: Router, path: Path) -> int:
             continue
         start, finish, expected, why = (line.split("\t") + ["", ""])[:4]
         result = router.route(parse_point(start), parse_point(finish))
-        got = " ".join(m["turn"] for m in result.get("omaps", [])) if result.get("ok") else "no route"
+        # A token is OM's direction, or DIRECTION/kind to also pin the backend's
+        # manoeuvre kind (e.g. TurnSlightLeft/keep_left).
+        tokens = expected.split()
+        turns = result.get("omaps", []) if result.get("ok") else []
+        got_tokens = [m["turn"] + ("/" + m["kind"] if i < len(tokens) and "/" in tokens[i] else "")
+                      for i, m in enumerate(turns)]
+        got = " ".join(got_tokens) if result.get("ok") else "no route"
         if result.get("omaps_error"):
             got = "omaps_error: " + result["omaps_error"]
-        ok = got == expected.strip()
+        ok = got == " ".join(tokens)
         failed += not ok
         print(f"{'ok  ' if ok else 'FAIL'} {start} {finish}  {why}")
         if not ok:
