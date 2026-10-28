@@ -31,9 +31,11 @@ struct Config {
     std::string vector_cache = "/datastore/navicore-backend/vectorcache";
     // Contraction-hierarchy routing sidecar built from the maps (tools/ch):
     // "car.chr" in the map directory, or "<map file>.chr" next to a single
-    // map file. Routing falls back to HH and A* when it is absent, stale or
-    // cannot serve a route. Empty when disabled (marker
-    // /datastore/navicore-backend/disable-ch, or OPEN_NAVICORE_OSMAND_CH_DISABLE=1).
+    // map file. A configured sidecar that is absent, stale or cannot serve a
+    // route reports failure. Empty explicitly selects HH (or A* for maps
+    // without HH data); the routers never retry each other's failures. Disabled by
+    // the marker
+    // /datastore/navicore-backend/disable-ch, or OPEN_NAVICORE_OSMAND_CH_DISABLE=1.
     std::string ch_sidecar = "";
     // Turn instructions come from Organic Maps' turn generator (omaps_turns.h).
     // OsmAnd's own only with the marker /datastore/navicore-backend/osmand-turns

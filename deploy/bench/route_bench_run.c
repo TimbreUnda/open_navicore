@@ -16,7 +16,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "dlopen %s: %s\n", core, dlerror());
         return 1;
     }
-    library = dlopen("/tmp/libroute_bench.so", RTLD_NOW);
+    const int worker = argc > 1 && strcmp(argv[1], "worker") == 0;
+    library = dlopen(worker ? "/tmp/libroute_worker_bench.so" : "/tmp/libroute_bench.so", RTLD_NOW);
     if (library == NULL) {
         fprintf(stderr, "dlopen: %s\n", dlerror());
         return 1;
@@ -29,7 +30,7 @@ int main(int argc, char **argv)
         }
         return entry(argc - 1, argv + 1);
     }
-    entry = (int (*)(int, char **))dlsym(library, "route_bench_main");
+    entry = (int (*)(int, char **))dlsym(library, worker ? "route_worker_bench_main" : "route_bench_main");
     if (entry == NULL) {
         fprintf(stderr, "dlsym: %s\n", dlerror());
         return 1;

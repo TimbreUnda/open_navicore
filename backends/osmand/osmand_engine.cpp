@@ -274,9 +274,7 @@ private:
     void update_pin_marker();
     bool unproject_lat_lon(int x, int y, OsmAnd::LatLon& out) const;
     std::string with_distance(std::string text, const OsmAnd::LatLon& location) const;
-    std::string pin_id_;                  // the pin whose address is pending
     Config config_;
-    std::uint64_t address_revision_ = 0;
     ui::MapTouch map_touch_;
     std::chrono::steady_clock::time_point clock_origin_ =
         std::chrono::steady_clock::now();
@@ -1497,7 +1495,7 @@ void OsmAndEngine::handle_map_tap(int x, int y)
 }
 
 // Long press on the map: a pin there with its card. The subtitle shows
-// the coordinates until the worker finds the nearest address.
+// the coordinates. Routing uses this exact point; no reverse geocoding is needed.
 void OsmAndEngine::drop_pin(int x, int y)
 {
     OsmAnd::LatLon location;
@@ -1512,13 +1510,9 @@ void OsmAndEngine::drop_pin(int x, int y)
     pin.latitude = location.latitude;
     pin.longitude = location.longitude;
     pin.subtitle = with_distance(coordinates, location);
-    pin_id_ = pin.id;
     if (!view_->show_place_card(std::move(pin), "pin"))
         return;
     trace("map_gesture=pin");
-    if (ensure_navigation_worker())
-        navigation_worker_->submit_address(++address_revision_,
-                                           {location.latitude, location.longitude});
 }
 
 // The pin follows the map while its card is open.
@@ -1583,17 +1577,6 @@ void OsmAndEngine::drain_navigation_results()
                      search_result.destinations.size());
         (void)view_->apply_search_results(search_result.revision,
                                           std::move(search_result.destinations));
-    }
-    NavigationWorker::AddressResult address_result;
-    if (navigation_worker_ && navigation_worker_->take_address_result(address_result) &&
-        address_result.revision == address_revision_) {
-        trace_result("engine=address_result", address_result.revision,
-                     address_result.address.size());
-        const ui::Destination* pin = navigation_->place_card();
-        if (!address_result.address.empty() && pin && pin->id == pin_id_)
-            (void)view_->set_place_subtitle(
-                pin_id_, with_distance(address_result.address,
-                                       OsmAnd::LatLon(pin->latitude, pin->longitude)));
     }
     NavigationWorker::RouteResult route_result;
     if (navigation_worker_ && navigation_worker_->take_route_result(route_result)) {

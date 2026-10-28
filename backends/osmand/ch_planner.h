@@ -39,7 +39,7 @@ public:
 
     // Maps the sidecar and checks it was built from exactly these map files
     // (same names and sizes, whatever the order). On failure returns null and
-    // says why in `error`; the caller then routes without it.
+    // says why in `error`; the caller reports that its selected router is unavailable.
     static std::unique_ptr<ChPlanner> open(const std::string& sidecar_path,
                                            const std::vector<std::string>& routable_maps,
                                            std::string& error);
@@ -48,7 +48,7 @@ public:
     // The fastest route between two points (31-bit tile numbers), or empty
     // when the sidecar cannot serve it (a point too far from every road,
     // start and end on one road node, a road missing from the loaded maps);
-    // `why` then names the reason and the caller falls back to HH or A*.
+    // `why` then names the reason; the caller reports failure.
     // start_heading_degrees: the car's direction (clockwise from north), or
     // negative when unknown; start nodes behind it cost a reverse penalty.
     Segments route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingContext>& context,

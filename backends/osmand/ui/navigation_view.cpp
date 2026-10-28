@@ -770,15 +770,6 @@ void NavigationView::set_pin_marker(bool visible, int x, int y)
     pin_y_ = y;
 }
 
-bool NavigationView::set_place_subtitle(const std::string& id, std::string subtitle)
-{
-    if (!model_.set_place_subtitle(id, std::move(subtitle)))
-        return false;
-    if (built_screen_ == Screen::FreeDrive)
-        rebuild();
-    return true;
-}
-
 void NavigationView::set_vehicle_marker(bool visible, int x, int y,
                                         float rotation_degrees)
 {

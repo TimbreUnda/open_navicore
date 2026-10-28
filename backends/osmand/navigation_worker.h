@@ -30,13 +30,6 @@ public:
         std::vector<ui::RouteAlternative> routes;
     };
 
-    // Address of a map point (dropped pin): "street, number"; empty when
-    // none was found.
-    struct AddressResult {
-        std::uint64_t revision = 0;
-        std::string address;
-    };
-
     // search_index: the address index file (search/search_index.h); when it
     // is missing or unreadable, search falls back to OsmAnd's name search.
     // organic_turns: turn instructions from Organic Maps' generator
@@ -65,11 +58,8 @@ public:
     void submit_route(std::uint64_t revision, ui::Destination destination,
                       ui::GeoPoint origin, bool alternatives,
                       std::optional<double> heading_degrees);
-    // Replaces a pending request like the others (one job at a time).
-    void submit_address(std::uint64_t revision, ui::GeoPoint point);
     bool take_search_result(SearchResult& output);
     bool take_route_result(RouteResult& output);
-    bool take_address_result(AddressResult& output);
     void stop() noexcept;
 
 private:

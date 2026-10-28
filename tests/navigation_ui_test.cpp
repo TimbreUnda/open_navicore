@@ -428,17 +428,18 @@ void test_place_card_and_back()
     assert(!view.apply_routes(cancelled, {route}));
     assert(model.screen() == Screen::FreeDrive);
 
-    // A dropped pin is a place card too: its address arrives later (for
-    // that pin only), and Navigate routes to it.
+    // A dropped pin keeps its coordinates on the card and routes to that
+    // exact point without an address lookup.
     Destination pin{"pin:50.44000, 30.52000", "Dropped pin", "50.44000, 30.52000", "",
                     50.44, 30.52};
     assert(view.show_place_card(pin, "pin"));
     assert(model.place_card_is_pin());
-    assert(!view.set_place_subtitle("pin:other", "вулиця Інша"));
-    assert(view.set_place_subtitle(pin.id, "вулиця Хрещатик, 22 · 0.4 km"));
-    assert(model.place_card()->subtitle == "вулиця Хрещатик, 22 · 0.4 km");
+    assert(model.place_card()->subtitle == pin.subtitle);
     assert(view.select_place(*model.place_card()));
     assert(model.destination() && model.destination()->id == pin.id);
+    assert(model.destination()->latitude == pin.latitude);
+    assert(model.destination()->longitude == pin.longitude);
+    assert(model.destination()->subtitle == pin.subtitle);
     assert(view.close_place_card() && !model.place_card_is_pin());
     view.set_pin_marker(true, 600, 300);  // no card, no crash; hidden on rebuild
     settle(view, 2);
