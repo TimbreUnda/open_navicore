@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 
@@ -91,6 +92,12 @@ std::vector<RoadSnap> snap_roads(RoutingContext* context, int x, int y)
             continue;
         snaps.push_back(snap);
     }
+#ifdef ONC_ROUTE_DIAGNOSTICS
+    // Causal probe for the route survey, never compiled into the backend.
+    const char* nearest_only = std::getenv("ROUTE_BENCH_NEAREST_ONLY");
+    if (nearest_only && std::strcmp(nearest_only, "1") == 0 && snaps.size() > 1)
+        snaps.resize(1);
+#endif
     return snaps;
 }
 
@@ -310,6 +317,23 @@ ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHAR
         }
     timing_.snap_ms = ms_since(step);
 
+#ifdef ONC_ROUTE_DIAGNOSTICS
+    // Standalone route survey only; absent from the installed backend.
+    std::size_t start_nodes = 0, end_nodes = 0;
+    for (const auto& approach : starts) start_nodes += approach.nodes.size();
+    for (const auto& approach : ends) end_nodes += approach.nodes.size();
+    std::fprintf(stderr, "ch_diag start_roads=%zu end_roads=%zu start_approaches=%zu end_approaches=%zu "
+        "start_nodes=%zu end_nodes=%zu direct=%d snap_ms=%.1f\n", from_roads.size(), to_roads.size(),
+        starts.size(), ends.size(), start_nodes, end_nodes, has_direct ? 1 : 0, timing_.snap_ms);
+    const auto print_snaps = [](const char* side, const std::vector<RoadSnap>& snaps) {
+        for (const auto& snap : snaps)
+            std::fprintf(stderr, "ch_snap side=%s road=%lld gap_m=%.2f lo=%d hi=%d oneway=%d\n",
+                side, static_cast<long long>(snap.road->getId()), snap.metres, snap.lo, snap.hi, snap.oneway);
+    };
+    print_snaps("start", from_roads);
+    print_snaps("end", to_roads);
+#endif
+
     std::vector<onc_ch::RoadRun> runs;
     onc_ch::u32 cost = 0;
     const Approach* first = nullptr;
@@ -389,6 +413,10 @@ ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHAR
             }
             const int points = road ? static_cast<int>(road->pointsX.size()) : 0;
             if (!road || run.start < 0 || run.end < 0 || run.start >= points || run.end >= points) {
+#ifdef ONC_ROUTE_DIAGNOSTICS
+                std::fprintf(stderr, "ch_diag missing_road=%lld from=%d to=%d points=%d anchor=%d,%d\n",
+                    static_cast<long long>(run.road), run.start, run.end, points, run.anchor_x, run.anchor_y);
+#endif
                 why = "road_missing_in_maps";
                 return {};
             }
@@ -403,6 +431,16 @@ ChPlanner::Segments ChPlanner::route(RoutePlannerFrontEnd& front_end, const SHAR
     step = Clock::now();
     prepareResult(context.get(), results);
     front_end.makeStartEndPointsPrecise(context.get(), results, start_x, start_y, end_x, end_y);
+#ifdef ONC_ROUTE_DIAGNOSTICS
+    if (!results.empty()) {
+        const auto& first_result = results.front();
+        const auto& last_result = results.back();
+        std::fprintf(stderr, "ch_selected start_road=%lld end_road=%lld start_index=%d end_index=%d direct=%d\n",
+            static_cast<long long>(first_result->object->getId()),
+            static_cast<long long>(last_result->object->getId()), first_result->getStartPointIndex(),
+            last_result->getEndPointIndex(), use_direct ? 1 : 0);
+    }
+#endif
     timing_.prepare_ms = ms_since(step);
     return results;
 }
