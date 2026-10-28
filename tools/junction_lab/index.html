@@ -64,6 +64,8 @@
       <div class="big"><div id="glyph"></div><div><div class="num" id="sym-num"></div><div id="sym-name"></div>
         <div id="sym-source"></div></div></div>
       <div class="kv" id="facts"></div>
+      <h2>Lanes (OsmAnd)</h2>
+      <div id="lanes"></div>
       <h2>Junction as the classifier sees it</h2>
       <div id="polar"></div>
       <div class="legend" id="legend"></div>
@@ -394,6 +396,51 @@ function showSymbol(m, junction) {
   else p.textContent = 'no junction geometry (roundabout, or no incoming segment)';
 }
 
+// OsmAnd's lanes for a manoeuvre, left to right: each lane's turns (first
+// one bold), the lanes the route uses highlighted, and where they came from.
+const LANE_ANGLES = {C: 0, TSLL: -45, TL: -90, TSHL: -135, TSLR: 45, TR: 90, TSHR: 135, KL: -25, KR: 25};
+
+function laneArrow(svg, x, turn, primary) {
+  const colour = primary ? '#ffffff' : '#9aa4b1', width = primary ? 3 : 2;
+  const base = [x, 56], mid = [x, 30];
+  if (turn === 'TU' || turn === 'TRU') {
+    const s = turn === 'TU' ? -1 : 1;
+    el('path', {d: `M${base} L${x},22 A7,7 0 0 ${s > 0 ? 1 : 0} ${x + s * 14},22 L${x + s * 14},34`, fill: 'none',
+      stroke: colour, 'stroke-width': width}, svg);
+    arrowHead(svg, [x + s * 14, 40], 180, 6, colour);
+    return;
+  }
+  const angle = LANE_ANGLES[turn] ?? 0;
+  const tip = at(mid[0], mid[1], angle, 16);
+  el('path', {d: `M${base} L${mid} L${at(mid[0], mid[1], angle, 11)}`, fill: 'none', stroke: colour,
+    'stroke-width': width, 'stroke-linejoin': 'round'}, svg);
+  arrowHead(svg, tip, angle, primary ? 7 : 5, colour);
+}
+
+function showLanes(m) {
+  const box = document.getElementById('lanes');
+  box.innerHTML = '';
+  const lanes = m.lane_values || [];
+  if (!lanes.length) { box.innerHTML = '<span style="color:var(--muted)">no lanes for this manoeuvre</span>'; return; }
+  const w = 40, svg = el('svg', {viewBox: `0 0 ${lanes.length * w} 64`, width: lanes.length * w, height: 64});
+  lanes.forEach((lane, k) => {
+    el('rect', {x: k * w + 2, y: 2, width: w - 4, height: 60, rx: 4,
+      fill: lane.active ? '#1f5f3a' : '#05070a', stroke: '#2c333d'}, svg);
+    // secondary turns first, so the primary arrow is drawn on top
+    lane.turns.slice(1).forEach(t => laneArrow(svg, k * w + w / 2, t, false));
+    if (lane.turns.length) laneArrow(svg, k * w + w / 2, lane.turns[0], true);
+  });
+  box.appendChild(svg);
+  const tag = m.incoming_turn_lanes;
+  const source = tag
+    ? `from the map: incoming road <code>turn:lanes=${tag}</code>`
+    : `<span class="fallback">invented by OsmAnd</span>: the incoming road has no turn:lanes` +
+      (m.incoming_lanes > 0 ? `, only <code>lanes=${m.incoming_lanes}</code>` : ', no lanes tag either') +
+      '; turns guessed from the junction';
+  box.insertAdjacentHTML('beforeend', `<div style="margin-top:4px">${source}<br><span style="color:var(--muted)">` +
+    `green = lanes the route uses; bold arrow = lane's main turn, thin = other turns. OsmAnd: ${m.lanes}</span></div>`);
+}
+
 function select(i) {
   selected = i;
   document.querySelectorAll('#maneuvers .item').forEach((b, k) => b.classList.toggle('sel', k === i));
@@ -409,6 +456,7 @@ function select(i) {
     ['lanes summary', j.lane_count ? `${lanePattern(j)} change ${j.lane_change}` : '—'],
     ['junction / turn-type', `${m.junction_symbol || 'none'} / ${m.turn_type_symbol}`],
   ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+  showLanes(m);
   // the arms on the map, from the incoming direction
   armsLayer.clearLayers();
   if (j.valid) {
