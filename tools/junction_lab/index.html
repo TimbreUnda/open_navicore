@@ -60,7 +60,15 @@
     </div>
 
     <div id="detail" hidden>
-      <h2>Cluster</h2>
+      <div id="omaps-part" hidden>
+        <h2>Organic Maps</h2>
+        <div class="kv" id="omaps-facts"></div>
+        <div id="omaps-lanes" style="margin-top:6px"></div>
+      </div>
+      <div id="osmand-none" class="fallback" hidden><h2>OsmAnd</h2>No OsmAnd manoeuvre here: the voice says
+        nothing and the cluster keeps the previous picture.</div>
+      <div id="osmand-part">
+      <h2>Cluster (OsmAnd)</h2>
       <div class="big"><div id="glyph"></div><div><div class="num" id="sym-num"></div><div id="sym-name"></div>
         <div id="sym-source"></div></div></div>
       <div class="kv" id="facts"></div>
@@ -76,6 +84,7 @@
       <div class="row"><label>kind</label><select id="w-kind"></select><label>lanes</label><input id="w-lanes" placeholder="..*" style="max-width:70px"></div>
       <div class="row"><label>route</label><input id="w-route" style="max-width:70px"><label>arms</label><input id="w-arms"></div>
       <div class="row"><button id="w-run">Classify</button><span id="w-result"></span></div>
+      </div>
 
       <h2>Case (paste to share)</h2>
       <textarea id="case" readonly></textarea>
@@ -344,29 +353,71 @@ async function route() {
   if (routeLine) map.removeLayer(routeLine);
   if (!result.ok) { status(`<span class="err">${result.error}</span>`); return; }
   routeLine = L.polyline(result.geometry, {color: '#3fb6ff', weight: 5, opacity: .8}).addTo(map);
-  status(`${result.maneuvers.length} manoeuvre(s)`);
+  rows = buildRows(result);
+  const omaps = result.omaps || [];
+  status(`OsmAnd ${result.maneuvers.length} manoeuvre(s)` + (result.omaps ? `, Organic Maps ${omaps.length}` : ''));
   const list = document.getElementById('maneuvers');
   list.innerHTML = '';
-  result.maneuvers.forEach((m, i) => {
+  rows.forEach((row, r) => {
+    const m = row.osmand !== null ? result.maneuvers[row.osmand] : null;
+    const o = row.omaps !== null ? omaps[row.omaps] : null;
     const button = document.createElement('button');
     button.className = 'item';
-    button.appendChild(glyph(m.symbol, 34));
-    button.insertAdjacentHTML('beforeend', `<span><b>${i + 1}. ${m.turn}</b> → #${m.symbol}<br><span style="color:var(--muted)">${m.road || '(no name)'}</span></span>`);
-    button.onclick = () => select(i);
+    if (m) button.appendChild(glyph(m.symbol, 34));
+    else button.insertAdjacentHTML('beforeend', '<span style="display:inline-block;width:34px"></span>');
+    const left = m ? `<b>${m.turn.split('(')[0]}</b> → #${m.symbol}` : '<span class="fallback">OsmAnd: nothing</span>';
+    const right = result.omaps ? (o ? `<b style="color:#c792ea">${o.turn}</b>` : '<span style="color:var(--muted)">OM: nothing</span>') : '';
+    const road = (m && m.road) || (o && o.road) || '(no name)';
+    button.insertAdjacentHTML('beforeend', `<span>${r + 1}. ${left}${right ? ' | ' + right : ''}<br><span style="color:var(--muted)">${road}</span></span>`);
+    button.onclick = () => select(r);
     list.appendChild(button);
-    L.circleMarker([m.lat, m.lon], {radius: 8, color: '#fff', weight: 2, fillColor: '#3fb6ff', fillOpacity: 1})
-      .bindTooltip(String(i + 1), {permanent: true, direction: 'center', className: ''})
-      .on('click', () => select(i)).addTo(maneuverLayer);
+    const p = m || o;
+    L.circleMarker([p.lat, p.lon], {radius: 8, color: '#fff', weight: 2, fillColor: m ? '#3fb6ff' : '#c792ea', fillOpacity: 1})
+      .bindTooltip(String(r + 1), {permanent: true, direction: 'center', className: ''})
+      .on('click', () => select(r)).addTo(maneuverLayer);
   });
-  document.getElementById('maneuvers-box').hidden = result.maneuvers.length === 0;
+  document.getElementById('maneuvers-box').hidden = rows.length === 0;
   document.getElementById('detail').hidden = true;
-  // the manoeuvre nearest to the middle of FROM-TO: usually the junction asked about
-  if (result.maneuvers.length) {
+  // the row nearest to the middle of FROM-TO: usually the junction asked about
+  if (rows.length) {
     const mid = L.latLng((from.getLatLng().lat + to.getLatLng().lat) / 2, (from.getLatLng().lng + to.getLatLng().lng) / 2);
     let best = 0;
-    result.maneuvers.forEach((m, i) => { if (mid.distanceTo([m.lat, m.lon]) < mid.distanceTo([result.maneuvers[best].lat, result.maneuvers[best].lon])) best = i; });
+    rows.forEach((row, r) => { if (mid.distanceTo(rowPoint(row)) < mid.distanceTo(rowPoint(rows[best]))) best = r; });
     select(best);
   }
+}
+
+// OsmAnd's manoeuvres and Organic Maps' turns side by side: one row per
+// place where either says something (within 15 m = the same junction), in
+// route order.
+let rows = [];
+
+function rowPoint(row) {
+  const p = row.osmand !== null ? result.maneuvers[row.osmand] : result.omaps[row.omaps];
+  return [p.lat, p.lon];
+}
+
+function buildRows(r) {
+  const omaps = r.omaps || [];
+  const along = p => {
+    let best = 0, bestDistance = Infinity;
+    r.geometry.forEach((g, k) => {
+      const d = L.latLng(g).distanceTo([p.lat, p.lon]);
+      if (d < bestDistance) { bestDistance = d; best = k; }
+    });
+    return best;
+  };
+  const used = new Set();
+  const out = r.maneuvers.map((m, i) => {
+    let match = null;
+    omaps.forEach((o, k) => {
+      if (!used.has(k) && match === null && L.latLng(o.lat, o.lon).distanceTo([m.lat, m.lon]) < 15) match = k;
+    });
+    if (match !== null) used.add(match);
+    return {osmand: i, omaps: match, at: along(m)};
+  });
+  omaps.forEach((o, k) => { if (!used.has(k)) out.push({osmand: null, omaps: k, at: along(o)}); });
+  return out.sort((a, b) => a.at - b.at);
 }
 
 function offset(lat, lon, bearing, metres) {
@@ -417,20 +468,30 @@ function laneArrow(svg, x, turn, primary) {
   arrowHead(svg, tip, angle, primary ? 7 : 5, colour);
 }
 
-function showLanes(m) {
-  const box = document.getElementById('lanes');
+// Organic Maps lane turns (lane_info) as OsmAnd turn names, for drawing.
+const OMAPS_LANE_TURNS = {through: 'C', left: 'TL', slight_left: 'TSLL', sharp_left: 'TSHL', right: 'TR',
+  slight_right: 'TSLR', sharp_right: 'TSHR', reverse: 'TU', merge_to_left: 'KL', merge_to_right: 'KR', none: 'C'};
+
+// Lanes left to right: green = used by the route; first turn bold, others thin.
+function drawLanes(box, lanes) {
   box.innerHTML = '';
-  const lanes = m.lane_values || [];
-  if (!lanes.length) { box.innerHTML = '<span style="color:var(--muted)">no lanes for this manoeuvre</span>'; return; }
+  if (!lanes.length) { box.innerHTML = '<span style="color:var(--muted)">no lanes for this manoeuvre</span>'; return false; }
   const w = 40, svg = el('svg', {viewBox: `0 0 ${lanes.length * w} 64`, width: lanes.length * w, height: 64});
   lanes.forEach((lane, k) => {
     el('rect', {x: k * w + 2, y: 2, width: w - 4, height: 60, rx: 4,
       fill: lane.active ? '#1f5f3a' : '#05070a', stroke: '#2c333d'}, svg);
+    const turns = lane.turns.map(t => OMAPS_LANE_TURNS[t] || t);
     // secondary turns first, so the primary arrow is drawn on top
-    lane.turns.slice(1).forEach(t => laneArrow(svg, k * w + w / 2, t, false));
-    if (lane.turns.length) laneArrow(svg, k * w + w / 2, lane.turns[0], true);
+    turns.slice(1).forEach(t => laneArrow(svg, k * w + w / 2, t, false));
+    if (turns.length) laneArrow(svg, k * w + w / 2, turns[0], true);
   });
   box.appendChild(svg);
+  return true;
+}
+
+function showLanes(m) {
+  const box = document.getElementById('lanes');
+  if (!drawLanes(box, m.lane_values || [])) return;
   const tag = m.incoming_turn_lanes;
   const source = tag
     ? `from the map: incoming road <code>turn:lanes=${tag}</code>`
@@ -441,11 +502,30 @@ function showLanes(m) {
     `green = lanes the route uses; bold arrow = lane's main turn, thin = other turns. OsmAnd: ${m.lanes}</span></div>`);
 }
 
-function select(i) {
-  selected = i;
-  document.querySelectorAll('#maneuvers .item').forEach((b, k) => b.classList.toggle('sel', k === i));
-  const m = result.maneuvers[i], j = m.junction;
+function select(r) {
+  const row = rows[r];
+  document.querySelectorAll('#maneuvers .item').forEach((b, k) => b.classList.toggle('sel', k === r));
   document.getElementById('detail').hidden = false;
+  const o = row.omaps !== null ? result.omaps[row.omaps] : null;
+  document.getElementById('omaps-part').hidden = !result.omaps;
+  if (result.omaps) {
+    document.getElementById('omaps-facts').innerHTML = (o
+      ? [['turn', `<b style="color:#c792ea">${o.turn}</b>${o.exit ? ` (exit ${o.exit})` : ''}`], ['road', o.road || '—']]
+      : [['turn', '<span style="color:var(--muted)">nothing here</span>']])
+      .map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+    const box = document.getElementById('omaps-lanes');
+    if (o) drawLanes(box, o.lanes || []); else box.innerHTML = '';
+  }
+  selected = row.osmand !== null ? row.osmand : -1;
+  document.getElementById('osmand-part').hidden = selected < 0;
+  document.getElementById('osmand-none').hidden = selected >= 0;
+  armsLayer.clearLayers();
+  if (selected < 0) {
+    map.panTo(rowPoint(row));
+    document.getElementById('case').value = caseText(row);
+    return;
+  }
+  const m = result.maneuvers[selected], j = m.junction;
   showSymbol(m, j);
   const bands = BANDS ? j.branches.map(a => `${Math.round(a)}° ${bandOf(a)}`).join(', ') : '';
   document.getElementById('facts').innerHTML = [
@@ -458,7 +538,6 @@ function select(i) {
   ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
   showLanes(m);
   // the arms on the map, from the incoming direction
-  armsLayer.clearLayers();
   if (j.valid) {
     const line = (angle, colour, weight, dash) => L.polyline([[m.lat, m.lon], offset(m.lat, m.lon, m.incoming_bearing + angle, 35)],
       {color: colour, weight, dashArray: dash, opacity: .95}).addTo(armsLayer);
@@ -473,7 +552,7 @@ function select(i) {
   document.getElementById('w-arms').value = j.branches.map(a => a.toFixed(0)).join(',');
   document.getElementById('w-lanes').value = lanePattern(j);
   document.getElementById('w-result').textContent = '';
-  document.getElementById('case').value = caseText();
+  document.getElementById('case').value = caseText(row);
 }
 
 async function whatIf() {
@@ -488,15 +567,25 @@ async function whatIf() {
   showSymbol(r, r);
 }
 
-function caseText() {
-  if (!result || selected < 0) return '';
-  const m = result.maneuvers[selected], j = m.junction;
-  return [`junction_lab.py --route ${fmt(from.getLatLng())} ${fmt(to.getLatLng())}`,
-    `manoeuvre ${selected + 1}/${result.maneuvers.length} at ${m.lat.toFixed(6)},${m.lon.toFixed(6)} road "${m.road}"`,
-    `osmand turn=${m.turn} angle=${m.turn_angle.toFixed(0)} kind=${m.kind} lanes=${m.lanes || '-'}`,
-    `junction route=${j.route_angle.toFixed(0)} arms=${j.branches.map(a => a.toFixed(0)).join(',') || '-'}${j.truncated ? '+' : ''} lanes=${lanePattern(j) || '-'} change=${j.lane_change}`,
-    `cluster symbol=${m.symbol} (${(SYMBOLS[m.symbol] || [''])[0]}) junction=${m.junction_symbol} turn_type=${m.turn_type_symbol}`,
-    `expected: `].join('\n');
+function caseText(row) {
+  if (!result || !row) return '';
+  const [lat, lon] = rowPoint(row);
+  const lines = [`junction_lab.py --route ${fmt(from.getLatLng())} ${fmt(to.getLatLng())}`,
+    `row ${rows.indexOf(row) + 1}/${rows.length} at ${lat.toFixed(6)},${lon.toFixed(6)}`];
+  if (row.osmand !== null) {
+    const m = result.maneuvers[row.osmand], j = m.junction;
+    lines.push(`osmand turn=${m.turn} angle=${m.turn_angle.toFixed(0)} kind=${m.kind} lanes=${m.lanes || '-'} road "${m.road}"`,
+      `junction route=${j.route_angle.toFixed(0)} arms=${j.branches.map(a => a.toFixed(0)).join(',') || '-'}${j.truncated ? '+' : ''} lanes=${lanePattern(j) || '-'} change=${j.lane_change}`,
+      `cluster symbol=${m.symbol} (${(SYMBOLS[m.symbol] || [''])[0]}) junction=${m.junction_symbol} turn_type=${m.turn_type_symbol}`);
+  } else {
+    lines.push('osmand: no manoeuvre');
+  }
+  if (result.omaps) {
+    const o = row.omaps !== null ? result.omaps[row.omaps] : null;
+    lines.push(o ? `organic maps turn=${o.turn}${o.exit ? ' exit=' + o.exit : ''} road "${o.road}"` : 'organic maps: no turn');
+  }
+  lines.push('expected: ');
+  return lines.join('\n');
 }
 
 function goCoords() {
