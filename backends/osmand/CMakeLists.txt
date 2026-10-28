@@ -101,6 +101,7 @@ add_custom_target(build_info_git
 
 add_library(osmand_backend SHARED
   osmand_backend.cpp config.cpp session.cpp osmand_engine.cpp navigation_worker.cpp ch_planner.cpp
+  route_maneuvers.cpp
   thread_priority.cpp crash_reporter.cpp frame_metrics.cpp build_info.cpp
   gpu_upload_context.cpp
   ui/gl_overlay_compositor.cpp
