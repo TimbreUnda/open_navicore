@@ -313,6 +313,27 @@ bool CanDiscardTurnByHighwayClassOrAngles(CarDirection const routeDirection, dou
   Segment firstOutgoingSegment;
   turnInfo.m_outgoing->m_segmentRange.GetFirstSegment(numMwmIds, firstOutgoingSegment);
 
+  // At an oblique T-junction both exits can belong to the crossing road.
+  // Choosing the less sharp exit still requires an instruction: the incoming
+  // road ends here. Do not suppress it as an obvious continuation merely
+  // because the other direction of that road points mostly backwards.
+  Segment incomingSegment;
+  if (turnCandidates.size() == 2 && std::abs(routeAngle) >= 25.0 &&
+      !turnInfo.m_ingoing->m_isLink && !turnInfo.m_outgoing->m_isLink &&
+      turnInfo.m_ingoing->m_segmentRange.GetFirstSegment(numMwmIds, incomingSegment))
+  {
+    auto const & a = turnCandidates[0];
+    auto const & b = turnCandidates[1];
+    auto const sameFeature = [](Segment const & x, Segment const & y)
+    { return x.GetMwmId() == y.GetMwmId() && x.GetFeatureId() == y.GetFeatureId(); };
+    if (sameFeature(a.m_segment, firstOutgoingSegment) && sameFeature(b.m_segment, firstOutgoingSegment) &&
+        !sameFeature(incomingSegment, firstOutgoingSegment) &&
+        a.m_segment.IsForward() != b.m_segment.IsForward() &&
+        a.m_segment.GetPointId(false) == b.m_segment.GetPointId(false) &&
+        std::abs(std::abs(a.m_angle - b.m_angle) - 180.0) <= 25.0)
+      return false;
+  }
+
   for (auto const & t : turnCandidates)
   {
     // Let's consider all outgoing segments except for route outgoing segment.
@@ -499,21 +520,8 @@ void GetTurnDirectionBasic(IRoutingResult const & result, size_t const outgoingS
     return;
   }
 
-  double const turnAngle = CalcTurnAngle(result, outgoingSegmentIndex, numMwmIds, vehicleSettings);
-
-  // This angle is calculated using only 1 segment back and forward, not like turnAngle.
-  double const turnOneSegmentAngle = CalcOneSegmentTurnAngle(turnInfo);
-
-  // To not discard some disputable turns let's use max by modulus from turnOneSegmentAngle and turnAngle.
-  // It's natural since angles of turnCandidates are calculated in IRoutingResult::GetPossibleTurns()
-  // according to CalcOneSegmentTurnAngle logic. And to be safe turnAngle is used too.
-  double turnAngleToCompare = turnAngle;
-  if (turnOneSegmentAngle <= 0 && turnAngle <= 0)
-    turnAngleToCompare = std::min(turnOneSegmentAngle, turnAngle);
-  else if (turnOneSegmentAngle >= 0 && turnAngle >= 0)
-    turnAngleToCompare = std::max(turnOneSegmentAngle, turnAngle);
-  else if (std::abs(turnOneSegmentAngle) > 10)
-    LOG(LWARNING, ("Significant angles are expected to have the same sign."));
+  double const turnAngleToCompare =
+      CalcInstructionTurnAngle(result, outgoingSegmentIndex, numMwmIds, vehicleSettings);
 
   CarDirection const intermediateDirection = IntermediateDirection(turnAngleToCompare);
 

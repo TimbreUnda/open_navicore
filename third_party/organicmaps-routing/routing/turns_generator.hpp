@@ -61,6 +61,11 @@ bool GetTurnInfo(IRoutingResult const & result, size_t const outgoingSegmentInde
 double CalcTurnAngle(IRoutingResult const & result, size_t const outgoingSegmentIndex, NumMwmIds const & numMwmIds,
                      RoutingSettings const & vehicleSettings);
 
+// Angle used by car instructions and the cluster picture. Accounts for a short
+// rounded entrance without looking beyond the next junction.
+double CalcInstructionTurnAngle(IRoutingResult const & result, size_t outgoingSegmentIndex,
+                                NumMwmIds const & numMwmIds, RoutingSettings const & vehicleSettings);
+
 void RemoveUTurnCandidate(TurnInfo const & turnInfo, NumMwmIds const & numMwmIds,
                           std::vector<TurnCandidate> & turnCandidates);
 

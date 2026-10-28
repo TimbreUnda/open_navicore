@@ -6,6 +6,8 @@
 
 #include "geometry/mercator.hpp"
 
+#include "base/logging.hpp"
+
 namespace routing
 {
 namespace turns
@@ -281,6 +283,66 @@ double CalcTurnAngle(IRoutingResult const & result, size_t const outgoingSegment
 
   m2::PointD const junctionPoint = result.GetSegments()[outgoingSegmentIndex].m_path.front().GetPoint();
   return math::RadToDeg(PiMinusTwoVectorsAngle(junctionPoint, ingoingPoint, outgoingPoint));
+}
+
+double CalcInstructionTurnAngle(IRoutingResult const & result, size_t outgoingSegmentIndex,
+                                NumMwmIds const & numMwmIds, RoutingSettings const & vehicleSettings)
+{
+  double const curve = CalcTurnAngle(result, outgoingSegmentIndex, numMwmIds, vehicleSettings);
+  TurnInfo info;
+  if (!GetTurnInfo(result, outgoingSegmentIndex, vehicleSettings, info))
+    return curve;
+  double const first = CalcOneSegmentTurnAngle(info);
+  double usual = curve;
+  if (first <= 0 && curve <= 0)
+    usual = std::min(first, curve);
+  else if (first >= 0 && curve >= 0)
+    usual = std::max(first, curve);
+  else if (std::abs(first) > 10)
+    LOG(LWARNING, ("Significant angles are expected to have the same sign."));
+
+  // A few metres perpendicular to the incoming road can be a rounded entrance
+  // to a diagonal street. Measure its settled heading over metres 10..30, only
+  // inside this loaded segment (never across another junction). Keep ordinary
+  // corners, sharp turns and S-bends on the original angle calculation.
+  auto const & path = info.m_outgoing->m_path;
+  if (path.size() < 3 || std::abs(first) < 50.0 || std::abs(first) >= 135.0 ||
+      mercator::DistanceOnEarth(path[0].GetPoint(), path[1].GetPoint()) > 10.0)
+    return usual;
+  auto const junction = path.front().GetPoint();
+  auto const & incoming = info.m_ingoing->m_path;
+  auto const back = incoming[incoming.size() - 2].GetPoint() - junction;
+  auto const angleOf = [&](m2::PointD const & direction)
+  { return math::RadToDeg(PiMinusTwoVectorsAngle(m2::PointD::Zero(), back, direction)); };
+  m2::PointD sampleStart;
+  double distance = 0.0;
+  double previousAngle = first;
+  for (size_t i = 1; i < path.size(); ++i)
+  {
+    auto const a = path[i - 1].GetPoint();
+    auto const b = path[i].GetPoint();
+    double const length = mercator::DistanceOnEarth(a, b);
+    if (length < 0.001)
+      continue;
+    double const angle = angleOf(b - a);
+    // Only a bend that consistently opens out, on the same side of the approach.
+    if ((angle >= 0) != (first >= 0) || std::abs(angle) > std::abs(previousAngle) + 5.0)
+      return usual;
+    if (distance <= 10.0 && distance + length >= 10.0)
+      sampleStart = a + (b - a) * ((10.0 - distance) / length);
+    if (distance + length >= 30.0)
+    {
+      auto const sampleEnd = a + (b - a) * ((30.0 - distance) / length);
+      double const settled = angleOf(sampleEnd - sampleStart);
+      if (std::abs(settled) >= 10.0 && std::abs(settled) < 50.0 &&
+          std::abs(first) - std::abs(settled) >= 25.0 && std::abs(settled - angle) <= 15.0)
+        return settled;
+      return usual;
+    }
+    distance += length;
+    previousAngle = angle;
+  }
+  return usual;
 }
 
 void CorrectCandidatesSegmentByOutgoing(TurnInfo const & turnInfo, Segment const & firstOutgoingSeg,

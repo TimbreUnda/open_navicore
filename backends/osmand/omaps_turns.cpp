@@ -885,10 +885,7 @@ Result Builder::Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, d
       if (outgoing.m_path.empty() || outgoing.m_path.front().GetPoint() != m_path[pathIndex].GetPoint() ||
           m_pathSegments[k - 1].m_segmentRange.IsEmpty() || outgoing.m_segmentRange.IsEmpty())
         continue;
-      routing::turns::TurnInfo const info(&m_pathSegments[k - 1], &outgoing);
-      double const curve = routing::turns::CalcTurnAngle(routingResult, k, numMwmIds, settings);
-      double const first = routing::turns::CalcOneSegmentTurnAngle(info);
-      turn.route_angle = (curve >= 0) == (first >= 0) ? (std::abs(curve) > std::abs(first) ? curve : first) : curve;
+      turn.route_angle = routing::turns::CalcInstructionTurnAngle(routingResult, k, numMwmIds, settings);
       size_t ingoing = 0;
       routing::turns::TurnCandidates candidates;
       routingResult.GetPossibleTurns(m_pathSegments[k - 1].m_segmentRange, m_path[pathIndex].GetPoint(), ingoing,

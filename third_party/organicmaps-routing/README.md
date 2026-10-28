@@ -15,7 +15,7 @@ The code is C++17 (no C++20 features), so it can later build with QNX GCC 8.5.
 
 ## Files
 
-Unchanged turn/lane logic: `routing/car_directions.*`, `turns.*`,
+Turn/lane logic copied from upstream, except for the behavioural fixes below: `routing/car_directions.*`, `turns.*`,
 `turns_generator.*`, `turns_generator_utils.*`, `turn_candidate.hpp`,
 `routing_result_graph.hpp`, `loaded_path_segment.hpp`,
 `lanes/lane_info.*`, `lanes/lanes_recommendation.*`.
@@ -43,6 +43,19 @@ Behavioural fixes (the only changes to OM's decisions; candidates to report upst
   returned `i + 1` turns to skip, which also dropped the first turn after the U-turn
   (48.487081,34.941727 → 48.489282,34.937865: the exit right onto the link at
   48.488918,34.938895). Returns `i` now: only the turns inside the U-turn.
+
+- `turns_generator.cpp` `CalcInstructionTurnAngle`: a normal turn with an entrance
+  edge at most 10 m long may use the heading over metres 10..30 when the road
+  consistently opens into a slight turn. Sampling stays inside the outgoing
+  loaded segment, with no junction crossing; sharp turns and S-bends retain the
+  original angle. The backend uses this same angle for its cluster symbol.
+- `car_directions.cpp` `CanDiscardTurnByHighwayClassOrAngles`: retain a slight
+  turn of at least 25 degrees when the only two exits are opposite directions
+  of the same crossing feature, distinct from the incoming road (an oblique
+  T-junction). The sharper alternative must not silence the instruction.
+
+Regression coverage: `tests/organicmaps_turns_test.cpp` (portable `make test`)
+plus the Вереснева площа route in `tools/junction_lab/cases.tsv`.
 
 Shims (`shim/`): `base/assert.hpp` (ASSERT compiled out as in OM release builds;
 CHECK throws instead of aborting), `base/logging.hpp`, `base/math.hpp`,
