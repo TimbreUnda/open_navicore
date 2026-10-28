@@ -153,3 +153,15 @@ target_link_options(route_bench PRIVATE -static-libstdc++ -static-libgcc -Wl,-Bs
 add_executable(route_bench_run ${ONC_ROOT}/deploy/bench/route_bench_run.c)
 target_link_libraries(route_bench_run PRIVATE c)
 set_target_properties(route_bench_run PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bench)
+
+# Full worker diagnostic: queueing, routing and OM turns.
+add_library(route_worker_bench SHARED ${ONC_ROOT}/deploy/bench/route_worker_bench.cpp
+  navigation_worker.cpp ch_planner.cpp route_maneuvers.cpp config.cpp)
+target_include_directories(route_worker_bench PRIVATE ${ONC_OSMAND_INCLUDES})
+target_compile_definitions(route_worker_bench PRIVATE ${ONC_OSMAND_DEFINES})
+target_compile_options(route_worker_bench PRIVATE ${ONC_WARNINGS} ${ONC_OSMAND_FLAGS})
+target_link_libraries(route_worker_bench PRIVATE navigation_ui organicmaps_turns osmand_core m c)
+set_target_properties(route_worker_bench PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bench
+  SKIP_BUILD_RPATH ON)
+target_link_options(route_worker_bench PRIVATE -static-libstdc++ -static-libgcc -Wl,-Bsymbolic
+  -Wl,-rpath,/open-navicore -Wl,--no-undefined)

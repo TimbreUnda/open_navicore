@@ -440,16 +440,6 @@ bool NavigationModel::show_place_card(Destination place, std::string icon)
     return true;
 }
 
-bool NavigationModel::set_place_subtitle(const std::string& id, std::string subtitle)
-{
-    if (!has_place_ || place_.id != id || place_.subtitle == subtitle)
-        return false;
-    place_.subtitle = std::move(subtitle);
-    if (has_destination_ && destination_.id == id)
-        destination_.subtitle = place_.subtitle;
-    return true;
-}
-
 bool NavigationModel::close_place_card() noexcept
 {
     if (!has_place_)

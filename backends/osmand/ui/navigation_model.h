@@ -320,8 +320,6 @@ public:
     const std::string& place_card_icon() const noexcept { return place_icon_; }
     bool show_place_card(Destination place, std::string icon);
     bool close_place_card() noexcept;
-    // A late subtitle (a dropped pin's address) for the card showing `id`.
-    bool set_place_subtitle(const std::string& id, std::string subtitle);
     // Dropped pins: their card's place id starts with this.
     static constexpr const char* pin_prefix = "pin:";
     bool place_card_is_pin() const noexcept

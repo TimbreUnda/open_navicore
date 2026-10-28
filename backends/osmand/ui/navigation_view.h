@@ -106,8 +106,6 @@ public:
     bool open_dev_menu();
     bool close_dev_menu();
     bool set_dev_info(std::vector<DevSection> sections, std::vector<DevToggle> toggles);
-    // A late subtitle (dropped pin address) for the card showing `id`.
-    bool set_place_subtitle(const std::string& id, std::string subtitle);
 
 private:
     struct PointerSample { int action; int32_t x; int32_t y; int contact = 0; };

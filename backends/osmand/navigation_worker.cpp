@@ -18,10 +18,8 @@
 #include <OsmAndCore/LatLon.h>
 #include <OsmAndCore/Logging.h>
 #include <OsmAndCore/ObfsCollection.h>
-#include <OsmAndCore/RoadLocator.h>
 #include <OsmAndCore/Search/AddressesByNameSearch.h>
 #include <OsmAndCore/Search/AmenitiesByNameSearch.h>
-#include <OsmAndCore/Search/ReverseGeocoder.h>
 #include <OsmAndCore/Utilities.h>
 
 // Core and core-legacy both ship a Logging.h with the same public names but
@@ -375,26 +373,6 @@ public:
         condition_.notify_one();
     }
 
-    void submit_address(std::uint64_t revision, ui::GeoPoint point)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (stopping_) return;
-        if (active_) active_->cancel();
-        pending_ = Request::address(revision, point);
-        has_pending_ = true;
-        trace_result("worker=address_queued", revision, 1u);
-        condition_.notify_one();
-    }
-
-    bool take(AddressResult& output)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!has_address_result_) return false;
-        output = std::move(address_result_);
-        has_address_result_ = false;
-        return true;
-    }
-
     bool take(SearchResult& output)
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -434,7 +412,8 @@ public:
 
 private:
     struct Request {
-        enum class Kind { Search, Route, Address } kind = Kind::Search;
+        enum class Kind { Search, Route } kind = Kind::Search;
+        std::chrono::steady_clock::time_point queued = std::chrono::steady_clock::now();
         std::uint64_t revision = 0;
         std::string query;
         ui::Destination destination;
@@ -462,36 +441,7 @@ private:
             request.origin = origin;
             return request;
         }
-        static Request address(std::uint64_t revision, ui::GeoPoint point)
-        {
-            Request request;
-            request.kind = Kind::Address;
-            request.revision = revision;
-            request.origin = point;
-            return request;
-        }
     };
-
-    // Nearest address of a point: "street, house number", or the street
-    // alone; empty when there is no road nearby.
-    std::string address(const Request& request)
-    {
-        if (!road_locator_)
-            road_locator_ = std::make_shared<OsmAnd::RoadLocator>(obfs_);
-        OsmAnd::ReverseGeocoder geocoder(obfs_, road_locator_);
-        OsmAnd::ReverseGeocoder::Criteria criteria;
-        criteria.latLon = OsmAnd::LatLon(request.origin.latitude, request.origin.longitude);
-        const auto entry = geocoder.performSearch(criteria);
-        if (!entry) return {};
-        const auto name = [](const OsmAnd::Address& address) { return localized_name(address); };
-        std::string street = entry->street ? name(*entry->street) : utf8(entry->streetName);
-        if (street.empty()) return {};
-        if (entry->building) {
-            const std::string number = name(*entry->building);
-            if (!number.empty()) street += ", " + number;
-        }
-        return street;
-    }
 
     std::vector<ui::Destination> search(const Request& request,
                                         const std::shared_ptr<Cancellation>& cancel)
@@ -699,7 +649,7 @@ private:
         front_end.makeStartEndPointsPrecise(context.get(), main->detailed, sx, sy, ex, ey);
         // Where a leg's road geometry could not be loaded the core joins the
         // network nodes with a straight line; such a route crosses water and
-        // forest. A bad main route fails HH (the caller runs A*); a bad
+        // forest. A bad main route fails the request; a bad
         // alternative is dropped.
         if (!accept_route(main->detailed, "main")) return routes;
         routes.push_back(std::move(main->detailed));
@@ -716,7 +666,16 @@ private:
     std::vector<ui::RouteAlternative> route(
         const Request& request, const std::shared_ptr<Cancellation>& cancel)
     {
+        const auto preparing = std::chrono::steady_clock::now();
         if (!prepare_router() || cancel->isAborted()) return {};
+        {
+            char line[160];
+            std::snprintf(line, sizeof(line), "worker=route_ready revision=%llu wait_ms=%lld",
+                static_cast<unsigned long long>(request.revision),
+                static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - preparing).count()));
+            trace(line);
+        }
         const auto started = std::chrono::steady_clock::now();
         const int sx = get31TileNumberX(request.origin.longitude);
         const int sy = get31TileNumberY(request.origin.latitude);
@@ -765,9 +724,13 @@ private:
                 found_turns.push_back(std::move(result));
             }
         };
-        // Both ends on one sidecar node: a route of a few metres, which A* finds
-        // at once and HH (seconds over the whole network) often does not.
-        bool skip_hh = false;
+        // A configured CH sidecar is the selected router. A missing/stale index
+        // or failed query must be visible, not silently trigger slower routers.
+        // Empty ch_sidecar_ is the explicit switch to OsmAnd's HH/A* router.
+        if (!ch_sidecar_.empty() && !ch_) {
+            trace("worker=route_failed method=ch why=sidecar_unavailable");
+            return {};
+        }
         if (ch_) {
             auto context = new_context();
             std::string why;
@@ -786,23 +749,22 @@ private:
                 found.push_back(std::move(segments));
                 annotate(*context);
             } else if (!cancel->isAborted()) {
-                trace(("worker=ch_fallback why=" + (why.empty() ? std::string("route_rejected") : why)).c_str());
-                skip_hh = why == "too_short_for_sidecar";
+                trace(("worker=route_failed method=ch why=" +
+                       (why.empty() ? std::string("route_rejected") : why)).c_str());
+                return {};
             }
         }
-        if (found.empty() && !cancel->isAborted()) method = "hh";
-        if (found.empty() && has_hh_ && !skip_hh && !cancel->isAborted()) {
+        if (!ch_ && has_hh_ && !cancel->isAborted()) {
+            method = "hh";
             auto context = new_context();
             found = route_hh(front_end, context, sx, sy, ex, ey,
                              request.alternatives && kAlternativeRoutes);
             annotate(*context);
         }
-        if (found.empty() && !cancel->isAborted()) {
-            // A* (no HH data, or HH found nothing usable).
+        if (!ch_ && !has_hh_ && !cancel->isAborted()) {
+            // Explicit OsmAnd mode, maps without HH data: select A* directly.
             method = "astar";
-            trace(skip_hh ? "worker=route_fallback why=too_short"
-                  : has_hh_ ? "worker=route_fallback why=hh_unusable"
-                            : "worker=route_fallback why=no_hh_data");
+            trace("worker=route_method method=astar why=no_hh_data");
             auto context = new_context();
             std::vector<int> intermediates_x;
             std::vector<int> intermediates_y;
@@ -813,7 +775,11 @@ private:
                 annotate(*context);
             }
         }
-        if (cancel->isAborted() || found.empty()) return {};
+        if (cancel->isAborted()) return {};
+        if (found.empty()) {
+            trace((std::string("worker=route_failed method=") + method + " why=no_usable_route").c_str());
+            return {};
+        }
         {
             char line[96];
             std::snprintf(line, sizeof(line), "worker=route_calculated method=%s routes=%zu ms=%lld",
@@ -973,29 +939,45 @@ private:
             }
 
             using Kind = Request::Kind;
+            const auto begun = std::chrono::steady_clock::now();
+            const auto queue_ms = std::chrono::duration_cast<std::chrono::milliseconds>(begun - request.queued).count();
+            const char* kind = request.kind == Kind::Search ? "search"
+                : "route";
+            {
+                char line[160];
+                std::snprintf(line, sizeof(line), "worker=request_begin kind=%s revision=%llu queue_ms=%lld",
+                    kind, static_cast<unsigned long long>(request.revision), static_cast<long long>(queue_ms));
+                trace(line);
+            }
             trace_result(request.kind == Kind::Search ? "worker=search_begin"
-                         : request.kind == Kind::Route ? "worker=route_begin"
-                                                       : "worker=address_begin",
+                         : "worker=route_begin",
                          request.revision,
                          request.kind == Kind::Search ? request.query.size() : 1u);
 
             std::vector<ui::Destination> destinations;
             std::vector<ui::RouteAlternative> routes;
-            std::string address_text;
             try {
                 if (request.kind == Kind::Search)
                     destinations = search(request, cancel);
-                else if (request.kind == Kind::Route)
-                    routes = route(request, cancel);
                 else
-                    address_text = address(request);
+                    routes = route(request, cancel);
             } catch (...) {
                 trace(request.kind == Kind::Search ? "error=destination_search_exception"
-                      : request.kind == Kind::Route ? "error=route_calculation_exception"
-                                                    : "error=address_exception");
+                      : "error=route_calculation_exception");
                 // Publish an empty result so the UI leaves its busy state.
                 // A genuinely superseded request has already been cancelled
                 // by submit(), and remains excluded by the check below.
+            }
+            {
+                char line[200];
+                const auto work_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - begun).count();
+                std::snprintf(line, sizeof(line),
+                    "worker=request_done kind=%s revision=%llu work_ms=%lld total_ms=%lld cancelled=%d",
+                    kind, static_cast<unsigned long long>(request.revision),
+                    static_cast<long long>(work_ms), static_cast<long long>(queue_ms + work_ms),
+                    cancel->superseded() ? 1 : 0);
+                trace(line);
             }
             bool published = false;
             std::size_t published_count = 0;
@@ -1007,14 +989,10 @@ private:
                         result_ = {request.revision, std::move(destinations)};
                         published_count = result_.destinations.size();
                         has_result_ = true;
-                    } else if (request.kind == Kind::Route) {
+                    } else {
                         route_result_ = {request.revision, std::move(routes)};
                         published_count = route_result_.routes.size();
                         has_route_result_ = true;
-                    } else {
-                        published_count = address_text.empty() ? 0u : 1u;
-                        address_result_ = {request.revision, std::move(address_text)};
-                        has_address_result_ = true;
                     }
                     published = true;
                 }
@@ -1022,8 +1000,7 @@ private:
             }
             if (published)
                 trace_result(request.kind == Kind::Search ? "worker=search_published"
-                             : request.kind == Kind::Route ? "worker=route_published"
-                                                           : "worker=address_published",
+                             : "worker=route_published",
                              request.revision,
                              published_count);
             if (published && wakeup_) (void)wakeup_->request();
@@ -1050,13 +1027,10 @@ private:
     Request pending_;
     SearchResult result_;
     RouteResult route_result_;
-    AddressResult address_result_;
-    std::shared_ptr<const OsmAnd::IRoadLocator> road_locator_;  // worker thread
     std::shared_ptr<Cancellation> active_;
     bool has_pending_ = false;
     bool has_result_ = false;
     bool has_route_result_ = false;
-    bool has_address_result_ = false;
     bool stopping_ = false;
     bool router_ready_ = false;
     bool has_hh_ = false;  // the map has highway-hierarchy routing sections
@@ -1103,16 +1077,6 @@ bool NavigationWorker::take_route_result(RouteResult& output)
 }
 
 bool NavigationWorker::take_search_result(SearchResult& output)
-{
-    return impl_->take(output);
-}
-
-void NavigationWorker::submit_address(std::uint64_t revision, ui::GeoPoint point)
-{
-    impl_->submit_address(revision, point);
-}
-
-bool NavigationWorker::take_address_result(AddressResult& output)
 {
     return impl_->take(output);
 }

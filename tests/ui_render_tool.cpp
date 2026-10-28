@@ -296,7 +296,7 @@ int main(int argc, char** argv)
         ok = write(view, out + (failed ? "/place_failed.argb" : "/place_calculating.argb")) && ok;
     }
     {
-        // Dropped pin (long press) with its address; heading-up dimmed
+        // Dropped pin (long press) with its coordinates; heading-up dimmed
         // (no heading known yet).
         NavigationModel model;
         NavigationView view(model, 1024, 574);
@@ -305,7 +305,7 @@ int main(int argc, char** argv)
         (void)model.set_map_view(state);
         settle(view);
         (void)view.show_place_card({"pin:50.44000, 30.52000", loc::tr(loc::Str::DroppedPin),
-                                    "вулиця Хрещатик, 22 · " + loc::format_distance(400.0), "",
+                                    "50.44000, 30.52000 · " + loc::format_distance(400.0), "",
                                     50.44, 30.52}, "pin");
         view.set_pin_marker(true, 640, 300);
         settle(view);

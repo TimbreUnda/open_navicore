@@ -1,5 +1,71 @@
 # Route calculation
 
+## Intermittent delays, 2026-10-28
+
+Two independent delays were reproduced on M9304002366 using the product's
+`NavigationWorker` in a separate process with the installed core, all 26 maps,
+the CH sidecar, and Organic Maps turn generation. No UI simulation or service
+restart was needed for these measurements.
+
+Dropping a pin used to run reverse geocoding to replace the coordinates on its
+card with a street/address. It used the same queue as routing. For Maidan
+(50.4501, 30.5234) to Kozatskiy (50.451725, 30.5220848), requesting a route
+100 ms after the lookup began waited **50,346 ms** in the queue; the route
+calculation itself took 575 ms. Repeating the route took 408 ms overall.
+Passing a cancellation controller reduced the first request to 13,564 ms, but
+the core's initial map/road loading still held the queue for 12,894 ms.
+
+Pin reverse geocoding is removed: the card retains its coordinates and distance,
+and routing uses the selected coordinates directly. There is no extra address
+thread. Named destinations and typed address search still use their existing
+names/search path. The same hotel route now takes **572 ms**, then **342 ms**,
+including worker publication; both produce 179 m / 16 geometry points.
+
+Separately, the point (46.0, 31.0) has no CH route from Maidan. Previously it
+silently switched to HH and returned a route after **12,508 / 10,077 ms**.
+The selected CH router now reports that failure in **781 / 221 ms**. A missing
+or stale selected sidecar also reports failure instead of changing engines.
+The existing `disable-ch` marker/environment switch explicitly selects HH
+(or A* for maps without HH); a failed HH query no longer retries with A*.
+This intentionally trades automatic slow retries for visible route failure.
+
+Successful routing remains functional: Kyiv–Dnipro (478,427 m / 4,707 points)
+took 6,399 / 6,039 ms including Organic Maps turns. Explicit HH mode on
+Maidan–Troieshchyna produced a 15,171 m route in 6,248 / 6,634 ms.
+
+These figures exclude one-time router warm-up. A first request can still wait
+for that initialization. `worker=request_begin` now records `queue_ms`,
+`worker=route_ready` records the warm-up wait, and `worker=request_done` records
+work and end-to-end time even for cancelled/failed requests. Existing CH-stage
+and Organic Maps timings remain. The older `worker=placed runmask=1` field is
+a success flag for allowing all CPUs, not a CPU0-only affinity mask.
+
+`make` builds `bench/libroute_worker_bench.so` alongside `route_bench_run`.
+Copy both to `/tmp` on the radio and supply the routing XML:
+
+```sh
+ROUTE_WORKER_MAX_MS=5000 /tmp/route_bench_run worker /navi_map/osm /tmp/routing.xml \
+    /navi_map/osm/car.chr 50.4501 30.5234 50.451725 30.5220848 route
+```
+
+The runner uses the actual worker, timestamps its trace to stdout, repeats the
+request twice, and checks the revision and route outcome. `reject` expects no
+route, `cold` submits before warm-up, and sidecar `-` selects OsmAnd explicitly.
+The optional latency limit applies to each submitted request; a 120-second
+process timeout bounds a stuck diagnostic. It does not control the installed
+navigation process. The runner is not included in the installed backend/image.
+
+Validation: QNX build and ELF checks, 35 host tests, pin-card render, and the
+four on-radio worker cases above. After installing the backend and rebooting once,
+a real long-press pin at (50.45132, 30.52168) retained its coordinates and
+produced an 88 m route preview: queue 0 ms, warm-up wait 0 ms, request work
+957 ms, Organic Maps 11 ms. No address job was queued.
+
+Earlier measurements below describe older
+router implementations and hardware; they are retained as history.
+
+## Earlier routing measurements
+
 Measured on the bench unit (M9148801407, 2 × Cortex-A9) with the Kyiv map
 (`kyiv.obf`, 87 MB, with two HH routing sections), 2026-10-15, using
 `deploy/bench/route_bench.cpp` (see below).
