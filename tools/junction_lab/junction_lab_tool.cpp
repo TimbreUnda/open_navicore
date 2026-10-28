@@ -24,6 +24,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -172,6 +173,10 @@ void print_maneuver(std::ostringstream& out, nav::Segments& segments, std::size_
 std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfiguration>& config,
                   double lat1, double lon1, double lat2, double lon2)
 {
+    const auto started = std::chrono::steady_clock::now();
+    const auto ms_since = [](std::chrono::steady_clock::time_point t) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+    };
     auto context = front_end.buildRoutingContext(config);
     std::vector<int> ix, iy;
     nav::Segments segments = front_end.searchRoute(
@@ -249,7 +254,12 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
         first = false;
     }
     // The same route through Organic Maps' car turn generator (omaps_adapter).
+    const double route_ms = ms_since(started);
+    const auto omaps_started = std::chrono::steady_clock::now();
     const auto omaps = junction_lab::omaps::annotate(*context, segments, lat1, lon1, lat2, lon2);
+    if (std::getenv("JUNCTION_LAB_TIMING"))
+        std::fprintf(stderr, "timing: route+osmand_json=%.0fms omaps=%.0fms segments=%zu\n", route_ms,
+                     ms_since(omaps_started), segments.size());
     out << "],\"omaps\":[";
     for (std::size_t i = 0; i < omaps.maneuvers.size(); ++i) {
         const auto& m = omaps.maneuvers[i];
