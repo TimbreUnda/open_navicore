@@ -915,10 +915,19 @@ Result annotate(RoutingContext & context, std::vector<std::shared_ptr<RouteSegme
     Builder builder(context);
     return builder.Run(route, start_latitude, start_longitude, finish_latitude, finish_longitude);
   }
-  catch (std::exception const & e)
+  // OM's CHECK failures (shim/base/assert.hpp) by their own type: a catch of
+  // std::exception would put a relocation against libstdc++'s typeinfo into the
+  // read-only exception table, which the plugin's -z text link rejects.
+  catch (omaps_shim::CheckFailed const & e)
   {
     Result result;
     result.error = e.what();
+    return result;
+  }
+  catch (...)
+  {
+    Result result;
+    result.error = "exception in Organic Maps' turn generator";
     return result;
   }
 }
