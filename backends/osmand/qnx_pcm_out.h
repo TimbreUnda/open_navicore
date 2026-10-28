@@ -19,6 +19,7 @@ class AudioFocus {
 public:
     virtual ~AudioFocus() = default;
     virtual bool request() = 0;
+    virtual bool valid() { return true; }
     virtual void release() = 0;
 };
 

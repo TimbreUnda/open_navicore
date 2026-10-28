@@ -2,6 +2,7 @@
 
 #include "open_navi.h"
 #include "open_navi_api_telemetry.h"
+#include "open_navi_audio_focus.h"
 #include "open_navi_callback_backend.h"
 #include "open_navi_cluster_agent.h"
 #include "open_navi_backend_loader.h"
@@ -140,6 +141,9 @@ static uint32_t open_navi_19_3(void *, uint32_t, uint32_t,
 static uint32_t open_navi_20_6(void *, uint32_t, uint32_t,
                           const OpenNaviConnectionDeviceInfoInput *);
 static uint32_t open_navi_25_21(void *, uint32_t, uint32_t, const char *);
+static uint32_t nc_provider_audio_allocation(void *, uint32_t, uint32_t, uint32_t);
+static uint32_t nc_provider_audio_preparation(void *, uint32_t, uint32_t, uint32_t);
+static uint32_t nc_provider_audio_deactivation(void *, uint32_t, uint32_t, uint32_t);
 static void open_navi_finish_deinitialize(void);
 static void open_navi_lifecycle_release(OpenNaviLifecycleLease *lease);
 
@@ -237,6 +241,15 @@ OPEN_NAVI_PROVIDER_TYPECHECK(8, 8, open_navi_vehicle_speed, OpenNaviProviderSelf
 OPEN_NAVI_PROVIDER_TYPECHECK(8, 12, open_navi_8_12, OpenNaviProviderU32ConstChar);
 OPEN_NAVI_PROVIDER_TYPECHECK(9, 4, nc_provider_gps_data, OpenNaviProviderSelfConstVoid);
 OPEN_NAVI_PROVIDER_TYPECHECK(9, 6, open_navi_gps_interval, OpenNaviProviderSelfU32);
+typedef char audio_allocation_typecheck[
+    __builtin_types_compatible_p(__typeof__(&nc_provider_audio_allocation),
+                                 OpenNaviProviderSelfU32U32U32) ? 1 : -1];
+typedef char audio_preparation_typecheck[
+    __builtin_types_compatible_p(__typeof__(&nc_provider_audio_preparation),
+                                 OpenNaviProviderSelfU32U32U32) ? 1 : -1];
+typedef char audio_deactivation_typecheck[
+    __builtin_types_compatible_p(__typeof__(&nc_provider_audio_deactivation),
+                                 OpenNaviProviderSelfU32U32U32) ? 1 : -1];
 OPEN_NAVI_PROVIDER_TYPECHECK(10, 17, open_navi_10_17, OpenNaviProviderSelfU32U32U8);
 OPEN_NAVI_PROVIDER_TYPECHECK(10, 19, open_navi_audio_volume, OpenNaviProviderSelfU32U8);
 OPEN_NAVI_PROVIDER_TYPECHECK(12, 5, open_navi_12_5, OpenNaviProviderSelfU32);
@@ -362,10 +375,10 @@ static const PanaGenericVirtual g_audio_vtable[OPEN_NAVI_DUMMY_VTABLE_SLOTS] = {
     V2, V1,
     (PanaGenericVirtual)open_navi_static_10_3,
     V1,
-    (PanaGenericVirtual)open_navi_static_10_5,
+    (PanaGenericVirtual)nc_provider_audio_allocation,
     V1,
-    (PanaGenericVirtual)open_navi_static_10_7,
-    (PanaGenericVirtual)open_navi_static_10_8,
+    (PanaGenericVirtual)nc_provider_audio_preparation,
+    (PanaGenericVirtual)nc_provider_audio_deactivation,
     V8,
     (PanaGenericVirtual)open_navi_10_17,
     (PanaGenericVirtual)open_navi_static_10_18,
@@ -1219,6 +1232,51 @@ static uint32_t open_navi_audio_volume(void *self,
         return 0u;                                                              \
     }
 
+static uint32_t nc_provider_audio_allocation(void *self, uint32_t handle,
+                                          uint32_t source, uint32_t value)
+{
+    OpenNaviLifecycleLease lease;
+    uint32_t result;
+    (void)self;
+    if (!open_navi_lifecycle_acquire(&lease)) return 1u;
+    open_navi_api_telemetry_record(10u, 5u, 3u, handle, source, value, 0u);
+    result = open_navi_audio_focus_event(5u, handle, source, value);
+    open_navi_log(LOG_NOTICE, "audio-focus inbound slot=5 handle=%u source=%u value=%u accepted=%u",
+                  handle, source, value, result == 0u);
+    open_navi_lifecycle_release(&lease);
+    return result;
+}
+
+static uint32_t nc_provider_audio_preparation(void *self, uint32_t handle,
+                                          uint32_t source, uint32_t value)
+{
+    OpenNaviLifecycleLease lease;
+    uint32_t result;
+    (void)self;
+    if (!open_navi_lifecycle_acquire(&lease)) return 1u;
+    open_navi_api_telemetry_record(10u, 7u, 3u, handle, source, value, 0u);
+    result = open_navi_audio_focus_event(7u, handle, source, value);
+    open_navi_log(LOG_NOTICE, "audio-focus inbound slot=7 handle=%u source=%u value=%u accepted=%u",
+                  handle, source, value, result == 0u);
+    open_navi_lifecycle_release(&lease);
+    return result;
+}
+
+static uint32_t nc_provider_audio_deactivation(void *self, uint32_t handle,
+                                          uint32_t source, uint32_t value)
+{
+    OpenNaviLifecycleLease lease;
+    uint32_t result;
+    (void)self;
+    if (!open_navi_lifecycle_acquire(&lease)) return 1u;
+    open_navi_api_telemetry_record(10u, 8u, 3u, handle, source, value, 0u);
+    result = open_navi_audio_focus_event(8u, handle, source, value);
+    open_navi_log(LOG_NOTICE, "audio-focus inbound slot=8 handle=%u source=%u value=%u accepted=%u",
+                  handle, source, value, result == 0u);
+    open_navi_lifecycle_release(&lease);
+    return result;
+}
+
 static uint32_t open_navi_static_provider_accept(void *self,
                                              uint32_t slot,
                                              uint32_t word_count,
@@ -2017,6 +2075,34 @@ static int open_navi_signal_after_adapter_ready(uint32_t adapter_id)
     default:
         return 1;
     }
+}
+
+uint32_t open_navi_audio_focus_next_handle(void)
+{
+    return open_navi_callback_allocate_handle();
+}
+
+void open_navi_audio_focus_trace(const char *event, uint32_t handle, uint32_t value)
+{
+    open_navi_log(LOG_NOTICE, "audio-focus %s handle=%u value=%u", event, handle, value);
+}
+
+uint32_t open_navi_audio_focus_dispatch(uint32_t slot, uint32_t handle,
+                                      uint32_t source, uint32_t value)
+{
+    OpenNaviLifecycleLease lease;
+    void *proxy;
+    uint32_t result = 1u;
+    if (!open_navi_lifecycle_acquire_proxy(10u, slot, &lease, &proxy)) return 1u;
+    if (slot == 6u) result = nc_host_audio_request_audio_source_allocation(proxy, handle, source);
+    else if (slot == 7u) result = nc_host_audio_request_audio_source_preparation(proxy, handle, source);
+    else if (slot == 8u) result = nc_host_audio_signal_deallocate_audio_source(proxy, source);
+    else if (slot == 9u) result = nc_host_audio_reply_audio_source_deactivation(proxy, handle, source, value);
+    open_navi_log(LOG_NOTICE, "audio-focus outbound slot=%u handle=%u source=%u value=%u status=%u",
+                  slot, handle, source, value, result);
+    if (!open_navi_lifecycle_is_current(&lease)) result = 1u;
+    open_navi_lifecycle_release(&lease);
+    return result;
 }
 
 uint32_t open_navi_callback_signal_audio_availability(uint32_t state)
@@ -2887,6 +2973,10 @@ uint32_t panaInitialize(const void *init_record)
     open_navi_cluster_backend_reset();
     open_navi_read_guidance_status_marker();
     open_navi_cluster_relay_start();
+#ifdef __QNX__
+    if (!open_navi_audio_focus_start(NULL))
+        open_navi_log(LOG_ERR, "audio-focus socket start failed errno=%d", errno);
+#endif
     /* The backend choice is process-lifetime and must be finalized while the
      * renderer is still COLD. Failure is deliberately non-fatal: bootstrap
      * leaves the built-in magenta backend selected. */
@@ -2968,6 +3058,7 @@ static void open_navi_finish_deinitialize(void)
     open_navi_api_telemetry_reset();
     open_navi_pointer_backend_reset();
     open_navi_callback_backend_reset();
+    open_navi_audio_focus_stop();
     open_navi_cluster_relay_stop();
     open_navi_cluster_backend_reset();
     open_navi_breadcrumb("deinitialize: finish end");

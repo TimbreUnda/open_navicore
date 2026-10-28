@@ -46,7 +46,7 @@ find_package(Threads REQUIRED)
 set(src ${ONC_ROOT}/src)
 set(HOST_RENDERER_SOURCES ${src}/renderer/open_navi_renderer.c ${src}/renderer/open_navi_renderer_backend_table.c ${src}/renderer/open_navi_renderer_pointer.c ${src}/renderer/open_navi_renderer_dispatch.c ${src}/renderer/open_navi_renderer_lifecycle.c ${src}/renderer/open_navi_screen_input.c
     ${src}/backend/open_navi_default_backend.c ${src}/platform/host/open_navi_renderer_stub.c)
-set(HOST_PROVIDER_SOURCES ${src}/compat/qr39/navicore_compat.c ${src}/runtime/open_navi_api_telemetry.c
+set(HOST_PROVIDER_SOURCES ${src}/runtime/open_navi_audio_focus.c ${src}/compat/qr39/navicore_compat.c ${src}/runtime/open_navi_api_telemetry.c
     ${src}/runtime/open_navi_callback_backend.c ${src}/runtime/open_navi_cluster_backend.c
     ${src}/runtime/open_navi_cluster_agent.c ${src}/runtime/open_navi_cluster_relay.c ${ONC_CAGENT_SOURCES}
     ${src}/backend/open_navi_backend_loader.c ${src}/compat/qr39/host_callbacks.c
@@ -102,6 +102,7 @@ onc_test(localization_test SOURCES localization_test.cpp LIBS navigation_ui m)
 onc_test(voice_prompts_test SOURCES voice_prompts_test.cpp LIBS navigation_ui m)
 onc_test(voice_worker_test SOURCES voice_worker_test.cpp LIBS navigation_ui m)
 onc_test(voice_link_test SOURCES voice_link_test.cpp LIBS navigation_ui m rt)
+onc_test(stock_focus_test SOURCES stock_focus_test.cpp ${src}/runtime/open_navi_audio_focus.c LIBS voice_daemon navigation_ui m)
 onc_test(process_focus_test SOURCES process_focus_test.cpp LIBS voice_daemon navigation_ui m)
 onc_test(camera_controller_test SOURCES camera_controller_test.cpp LIBS navigation_ui)
 onc_test(dev_menu_test SOURCES dev_menu_test.cpp LIBS navigation_ui)

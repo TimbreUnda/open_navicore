@@ -7,6 +7,7 @@ set(ONC_PROVIDER_INCLUDES ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR}/compat
 add_library(provider SHARED
   compat/qr39/navicore_compat.c
   compat/qr39/host_callbacks.c
+  runtime/open_navi_audio_focus.c
   runtime/open_navi_api_telemetry.c
   runtime/open_navi_callback_backend.c
   runtime/open_navi_cluster_backend.c

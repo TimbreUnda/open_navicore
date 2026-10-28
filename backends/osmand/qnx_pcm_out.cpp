@@ -69,20 +69,23 @@ bool QnxPcmOut::open_device(unsigned sample_rate_hz) {
 void QnxPcmOut::close_device() {
     if (!handle_) return;
     snd_pcm_t* h = static_cast<snd_pcm_t*>(handle_);
-    snd_pcm_plugin_flush(h, SND_PCM_CHANNEL_PLAYBACK);  // drains what was written
+    if (focus_.valid()) snd_pcm_plugin_playback_drain(h);
+    else snd_pcm_plugin_flush(h, SND_PCM_CHANNEL_PLAYBACK);
     snd_pcm_close(h);
     handle_ = nullptr;
     rate_ = 0;
 }
 
 bool QnxPcmOut::write(const short* samples, std::size_t count, unsigned sample_rate_hz) {
-    if (!focused_) return false;
+    if (!focused_ || !focus_.valid()) return false;
     if (handle_ && rate_ != sample_rate_hz) close_device();
     if (!handle_ && !open_device(sample_rate_hz)) return false;
     snd_pcm_t* h = static_cast<snd_pcm_t*>(handle_);
     const char* p = reinterpret_cast<const char*>(samples);
     std::size_t left = count * sizeof(short);
+    unsigned stalled = 0;
     while (left > 0) {
+        if (!focus_.valid()) return false;
         std::size_t n = left < fragment_ ? left : fragment_;
         ssize_t w = snd_pcm_plugin_write(h, p, n);
         if (w < static_cast<ssize_t>(n)) {
@@ -98,6 +101,11 @@ bool QnxPcmOut::write(const short* samples, std::size_t count, unsigned sample_r
             }
             if (w < 0) w = 0;
         }
+        if (w <= 0 && ++stalled >= 3) {
+            std::fprintf(stderr, "voice: pcm made no progress\n");
+            return false;
+        }
+        if (w > 0) stalled = 0;
         p += w;
         left -= static_cast<std::size_t>(w);
     }
