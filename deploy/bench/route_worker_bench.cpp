@@ -35,9 +35,15 @@ double metres(navicore_osmand::ui::GeoPoint a, navicore_osmand::ui::GeoPoint b) 
                      std::sin(q/2)*std::sin(q/2);
     return 12742000.0 * std::asin(std::sqrt(std::min(1.0, std::max(0.0, h))));
 }
+std::uint64_t fingerprint(const std::string& text) {
+    std::uint64_t value = 14695981039346656037ull;
+    for (unsigned char c : text) { value ^= c; value *= 1099511628211ull; }
+    return value;
+}
 struct Case {
     std::string id;
     navicore_osmand::ui::GeoPoint origin, destination;
+    double heading = -1;
 };
 }
 namespace navicore_osmand {
@@ -98,6 +104,7 @@ int route_worker_bench_main(int argc, char** argv) {
             Case item;
             if (!(row >> item.id >> item.origin.latitude >> item.origin.longitude >>
                   item.destination.latitude >> item.destination.longitude)) return 2;
+            row >> item.heading; // optional heading in degrees
             cases.push_back(std::move(item));
         }
         if (cases.empty()) return 2;
@@ -122,7 +129,8 @@ int route_worker_bench_main(int argc, char** argv) {
                 item.id.c_str(), item.origin.latitude, item.origin.longitude,
                 destination.latitude, destination.longitude);
             const auto submitted = Clock::now();
-            worker.submit_route(run + 2, destination, item.origin, false, {});
+            worker.submit_route(run + 2, destination, item.origin, false,
+                item.heading >= 0 ? std::optional<double>(item.heading) : std::nullopt);
             NavigationWorker::RouteResult result;
             while (!worker.take_route_result(result)) poll_pause();
             const auto wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - submitted).count();
@@ -134,9 +142,27 @@ int route_worker_bench_main(int argc, char** argv) {
                 double start_gap = -1, end_gap = -1, geometry = 0, max_step = 0;
                 bool finite = true;
                 std::size_t maneuvers = 0;
+                std::uint64_t geometry_hash = 0, turns_hash = 0;
+                double duration = 0;
                 if (!result.routes.empty()) {
                     const auto& route = result.routes.front();
                     maneuvers = route.maneuvers.size();
+                    duration = route.duration_seconds;
+                    std::ostringstream shape, turns;
+                    shape.precision(15); turns.precision(15);
+                    for (const auto& p : route.geometry) shape << p.latitude << ',' << p.longitude << ';';
+                    for (const auto& m : route.maneuvers) {
+                        turns << static_cast<int>(m.kind) << ',' << m.road << ',' << m.distance_from_start_metres
+                              << ',' << m.geometry_index << ',' << m.roundabout_exit << ',' << m.left_side
+                              << ',' << m.turn_angle_degrees << ',' << m.junction.valid << ',' << m.junction.route_angle
+                              << ',' << m.junction.through_road << ',' << m.junction.truncated << ','
+                              << m.junction.recommended_lanes << ',' << static_cast<int>(m.junction.lane_change);
+                        for (const auto& lane : m.lanes) turns << ':' << static_cast<int>(lane.kind) << ','
+                            << static_cast<int>(lane.also) << ',' << lane.combined << ',' << lane.recommended;
+                        for (unsigned j = 0; j < m.junction.branch_count; ++j) turns << '/' << m.junction.branches[j];
+                        turns << ';';
+                    }
+                    geometry_hash = fingerprint(shape.str()); turns_hash = fingerprint(turns.str());
                     if (!route.geometry.empty()) {
                         start_gap = metres(item.origin, route.geometry.front());
                         end_gap = metres(item.destination, route.geometry.back());
@@ -153,11 +179,12 @@ int route_worker_bench_main(int argc, char** argv) {
                     }
                 }
                 std::printf("batch=case id=%s status=%s wall_ms=%lld routes=%zu air_m=%.1f distance_m=%.1f "
-                    "start_gap_m=%.1f end_gap_m=%.1f geometry_m=%.1f max_step_m=%.1f finite=%d maneuvers=%zu omaps_errors=%u\n",
+                    "start_gap_m=%.1f end_gap_m=%.1f geometry_m=%.1f max_step_m=%.1f finite=%d maneuvers=%zu omaps_errors=%u duration_s=%.3f geometry_hash=%llu turns_hash=%llu\n",
                     item.id.c_str(), result.revision != run + 2 ? "revision_mismatch" : result.routes.empty() ? "no_route" : "ok",
                     static_cast<long long>(wall_ms), result.routes.size(), metres(item.origin, item.destination),
                     result.routes.empty() ? 0 : result.routes.front().distance_metres,
-                    start_gap, end_gap, geometry, max_step, finite ? 1 : 0, maneuvers, turn_errors.load());
+                    start_gap, end_gap, geometry, max_step, finite ? 1 : 0, maneuvers, turn_errors.load(), duration,
+                    static_cast<unsigned long long>(geometry_hash), static_cast<unsigned long long>(turns_hash));
                 continue;  // A failed route is a recorded observation, not the end of the survey.
             }
             const bool reject = std::strcmp(argv[9], "reject") == 0;

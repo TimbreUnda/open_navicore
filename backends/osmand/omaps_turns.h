@@ -10,6 +10,7 @@
 // third_party/organicmaps-routing/README.md lists the OsmAnd -> OM mapping.
 
 #include "ui/navigation_model.h"
+#include "route_roads.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -55,6 +56,6 @@ struct Result {
 // route like OM's own router does. Never throws: an OM check failure is an error.
 Result annotate(RoutingContext& context, const std::vector<std::shared_ptr<RouteSegmentResult>>& route,
                 double start_latitude, double start_longitude, double finish_latitude,
-                double finish_longitude);
+                double finish_longitude, const RouteRoads* roads = nullptr);
 
 } // namespace navicore_osmand::omaps

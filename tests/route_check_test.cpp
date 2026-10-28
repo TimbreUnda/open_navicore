@@ -15,6 +15,16 @@ RouteLeg leg(long long road, double lat0, double lon0, double lat1, double lon1)
 
 int main()
 {
+    using navicore_osmand::check_route_extent;
+    // A closed loop can have identical endpoints but nonzero travelled length.
+    assert(check_route_extent({50,30}, {50,30}, {50,30}, {50,30}, 300).usable);
+    assert(!check_route_extent({50,30}, {50,30.001}, {50,30}, {50,30}, 0).usable);
+    // HH's former apparent success at an off-road destination must be rejected.
+    assert(!check_route_extent({50,30}, {46,31}, {50,30}, {46.22,31}, 525000).usable);
+    // Being inside the global snap radius does not permit HH to skip an
+    // isolated endpoint road: this point was on a road, not 98 m from one.
+    assert(!check_route_extent({50,30}, {50.01,30}, {50.00088,30}, {50.01,30}, 1200, 3, 3).usable);
+    assert(check_route_extent({50,30}, {50.01,30}, {50,30}, {50.01,30}, 1113).usable);
     // An empty route is not usable.
     assert(!check_route_legs({}).ok());
 
