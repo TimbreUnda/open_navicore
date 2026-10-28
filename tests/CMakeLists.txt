@@ -163,3 +163,10 @@ foreach(check
   separate_arguments(command UNIX_COMMAND "${command}")
   add_test(NAME check_${name} COMMAND ${command} WORKING_DIRECTORY ${ONC_ROOT})
 endforeach()
+
+# Organic Maps decisions on small synthetic road graphs; no OBF files required.
+include(${ONC_ROOT}/third_party/organicmaps-routing/sources.cmake)
+add_library(organicmaps_test_support STATIC ${ONC_ORGANICMAPS_SOURCES})
+target_include_directories(organicmaps_test_support SYSTEM PUBLIC ${ONC_ORGANICMAPS_INCLUDES})
+target_compile_options(organicmaps_test_support PRIVATE -w)
+onc_test(organicmaps_turns_test SOURCES organicmaps_turns_test.cpp LIBS organicmaps_test_support)
