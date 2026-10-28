@@ -1,5 +1,50 @@
 # Voice guidance: wiring Ukrainian TTS into Open NaviCore
 
+
+## Implemented stock focus, 2026-10-28
+
+This section supersedes the historical design and ProcessFocus deployment notes below.
+The backend continues to send prompts through `/navicore-voice`; no backend ABI change is
+needed. `navi_voiced --focus stock` (the default) talks to the provider over
+`/tmp/navicore-audio.sock`. One connection owns one prompt. The provider's joined worker
+invokes the existing typed stock callbacks; the renderer never waits for audio.
+
+- Outbound adapter 10 slot 6 requests **PanaNav source 1**, mapped by stock to source 21.
+  This is a different enum from `as_audio_service` source 8.
+- Inbound slot 5 `(handle, source, result=1)` grants allocation. The worker then sends
+  outbound slot 7 preparation and waits for inbound slot 7 with the same handle/source
+  and result 1. Only then does the daemon open/write `pcmC7D0p`.
+- Inbound slot 8 requests deactivation. The daemon checks revocation between PCM writes,
+  flushes queued samples, closes PCM, then disconnects. The provider acknowledges with
+  outbound slot 9 and native success result 1. Normal completion drains PCM before
+  disconnecting and invoking outbound slot 8 release.
+- Denial, stale callbacks, a missing provider, and timeouts fail visibly. There is no
+  automatic fallback. Explicit `--focus alloc` and `--focus none` remain diagnostics.
+  A request made before the stock audio adapter is initialized can expire.
+
+Recovered callsites: allocation `0812fee8`, preparation `0812e868`, release `0812db5c`,
+deactivation reply `0812d8e4`; inbound allocation `0812fcbc`, preparation `0812ec04`,
+deactivation `0812f9a4`. The provider slot manifest records the three inbound contracts.
+The local protocol is `A` request, `G` granted, `D` denied, `R` revoked; disconnect releases.
+Acquisition expires after 8 seconds (client 9), a held grant after 60 seconds, and a dead
+revoked client after 2 seconds. The provider stops/joins its listener at deinitialization.
+
+Implementation: `src/runtime/open_navi_audio_focus.*`, provider adapter 10 methods,
+`backends/osmand/stock_focus.*`, and `qnx_pcm_out.*`. QNX's playback-drain call replaces
+flush on normal completion; flush is used for revoked audio. `navi_voiced` now links
+`libsocket`; the backend dependency set is unchanged.
+
+Validation: all 36 host tests pass, including asynchronous grant/preparation, stale
+callbacks, denial, disconnect, timeout, and revocation acknowledgement ordering. QNX
+build, provider ABI/ELF checks, and both IFS packages pass. On M9304002366, the stock
+callbacks granted source 1 and selftest reported `spoken=1`, all failure counters zero.
+A prompt sent through the installed daemon's normal message queue also received both
+grants and released focus. Speaker audibility has not yet been confirmed by the operator.
+The external workspace report `contracts/native/navi_audio_silence_20261028.md` contains
+Ghidra and live evidence paths and the installation record.
+
+## Historical design (2026-10-20)
+
 2026-10-20. Offline analysis, nothing was run on the radio for this note. It answers: how do
 spoken guidance prompts get from the OsmAnd backend to the speakers, given what the TTS work
 found about sound (`contracts/native/as_audio_service_allocate_channel.md` in the radio workspace, outside this repository)?

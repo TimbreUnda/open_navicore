@@ -31,7 +31,7 @@ endif()
 
 # Voice daemon pieces that the plugin does not link (it keeps an exact, reviewed
 # dependency set): the process-backed audio focus. Host-testable.
-add_library(voice_daemon STATIC process_focus.cpp)
+add_library(voice_daemon STATIC process_focus.cpp stock_focus.cpp)
 target_include_directories(voice_daemon PUBLIC ${ONC_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(voice_daemon PUBLIC navigation_ui)
 target_compile_options(voice_daemon PRIVATE ${ONC_WARNINGS})
@@ -52,7 +52,7 @@ if(RHVOICE_BUILD AND RHVOICE_INCLUDE)
   add_executable(navi_voiced navi_voiced.cpp rhvoice_engine.cpp ${ONC_RHVOICE_OBJECTS})
   target_include_directories(navi_voiced PRIVATE ${RHVOICE_INCLUDE})
   target_compile_options(navi_voiced PRIVATE ${ONC_WARNINGS} ${ONC_TARGET_FLAGS})
-  target_link_libraries(navi_voiced PRIVATE voice_daemon navigation_ui asound m)
+  target_link_libraries(navi_voiced PRIVATE voice_daemon navigation_ui asound socket m)
   # libasound needs libpps.so.1, which the linker only finds through -rpath-link.
   target_link_options(navi_voiced PRIVATE -static-libstdc++ -static-libgcc
     -Wl,-rpath-link,${CMAKE_SYSROOT}/armle-v7/lib)
