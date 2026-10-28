@@ -1,0 +1,7 @@
+# Junction regression cases: python3 tools/junction_lab/junction_lab.py --check tools/junction_lab/cases.tsv
+# FROM	TO	expected turns (Organic Maps directions, route order, arrival left out)	why
+# The expected list is what the operator checked; a change in it needs a look in the lab.
+48.487870,34.936395	48.490011,34.945010	TurnLeft TurnRight	Kamianske: left onto Панаса Мирного, right onto the link that merges onto Набережна Заводська; no slight left on the embankment (OsmAnd: invented lanes)
+48.487081,34.941727	48.489282,34.937865	TurnRight UTurnLeft TurnSlightRight	Kamianske: the exit right onto the link after the U-turn (OM's U-turn skipped it, fixed in car_directions.cpp)
+48.4647,35.0462	48.5300,34.9500	TurnRight UTurnLeft ExitHighwayToRight ExitHighwayToRight TurnSlightRight TurnRight TurnRight	Dnipro: overlapping OSM ways and a 0.3 m stub at 48.516022,34.999655 give no extra go-straight / left-then-right
+50.4501,30.5234	50.4547,30.5238	TurnLeft TurnSlightLeft GoStraight TurnSlightRight TurnRight TurnRight UTurnLeft TurnSlightLeft TurnRight	central Kyiv

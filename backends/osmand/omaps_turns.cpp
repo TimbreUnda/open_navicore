@@ -1,9 +1,9 @@
-// omaps_adapter: OsmAnd route -> Organic Maps IRoutingResult -> OM car turns.
-// See omaps_adapter.hpp. What the OM code reads from mwm features is read here from
-// OsmAnd's RouteDataObject; tools/junction_lab/omaps/README.md lists the mapping
+// omaps_turns: OsmAnd route -> Organic Maps IRoutingResult -> OM car turns.
+// See omaps_turns.h. What the OM code reads from mwm features is read here from
+// OsmAnd's RouteDataObject; third_party/organicmaps-routing/README.md lists the mapping
 // and the defaults used where OsmAnd has no equivalent.
 
-#include "omaps_adapter.hpp"
+#include "omaps_turns.h"
 
 // OsmAnd first: the OM shims define ASSERT/CHECK/LOG macros.
 #include "binaryRead.h"
@@ -27,6 +27,7 @@
 #include "geometry/mercator.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -35,7 +36,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace junction_lab::omaps
+namespace navicore_osmand::omaps
 {
 namespace
 {
@@ -233,7 +234,15 @@ struct RoutePoint
   uint32_t y31 = 0;
   m2::PointD point;
   long osmandSegment = -1;  // segment whose edge leaves this point
+  size_t geometry = 0;      // index among the route's points (Turn::route_point)
+  // Route points within kMergeNodesMetres after this one, folded into it: one junction.
+  std::vector<std::pair<uint32_t, uint32_t>> merged;
 };
+
+// Route points closer than this are one junction to a driver. OSM has stubs of a
+// few centimetres between two junction nodes (48.516022,34.999655: three ways on a
+// 0.3 m segment); OM would see a turn onto the stub and another off it.
+double constexpr kMergeNodesMetres = 2.0;
 
 struct RouteEdgeSource
 {
@@ -252,6 +261,7 @@ public:
 
 private:
   std::vector<RoadAtNode> const & RoadsAt(uint32_t x31, uint32_t y31);
+  std::vector<RoadAtNode> RoadsAt(RoutePoint const & point);  // with its merged nodes
   uint32_t FeatureIndex(RoadPtr const & road);
   int OneWay(RoadPtr const & road);
   bool Restricted(RoadPtr const & from, RoadPtr const & to, std::vector<RoadAtNode> const & atNode) const;
@@ -283,6 +293,17 @@ std::vector<RoadAtNode> const & Builder::RoadsAt(uint32_t x31, uint32_t y31)
   for (auto const & rs : m_context.loadRouteSegment(static_cast<int>(x31), static_cast<int>(y31)))
     roads.push_back({rs->getRoad(), rs->getSegmentStart()});
   return m_nodes.emplace(key, std::move(roads)).first->second;
+}
+
+std::vector<RoadAtNode> Builder::RoadsAt(RoutePoint const & point)
+{
+  std::vector<RoadAtNode> roads = RoadsAt(point.x31, point.y31);
+  for (auto const & node : point.merged)
+  {
+    auto const & more = RoadsAt(node.first, node.second);
+    roads.insert(roads.end(), more.begin(), more.end());
+  }
+  return roads;
 }
 
 uint32_t Builder::FeatureIndex(RoadPtr const & road)
@@ -352,7 +373,7 @@ void Builder::EdgesAt(size_t pathIndex, std::vector<LabEdge> & ingoing, std::vec
   LabEdge const & outEdge = m_routeEdges[pathIndex];
 
   RoutePoint const & p = m_points[pathIndex - 2];
-  auto const & roads = RoadsAt(p.x31, p.y31);
+  auto const roads = RoadsAt(p);
   bool const isJointPoint = roads.size() >= 2;
 
   for (auto const & at : roads)
@@ -384,6 +405,53 @@ void Builder::EdgesAt(size_t pathIndex, std::vector<LabEdge> & ingoing, std::vec
                                      [&](LabEdge const & e) { return IsUTurnPair(e, outEdge); }),
                       ingoing.end());
     }
+  }
+
+  // OSM has overlapping ways: different ways on the same nodes (48.516022,34.999655:
+  // trunk_link way 39364971 and primary way 1552232458 arrive by the same previous
+  // node, primary ways 105200764 and 105200761 and trunk_link 1552232459 leave by the
+  // same next node). Edges that leave (or arrive) along the same next point are one
+  // road to a driver. OsmAnd drops a road whose next/previous point is the route
+  // road's own (attachSegments, routeResultPreparation.cpp: "if way contains same
+  // segment (nodes) as different way (do not attach it)"); OM's own maps have none.
+  // Keep one edge per next point, the route's own when it is among them.
+  auto const dedupe = [](std::vector<LabEdge> & edges, LabEdge const & route, bool outgoingEdges)
+  {
+    auto const far = [outgoingEdges](LabEdge const & e) { return outgoingEdges ? e.end : e.start; };
+    std::vector<LabEdge> kept;
+    for (auto const & e : edges)
+    {
+      bool const isRoute = !route.IsFake() && e.feature == route.feature && e.segId == route.segId &&
+                           e.forward == route.forward;
+      auto same = std::find_if(kept.begin(), kept.end(), [&](LabEdge const & k) { return far(k) == far(e); });
+      if (same == kept.end())
+        kept.push_back(e);
+      else if (isRoute)
+        *same = e;
+    }
+    edges.swap(kept);
+  };
+  dedupe(outgoing, outEdge, true);
+  dedupe(ingoing, inEdge, false);
+
+  // A merged junction: the stub between its nodes is inside it, not a way out or in.
+  if (!p.merged.empty())
+  {
+    auto const inside = [&](m2::PointD const & q)
+    {
+      if (q == p.point)
+        return true;
+      for (auto const & node : p.merged)
+        if (q == Mercator31(node.first, node.second))
+          return true;
+      return false;
+    };
+    outgoing.erase(std::remove_if(outgoing.begin(), outgoing.end(),
+                                  [&](LabEdge const & e) { return inside(e.end); }),
+                   outgoing.end());
+    ingoing.erase(std::remove_if(ingoing.begin(), ingoing.end(),
+                                 [&](LabEdge const & e) { return inside(e.start); }),
+                  ingoing.end());
   }
 
   outgoing.erase(std::remove_if(outgoing.begin(), outgoing.end(),
@@ -536,26 +604,64 @@ void Builder::DumpPathSegments() const
   }
 }
 
-char const * LaneWayName(routing::turns::lanes::LaneWay way)
+using navicore_osmand::ui::ManeuverKind;
+
+// A turn:lanes arrow as the manoeuvre kind the UI draws for a lane.
+ManeuverKind LaneKind(routing::turns::lanes::LaneWay way)
 {
   using routing::turns::lanes::LaneWay;
   switch (way)
   {
-  case LaneWay::None: return "none";
-  case LaneWay::ReverseLeft: return "reverse";
-  case LaneWay::SharpLeft: return "sharp_left";
-  case LaneWay::Left: return "left";
-  case LaneWay::MergeToLeft: return "merge_to_left";
-  case LaneWay::SlightLeft: return "slight_left";
-  case LaneWay::Through: return "through";
-  case LaneWay::SlightRight: return "slight_right";
-  case LaneWay::MergeToRight: return "merge_to_right";
-  case LaneWay::Right: return "right";
-  case LaneWay::SharpRight: return "sharp_right";
-  case LaneWay::ReverseRight: return "reverse_right";
+  case LaneWay::ReverseLeft:
+  case LaneWay::ReverseRight: return ManeuverKind::UTurn;
+  case LaneWay::SharpLeft: return ManeuverKind::SharpLeft;
+  case LaneWay::Left: return ManeuverKind::Left;
+  case LaneWay::MergeToLeft: return ManeuverKind::KeepLeft;
+  case LaneWay::SlightLeft: return ManeuverKind::SlightLeft;
+  case LaneWay::SlightRight: return ManeuverKind::SlightRight;
+  case LaneWay::MergeToRight: return ManeuverKind::KeepRight;
+  case LaneWay::Right: return ManeuverKind::Right;
+  case LaneWay::SharpRight: return ManeuverKind::SharpRight;
+  case LaneWay::None:
+  case LaneWay::Through:
   case LaneWay::Count: break;
   }
-  return "?";
+  return ManeuverKind::Straight;
+}
+
+// OM's direction as the backend's manoeuvre. False: no manoeuvre (none, start,
+// arrival; the worker adds its own arrival).
+bool ManeuverOf(routing::turns::CarDirection direction, Turn & turn)
+{
+  using routing::turns::CarDirection;
+  switch (direction)
+  {
+  case CarDirection::GoStraight: turn.kind = ManeuverKind::Straight; return true;
+  case CarDirection::TurnRight: turn.kind = ManeuverKind::Right; return true;
+  case CarDirection::TurnSharpRight: turn.kind = ManeuverKind::SharpRight; return true;
+  case CarDirection::TurnSlightRight: turn.kind = ManeuverKind::SlightRight; return true;
+  case CarDirection::TurnLeft: turn.kind = ManeuverKind::Left; return true;
+  case CarDirection::TurnSharpLeft: turn.kind = ManeuverKind::SharpLeft; return true;
+  case CarDirection::TurnSlightLeft: turn.kind = ManeuverKind::SlightLeft; return true;
+  // OsmAnd's TU is the left U-turn and TRU (left_side) the right one.
+  case CarDirection::UTurnLeft: turn.kind = ManeuverKind::UTurn; return true;
+  case CarDirection::UTurnRight: turn.kind = ManeuverKind::UTurn; turn.left_side = true; return true;
+  // Leaving a motorway or trunk by a link: "keep left/right" is the instruction a
+  // driver expects there (OM: "take the exit").
+  case CarDirection::ExitHighwayToLeft: turn.kind = ManeuverKind::KeepLeft; return true;
+  case CarDirection::ExitHighwayToRight: turn.kind = ManeuverKind::KeepRight; return true;
+  case CarDirection::EnterRoundAbout:
+  case CarDirection::LeaveRoundAbout:
+  case CarDirection::StayOnRoundAbout:
+    turn.kind = ManeuverKind::Roundabout;
+    turn.roundabout = true;
+    return true;
+  case CarDirection::None:
+  case CarDirection::StartAtEndOfStreet:
+  case CarDirection::ReachedYourDestination:
+  case CarDirection::Count: break;
+  }
+  return false;
 }
 
 Result Builder::Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, double startLat, double startLon,
@@ -563,8 +669,11 @@ Result Builder::Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, d
 {
   Result result;
 
-  // 1. Flatten OsmAnd's segments into route points and road edges.
+  // 1. Flatten OsmAnd's segments into route points and road edges; points closer than
+  //    kMergeNodesMetres to the previous one fold into it (one junction).
   std::vector<RouteEdgeSource> sources;
+  size_t geometry = 0;
+  uint32_t lastX = 0, lastY = 0;
   for (size_t s = 0; s < route.size(); ++s)
   {
     auto const & segment = route[s];
@@ -581,12 +690,26 @@ Result Builder::Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, d
       p.y31 = road->pointsY[i];
       p.point = Mercator31(p.x31, p.y31);
       p.osmandSegment = static_cast<long>(s);
-      bool const same = !m_points.empty() && m_points.back().x31 == p.x31 && m_points.back().y31 == p.y31;
+      // The same as the previous point of the route (a segment starts where the last
+      // ended): that point once, also when it was merged into the one before.
+      bool const same = geometry > 0 && lastX == p.x31 && lastY == p.y31;
+      lastX = p.x31;
+      lastY = p.y31;
       if (!same)
       {
+        p.geometry = geometry++;
         if (!m_points.empty())
         {
           m_points.back().osmandSegment = static_cast<long>(s);
+          if (mercator::DistanceOnEarth(m_points.back().point, p.point) < kMergeNodesMetres)
+          {
+            // The next edge starts at the merged junction's first node (step 2 numbers
+            // it from the map road, as a copy).
+            m_points.back().merged.emplace_back(p.x31, p.y31);
+            if (i == end)
+              break;
+            continue;
+          }
           // A segment that does not start where the previous one ended (not expected)
           // gets an edge numbered from the map road alone (see step 2).
           sources.push_back({road, i == start ? i : i - step, i});
@@ -709,40 +832,75 @@ Result Builder::Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, d
   engine.MakeTurnAnnotation(routingResult, routeSegments);
   CHECK_EQUAL(routeSegments.size(), m_routeEdges.size(), ());
 
-  // 5. Turns in route order. routeSegments[i] ends at m_path[i + 1].
+  // 5. Turns in route order. routeSegments[i] ends at m_path[i + 1]; the loaded path
+  //    segment that starts there gives the junction as OM saw it.
+  routing::NumMwmIds const numMwmIds;
+  auto const settings = routing::GetRoutingSettings(routing::VehicleType::Car);
   for (size_t i = 0; i < routeSegments.size(); ++i)
   {
-    auto const & turn = routeSegments[i].GetTurn();
-    if (turn.IsTurnNone())
+    auto const & item = routeSegments[i].GetTurn();
+    if (item.IsTurnNone())
       continue;
-    Maneuver m;
     size_t const pathIndex = i + 1;
-    ms::LatLon const ll = mercator::ToLatLon(m_path[pathIndex].GetPoint());
-    m.lat = ll.m_lat;
-    m.lon = ll.m_lon;
-    if (pathIndex >= 2 && pathIndex - 2 < m_points.size())
+    if (pathIndex < 2 || pathIndex - 2 >= m_points.size())
+      continue;  // OM's fake start / finish points
+    Turn turn;
+    if (!ManeuverOf(item.m_turn, turn))
+      continue;
+    RoutePoint const & p = m_points[pathIndex - 2];
+    turn.route_point = p.geometry;
+    turn.segment = static_cast<std::size_t>(p.osmandSegment < 0 ? 0 : p.osmandSegment);
+    turn.latitude = get31LatitudeY(static_cast<int>(p.y31));
+    turn.longitude = get31LongitudeX(static_cast<int>(p.x31));
+    turn.direction = routing::turns::GetTurnString(item.m_turn);
+    turn.exit = item.m_exitNum;
+    for (auto const & lane : item.m_lanes)
     {
-      RoutePoint const & p = m_points[pathIndex - 2];
-      m.segment = p.osmandSegment;
-      m.lat = get31LatitudeY(static_cast<int>(p.y31));
-      m.lon = get31LongitudeX(static_cast<int>(p.x31));
-    }
-    m.turn = routing::turns::GetTurnString(turn.m_turn);
-    m.exit = turn.m_exitNum;
-    for (auto const & lane : turn.m_lanes)
-    {
-      Lane out;
-      out.active = lane.recommendedWay != routing::turns::lanes::LaneWay::None;
-      for (auto const way : lane.laneWays.GetActiveLaneWays())
-        out.turns.push_back(LaneWayName(way));
-      m.lanes.push_back(out);
+      using routing::turns::lanes::LaneWay;
+      navicore_osmand::ui::Lane out;
+      out.recommended = lane.recommendedWay != LaneWay::None;
+      auto const ways = lane.laneWays.GetActiveLaneWays();
+      // The lane's main arrow: the one the route takes, else the first.
+      LaneWay const main = out.recommended ? lane.recommendedWay : ways.empty() ? LaneWay::Through : ways.front();
+      out.kind = LaneKind(main);
+      for (auto const way : ways)
+        if (way != main)
+        {
+          out.also = LaneKind(way);
+          out.combined = true;
+          break;
+        }
+      turn.lanes.push_back(out);
     }
     if (i + 1 < routeSegments.size())
     {
       auto const & next = routeSegments[i + 1].GetRoadNameInfo();
-      m.road = !next.m_name.empty() ? next.m_name : next.m_ref;
+      turn.road = !next.m_name.empty() ? next.m_name : next.m_ref;
     }
-    result.maneuvers.push_back(m);
+    // The junction: OM's route angle (as GetTurnDirectionBasic compares it) and its
+    // turn candidates. OM's angles are positive clockwise, as ours.
+    for (size_t k = 1; k < m_pathSegments.size(); ++k)
+    {
+      auto const & outgoing = m_pathSegments[k];
+      if (outgoing.m_path.empty() || outgoing.m_path.front().GetPoint() != m_path[pathIndex].GetPoint() ||
+          m_pathSegments[k - 1].m_segmentRange.IsEmpty() || outgoing.m_segmentRange.IsEmpty())
+        continue;
+      routing::turns::TurnInfo const info(&m_pathSegments[k - 1], &outgoing);
+      double const curve = routing::turns::CalcTurnAngle(routingResult, k, numMwmIds, settings);
+      double const first = routing::turns::CalcOneSegmentTurnAngle(info);
+      turn.route_angle = (curve >= 0) == (first >= 0) ? (std::abs(curve) > std::abs(first) ? curve : first) : curve;
+      size_t ingoing = 0;
+      routing::turns::TurnCandidates candidates;
+      routingResult.GetPossibleTurns(m_pathSegments[k - 1].m_segmentRange, m_path[pathIndex].GetPoint(), ingoing,
+                                     candidates);
+      routing::Segment routeSegment;
+      bool const known = outgoing.m_segmentRange.GetFirstSegment(numMwmIds, routeSegment);
+      for (auto const & c : candidates.candidates)
+        if (!known || !(c.m_segment == routeSegment))
+          turn.other_roads.push_back(c.m_angle);
+      break;
+    }
+    result.turns.push_back(std::move(turn));
   }
   result.ok = true;
   return result;
@@ -750,12 +908,12 @@ Result Builder::Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, d
 }  // namespace
 
 Result annotate(RoutingContext & context, std::vector<std::shared_ptr<RouteSegmentResult>> const & route,
-                double startLat, double startLon, double finishLat, double finishLon)
+                double start_latitude, double start_longitude, double finish_latitude, double finish_longitude)
 {
   try
   {
     Builder builder(context);
-    return builder.Run(route, startLat, startLon, finishLat, finishLon);
+    return builder.Run(route, start_latitude, start_longitude, finish_latitude, finish_longitude);
   }
   catch (std::exception const & e)
   {
@@ -764,4 +922,4 @@ Result annotate(RoutingContext & context, std::vector<std::shared_ptr<RouteSegme
     return result;
   }
 }
-}  // namespace junction_lab::omaps
+}  // namespace navicore_osmand::omaps

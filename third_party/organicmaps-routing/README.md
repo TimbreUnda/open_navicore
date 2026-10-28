@@ -54,7 +54,7 @@ CHECK throws instead of aborting), `base/logging.hpp`, `base/math.hpp`,
 `routing/route.hpp` (trimmed `Segment`/`RouteSegment`; kept members copied
 unchanged), `routing/vehicle_mask.hpp`.
 
-## OsmAnd → OM mapping (omaps_adapter.cpp)
+## OsmAnd → OM mapping (backends/osmand/omaps_turns.cpp)
 
 - Path points: OsmAnd 31-bit points → lat/lon → OM mercator. Layout as OM's router:
   fake start loop, jump from the requested start, the route, jump to the requested
@@ -77,3 +77,11 @@ unchanged), `routing/vehicle_mask.hpp`.
 - Not fed (defaults): OM's access-conditional / road-access checks (OsmAnd's car
   profile already filtered the roads), via-way restrictions, altitudes (0),
   mwm-border twin filtering (one map set, not needed).
+- OSM data OM's maps do not have, handled before OM sees the junction:
+  - Overlapping ways (different ways on the same nodes, 48.516022,34.999655): at a
+    node one edge per next point, the route's own when it is among them. OsmAnd
+    does the same for the route's own road only (`attachSegments`, "if way
+    contains same segment (nodes) as different way (do not attach it)").
+  - Route points closer than 2 m to the previous one are one junction (a 0.3 m stub
+    between two junction nodes there): the roads of both nodes, without the stub.
+    A turn keeps the index of the junction's first point in the route geometry.

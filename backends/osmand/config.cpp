@@ -78,6 +78,8 @@ Config Config::from_environment()
                              map_is_directory ? config.map + "/car.chr" : config.map + ".chr");
     if (marker_or_environment("OPEN_NAVICORE_OSMAND_CH_DISABLE", "/datastore/navicore-backend/disable-ch"))
         config.ch_sidecar.clear();
+    config.osmand_turns = marker_or_environment("OPEN_NAVICORE_OSMAND_TURNS",
+                                                "/datastore/navicore-backend/osmand-turns");
     config.fonts = path("OPEN_NAVICORE_OSMAND_FONTS", config.fonts);
     config.search_index = path("OPEN_NAVICORE_OSMAND_SEARCH_INDEX", config.search_index);
     config.recents = path("OPEN_NAVICORE_OSMAND_RECENTS", config.recents);

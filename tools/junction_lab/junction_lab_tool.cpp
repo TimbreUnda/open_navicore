@@ -19,7 +19,7 @@
 #include "routingConfiguration.h"
 #include "routingContext.h"
 
-#include "omaps_adapter.hpp"
+#include "omaps_turns.h"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -55,6 +55,23 @@ const char* kind_name(ManeuverKind kind)
     case ManeuverKind::Arrive: return "arrive";
     }
     return "?";
+}
+
+// A lane arrow as OsmAnd's turn name (the page draws those).
+const char* lane_turn_name(ManeuverKind kind)
+{
+    switch (kind) {
+    case ManeuverKind::Left: return "TL";
+    case ManeuverKind::SlightLeft: return "TSLL";
+    case ManeuverKind::SharpLeft: return "TSHL";
+    case ManeuverKind::Right: return "TR";
+    case ManeuverKind::SlightRight: return "TSLR";
+    case ManeuverKind::SharpRight: return "TSHR";
+    case ManeuverKind::KeepLeft: return "KL";
+    case ManeuverKind::KeepRight: return "KR";
+    case ManeuverKind::UTurn: return "TU";
+    default: return "C";
+    }
 }
 
 std::string quoted(const std::string& text)
@@ -203,11 +220,15 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
                 std::fprintf(stderr, "   road=%lld \"%s\" %s oneway=%d lanes=%d turn:lanes=\"%s\" point=%d/%d",
                              (long long)road->getId(), road->getName().c_str(), road->getHighway().c_str(),
                              road->getOneway(), road->getLanes(), road->getValue("turn:lanes").c_str(), at, n);
+                // The neighbouring points: two roads with the same one share that
+                // stretch (OsmAnd attaches neither when it is the route's own).
                 if (at + 1 < n)
-                    std::fprintf(stderr, " fwd=%.0f", road->directionRoute(at, true, 10.0f) / M_PI * 180.0);
+                    std::fprintf(stderr, " fwd=%.0f next=%u,%u", road->directionRoute(at, true, 10.0f) / M_PI * 180.0,
+                                 road->pointsX[at + 1], road->pointsY[at + 1]);
                 if (at > 0)
-                    std::fprintf(stderr, " back=%.0f", road->directionRoute(at, false, 10.0f) / M_PI * 180.0);
-                std::fprintf(stderr, "\n");
+                    std::fprintf(stderr, " back=%.0f prev=%u,%u", road->directionRoute(at, false, 10.0f) / M_PI * 180.0,
+                                 road->pointsX[at - 1], road->pointsY[at - 1]);
+                std::fprintf(stderr, " osm_way=%lld\n", (long long)(road->getId() >> 6));
             }
         }
     }
@@ -253,25 +274,56 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
         out << "]}";
         first = false;
     }
-    // The same route through Organic Maps' car turn generator (omaps_adapter).
+    // The radio's manoeuvres: Organic Maps' turns through the backend's own code
+    // (omaps_turns.cpp, route_maneuvers.cpp), with their cluster pictures.
     const double route_ms = ms_since(started);
     const auto omaps_started = std::chrono::steady_clock::now();
-    const auto omaps = junction_lab::omaps::annotate(*context, segments, lat1, lon1, lat2, lon2);
+    const auto omaps = nav::omaps::annotate(*context, segments, lat1, lon1, lat2, lon2);
+    const auto placed = nav::route_maneuvers(segments, &omaps);
     if (std::getenv("JUNCTION_LAB_TIMING"))
         std::fprintf(stderr, "timing: route+osmand_json=%.0fms omaps=%.0fms segments=%zu\n", route_ms,
                      ms_since(omaps_started), segments.size());
     out << "],\"omaps\":[";
-    for (std::size_t i = 0; i < omaps.maneuvers.size(); ++i) {
-        const auto& m = omaps.maneuvers[i];
-        out << (i ? "," : "") << "{\"segment\":" << m.segment << ",\"lat\":" << m.lat << ",\"lon\":" << m.lon
-            << ",\"turn\":" << quoted(m.turn) << ",\"exit\":" << m.exit << ",\"lanes\":[";
+    for (std::size_t i = 0; i < placed.size(); ++i) {
+        const auto& p = placed[i];
+        const auto& m = p.maneuver;
+        // OM's own direction name, or OsmAnd's for its roundabouts.
+        std::string direction;
+        double lat = 0.0, lon = 0.0;
+        for (const auto& turn : omaps.turns)
+            if (turn.route_point == p.route_point && !turn.roundabout) {
+                direction = turn.direction;
+                lat = turn.latitude;
+                lon = turn.longitude;
+            }
+        if (direction.empty() && p.segment < segments.size() && segments[p.segment]) {
+            const auto& s = segments[p.segment];
+            direction = s->turnType ? "OsmAnd " + s->turnType->toString() : "?";
+            const ::LatLon at = s->getPoint(s->getStartPointIndex());
+            lat = at.lat;
+            lon = at.lon;
+        }
+        nav::ui::Maneuver without_junction = m;
+        without_junction.junction = {};
+        const auto& j = m.junction;
+        out << (i ? "," : "") << "{\"segment\":" << p.segment << ",\"route_point\":" << p.route_point
+            << ",\"lat\":" << lat << ",\"lon\":" << lon << ",\"turn\":" << quoted(direction)
+            << ",\"kind\":\"" << kind_name(m.kind) << "\",\"exit\":" << m.roundabout_exit << ",\"lanes\":[";
         for (std::size_t k = 0; k < m.lanes.size(); ++k) {
-            out << (k ? "," : "") << "{\"active\":" << (m.lanes[k].active ? "true" : "false") << ",\"turns\":[";
-            for (std::size_t t = 0; t < m.lanes[k].turns.size(); ++t)
-                out << (t ? "," : "") << quoted(m.lanes[k].turns[t]);
+            const auto& lane = m.lanes[k];
+            out << (k ? "," : "") << "{\"active\":" << (lane.recommended ? "true" : "false") << ",\"turns\":[\""
+                << lane_turn_name(lane.kind) << "\"";
+            if (lane.combined) out << ",\"" << lane_turn_name(lane.also) << "\"";
             out << "]}";
         }
-        out << "],\"road\":" << quoted(m.road) << "}";
+        out << "],\"road\":" << quoted(m.road) << ",\"junction\":{\"valid\":" << (j.valid ? "true" : "false")
+            << ",\"route_angle\":" << j.route_angle << ",\"branches\":[";
+        for (std::size_t k = 0; k < j.branch_count; ++k)
+            out << (k ? "," : "") << j.branches[k];
+        out << "],\"truncated\":" << (j.truncated ? "true" : "false") << "}"
+            << ",\"junction_symbol\":" << unsigned(nav::junction_symbol(m))
+            << ",\"turn_type_symbol\":" << unsigned(nav::maneuver_symbol(without_junction))
+            << ",\"symbol\":" << unsigned(nav::maneuver_symbol(m)) << "}";
     }
     out << "]";
     if (!omaps.ok)

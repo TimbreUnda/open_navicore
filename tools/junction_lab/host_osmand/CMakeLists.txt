@@ -9,8 +9,16 @@
 cmake_minimum_required(VERSION 3.16)
 project(osmand_routing_host C CXX)
 
-set(OSMAND_SOURCE_ROOT /mnt/d/osmand-qnx-build/source CACHE PATH "OsmAnd source tree (read-only)")
 get_filename_component(ONC_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. ABSOLUTE)
+# The OsmAnd source tree (read-only), as cmake/qnx-armv7.cmake finds the OsmAnd QNX
+# build: $OSMAND_QNX_ROOT, else the directory that holds this repository (set it
+# from a linked worktree).
+if(DEFINED ENV{OSMAND_QNX_ROOT})
+  set(_osmand_qnx_root $ENV{OSMAND_QNX_ROOT})
+else()
+  get_filename_component(_osmand_qnx_root ${ONC_ROOT}/../osmand-qnx-build ABSOLUTE)
+endif()
+set(OSMAND_SOURCE_ROOT ${_osmand_qnx_root}/source CACHE PATH "OsmAnd source tree (read-only)")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -98,24 +106,19 @@ target_link_libraries(route_bench_host PRIVATE osmand_routing_host ${CMAKE_DL_LI
 # ---- junction lab (tools/junction_lab) ---------------------------------------------------
 # The backend's manoeuvre and cluster code on top of the host router.
 set(_backend ${ONC_ROOT}/backends/osmand)
-# Organic Maps' car turn generator (tools/junction_lab/omaps, Apache-2.0, see its README)
-# runs on the same OsmAnd route through tools/junction_lab/omaps_adapter.cpp.
-set(_omaps ${ONC_ROOT}/tools/junction_lab/omaps)
-add_library(omaps_turns STATIC
-  ${_omaps}/routing/car_directions.cpp ${_omaps}/routing/directions_engine.cpp
-  ${_omaps}/routing/routing_settings.cpp ${_omaps}/routing/turns.cpp
-  ${_omaps}/routing/turns_generator.cpp ${_omaps}/routing/turns_generator_utils.cpp
-  ${_omaps}/routing/lanes/lane_info.cpp ${_omaps}/routing/lanes/lane_way.cpp
-  ${_omaps}/routing/lanes/lanes_parser.cpp ${_omaps}/routing/lanes/lanes_recommendation.cpp)
-target_include_directories(omaps_turns PUBLIC ${_omaps} ${_omaps}/shim)
-target_compile_options(omaps_turns PRIVATE -O2 -g)
+# Organic Maps' car turn generator (third_party/organicmaps-routing, Apache-2.0) on the
+# OsmAnd route, through the backend's own omaps_turns.cpp, as on the radio.
+include(${ONC_ROOT}/third_party/organicmaps-routing/sources.cmake)
+add_library(organicmaps_turns STATIC ${_backend}/omaps_turns.cpp ${ONC_ORGANICMAPS_SOURCES})
+target_include_directories(organicmaps_turns PRIVATE ${ONC_ORGANICMAPS_INCLUDES} ${_backend})
+target_compile_options(organicmaps_turns PRIVATE -O2 -g -w)
+target_link_libraries(organicmaps_turns PRIVATE osmand_routing_host)
 
 add_executable(junction_lab_tool ${ONC_ROOT}/tools/junction_lab/junction_lab_tool.cpp
-  ${ONC_ROOT}/tools/junction_lab/omaps_adapter.cpp
   ${_backend}/route_maneuvers.cpp ${_backend}/junction_shape.cpp ${_backend}/cluster_payload.cpp)
 target_include_directories(junction_lab_tool PRIVATE ${_backend} ${ONC_ROOT}/include)
 target_compile_options(junction_lab_tool PRIVATE -O2 -g)
-target_link_libraries(junction_lab_tool PRIVATE osmand_routing_host omaps_turns m)
+target_link_libraries(junction_lab_tool PRIVATE organicmaps_turns osmand_routing_host m)
 set_target_properties(junction_lab_tool PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ONC_ROOT}/build/junction_lab)
 
 # The classifier alone, for edited angles (no router).

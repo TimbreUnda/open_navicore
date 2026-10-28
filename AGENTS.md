@@ -1,5 +1,15 @@
 # Agent notes for open_navicore
 
+## Failures: obvious, not silent
+
+- An obvious failure is better than a silent fallback (owner preference, 2026-10-28).
+  When a component fails, make it visible (the feature visibly missing, an error
+  trace line), do not quietly substitute an older or weaker path that hides it.
+- A fallback is only for an explicit switch: e.g. OsmAnd's own manoeuvres run only
+  when Organic Maps' turns are switched off (marker `osmand-turns`), never because
+  Organic Maps' code failed on a route (that route gets no turns and
+  `worker=omaps_error`).
+
 ## Merging pull requests
 
 - Merge with **rebase**, not squash (owner preference, 2026-10-20):
