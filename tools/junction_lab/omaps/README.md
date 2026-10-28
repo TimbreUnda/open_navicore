@@ -37,6 +37,13 @@ Edited (no behavioural change intended):
   `GetSegmentRangeAndAdjacentEdges`, `LoadPathAttributes`) are re-implemented on
   OsmAnd data in `../omaps_adapter.cpp` with the same control flow.
 
+Behavioural fixes (the only changes to OM's decisions; candidates to report upstream):
+
+- `car_directions.cpp` `CheckUTurnOnRoute`: a wide U-turn found `i` segments ahead
+  returned `i + 1` turns to skip, which also dropped the first turn after the U-turn
+  (48.487081,34.941727 → 48.489282,34.937865: the exit right onto the link at
+  48.488918,34.938895). Returns `i` now: only the turns inside the U-turn.
+
 Shims (`shim/`): `base/assert.hpp` (ASSERT compiled out as in OM release builds;
 CHECK throws instead of aborting), `base/logging.hpp`, `base/math.hpp`,
 `base/stl_helpers.hpp`, `base/string_utils.hpp`, `base/internal/message.hpp`,

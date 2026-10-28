@@ -626,7 +626,11 @@ size_t CheckUTurnOnRoute(IRoutingResult const & result, size_t const outgoingSeg
         turn.m_turn = CarDirection::UTurnLeft;
       else
         turn.m_turn = CarDirection::UTurnRight;
-      return i + 1;
+      // junction lab: upstream returns i + 1, which also skips the turn at the end of
+      // segments[outgoingSegmentIndex + i] (the road back), after the U-turn is done
+      // (48.489072,34.942352: the exit right 250 m later was lost). The turns inside
+      // the U-turn are the i into segments[outgoingSegmentIndex + 1 .. + i].
+      return i;
     }
   }
 
