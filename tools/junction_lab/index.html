@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Junction lab</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg: #111418; --panel: #1a1f26; --line: #2c333d; --text: #e6e9ee; --muted: #8b95a3;
+    --accent: #3fb6ff; --route: #43d17a; --incoming: #8b95a3; --warn: #ffb347; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .app { display: grid; grid-template-columns: 1fr 400px; height: 100%; }
+  #map { height: 100%; }
+  aside { overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 12px 14px; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 6px; }
+  p.hint { color: var(--muted); margin: 0 0 8px; }
+  input, select, button, textarea { font: inherit; color: var(--text); background: #0d1014;
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; }
+  button { cursor: pointer; background: #24303d; }
+  button:hover { border-color: var(--accent); }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row > input { flex: 1; min-width: 0; }
+  .list { display: flex; flex-direction: column; gap: 4px; }
+  .item { display: flex; gap: 8px; align-items: center; text-align: left; padding: 4px 6px; }
+  .item.sel { border-color: var(--accent); background: #1d3346; }
+  .item svg { flex: none; }
+  .big { display: flex; gap: 12px; align-items: center; }
+  .big .num { font-size: 28px; font-weight: 700; }
+  .kv { display: grid; grid-template-columns: 120px 1fr; gap: 2px 8px; margin-top: 8px; }
+  .kv div:nth-child(odd) { color: var(--muted); }
+  .fallback { color: var(--warn); }
+  .err { color: var(--bad); }
+  textarea { width: 100%; height: 110px; font: 11px/1.35 ui-monospace, monospace; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 11px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .status { color: var(--muted); min-height: 1.4em; }
+  @media (max-width: 800px) { .app { grid-template-columns: 1fr; grid-template-rows: 55vh auto; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="map"></div>
+  <aside>
+    <h1>Junction lab</h1>
+    <p class="hint">Click <b>FROM</b> on the street you come from, then <b>TO</b> on the street you leave by
+      (a little past the junction). Drag either marker to re-route. OsmAnd's router + the backend's own
+      manoeuvre and cluster code (host build).</p>
+    <div class="row"><input id="coords" placeholder="lat,lon  lat,lon"><button id="go">Route</button><button id="clear">Clear</button></div>
+    <div class="status" id="status"></div>
+
+    <div id="maneuvers-box" hidden>
+      <h2>Manoeuvres</h2>
+      <div class="list" id="maneuvers"></div>
+    </div>
+
+    <div id="detail" hidden>
+      <h2>Cluster</h2>
+      <div class="big"><div id="glyph"></div><div><div class="num" id="sym-num"></div><div id="sym-name"></div>
+        <div id="sym-source"></div></div></div>
+      <div class="kv" id="facts"></div>
+      <h2>Junction as the classifier sees it</h2>
+      <div id="polar"></div>
+      <div class="legend" id="legend"></div>
+
+      <h2>What if</h2>
+      <p class="hint">Edit the junction and re-run the classifier (junction_probe; no routing). Angles are
+        relative to the incoming direction, positive = clockwise (right).</p>
+      <div class="row"><label>kind</label><select id="w-kind"></select><label>lanes</label><input id="w-lanes" placeholder="..*" style="max-width:70px"></div>
+      <div class="row"><label>route</label><input id="w-route" style="max-width:70px"><label>arms</label><input id="w-arms"></div>
+      <div class="row"><button id="w-run">Classify</button><span id="w-result"></span></div>
+
+      <h2>Case (paste to share)</h2>
+      <textarea id="case" readonly></textarea>
+    </div>
+  </aside>
+</div>
+<script>
+'use strict';
+
+// Pictures from analysis/Cluster_TBT_Symbols.md (the operator's descriptions
+// of the live cluster, 2026-10-19). Drawn schematically: roads are the arms
+// the picture shows (degrees, 0 = ahead, clockwise), route the arrow's exit.
+const SYMBOLS = {
+  1: ['turn left (4-way crossing)', {roads: [0, 90, -90], route: -90}],
+  2: ['turn right (4-way crossing)', {roads: [0, 90, -90], route: 90}],
+  3: ['slight left', {roads: [], route: -45}],
+  4: ['slight right', {roads: [], route: 45}],
+  5: ['sharp left', {roads: [], route: -140}],
+  6: ['sharp right', {roads: [], route: 140}],
+  7: ['Y fork, keep left', {roads: [30], route: -30}],
+  8: ['Y fork, keep right', {roads: [-30], route: 30}],
+  9: ['straight', {roads: [], route: 0}],
+  10: ['U-turn left', {uturn: -1}],
+  11: ['exit left (branch off a straight road)', {roads: [0], route: -35}],
+  12: ['exit right (branch off a straight road)', {roads: [0], route: 35}],
+  13: ['straight past a slight-left branch', {roads: [-35], route: 0}],
+  14: ['straight past a slight-right branch', {roads: [35], route: 0}],
+  15: ['"Approaching your destination"', {text: 'Approaching\nyour destination'}],
+  16: ['"Off Route Recalculating"', {text: 'Off Route\nRecalculating'}],
+  17: ['"Off Route Press Nav Enter"', {text: 'Off Route\nPress Nav Enter'}],
+  18: ['"Please Proceed to Route"', {text: 'Please Proceed\nto Route'}],
+  19: ['roundabout RHT, 12:00', {rb: 0}], 20: ['roundabout RHT, U-turn', {rb: 180}],
+  21: ['roundabout RHT, 3:00', {rb: 90}], 22: ['roundabout RHT, 9:00', {rb: -90}],
+  23: ['roundabout RHT, 1:00', {rb: 30}], 24: ['roundabout RHT, 11:00', {rb: -30}],
+  25: ['roundabout RHT, 4:00', {rb: 120}], 26: ['roundabout RHT, 7:00', {rb: -150}],
+  27: ['"You have reached your destination"', {text: 'You have reached\nyour destination'}],
+  28: ['U-turn right', {uturn: 1}],
+  29: ['Y fork, no arrow', {roads: [-30, 30], route: null}],
+  30: ['| crossed by /, arrow ahead-right', {roads: [0, -135], route: 45}],
+  31: ['| crossed by /, arrow behind-left', {roads: [0, 45], route: -135}],
+  32: ['| crossed by \\, arrow behind-right', {roads: [0, -45], route: 135}],
+  33: ['| crossed by \\, arrow ahead-left', {roads: [0, 135], route: -45}],
+  34: ['|/ diagonal crossing, straight', {roads: [45, -135], route: 0}],
+  35: ['|\\ diagonal crossing, straight', {roads: [-45, 135], route: 0}],
+  36: ['roundabout LHT, 12:00', {rb: 0, lht: true}], 37: ['roundabout LHT, U-turn', {rb: 180, lht: true}],
+  38: ['roundabout LHT, 3:00', {rb: 90, lht: true}], 39: ['roundabout LHT, 9:00', {rb: -90, lht: true}],
+  40: ['roundabout LHT, 1:00', {rb: 30, lht: true}], 41: ['roundabout LHT, 11:00', {rb: -30, lht: true}],
+  42: ['roundabout LHT, 4:00', {rb: 120, lht: true}], 43: ['roundabout LHT, 7:00', {rb: -150, lht: true}],
+  44: ['three-way fan /|\\, keep middle', {roads: [-45, 45], route: 0}],
+  45: ['three-way fan /|\\, right', {roads: [-45, 0], route: 45}],
+  46: ['three-way fan /|\\, left', {roads: [0, 45], route: -45}],
+  47: ['-| road joins from left, straight', {roads: [-90], route: 0}],
+  48: ['|- road joins from right, straight', {roads: [90], route: 0}],
+  49: ['|- turn right', {roads: [0], route: 90}],
+  50: ['-| turn left', {roads: [0], route: -90}],
+  51: ['divided road, U-turn left', {uturn: -1, divided: true}],
+  52: ['"One way" (no-entry sign)', {text: 'One way'}],
+  53: ['split \\|/, right', {roads: [-25, 0], route: 25}],
+  54: ['split \\|/, straight', {roads: [-25, 25], route: 0}],
+  55: ['split \\|/, left', {roads: [0, 25], route: -25}],
+  56: ['4-way crossing, straight', {roads: [-90, 90], route: 0}],
+  57: ['divided road, U-turn right', {uturn: 1, divided: true}],
+  58: ['2 lanes, left lane branches to 11:00 (move left)', {roads: [0], route: -30, lanes: -1}],
+  59: ['2 lanes, right lane branches to 1:00 (move right)', {roads: [0], route: 30, lanes: 1}],
+  60: ['T, road ends: turn left', {roads: [90], route: -90}],
+  61: ['T, road ends: turn right', {roads: [-90], route: 90}],
+};
+const KINDS = ['straight', 'left', 'slight_left', 'sharp_left', 'right', 'slight_right', 'sharp_right',
+  'keep_left', 'keep_right', 'uturn', 'roundabout', 'arrive'];
+
+const NS = 'http://www.w3.org/2000/svg';
+const rad = d => d * Math.PI / 180;
+const at = (cx, cy, angle, r) => [cx + r * Math.sin(rad(angle)), cy - r * Math.cos(rad(angle))];
+
+function el(name, attrs, parent) {
+  const node = document.createElementNS(NS, name);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+function arrowHead(svg, tip, angle, size, color) {
+  const a = at(tip[0], tip[1], angle + 150, size), b = at(tip[0], tip[1], angle - 150, size);
+  el('path', {d: `M${tip} L${a} L${b} Z`, fill: color}, svg);
+}
+
+// A cluster picture, schematic (size px square).
+function glyph(symbol, size) {
+  const svg = el('svg', {viewBox: '0 0 100 100', width: size, height: size});
+  el('rect', {x: 0, y: 0, width: 100, height: 100, rx: 12, fill: '#05070a'}, svg);
+  const spec = (SYMBOLS[symbol] || ['', {text: `#${symbol}?`}])[1];
+  const road = '#5d6670', arrow = '#ffffff', cx = 50, cy = 56;
+  if (spec.text) {
+    spec.text.split('\n').forEach((line, i, all) => {
+      const t = el('text', {x: 50, y: 50 + (i - (all.length - 1) / 2) * 13, 'text-anchor': 'middle',
+        'dominant-baseline': 'middle', fill: '#dfe6ee', 'font-size': 10, 'font-family': 'system-ui'}, svg);
+      t.textContent = line;
+    });
+    return svg;
+  }
+  if (spec.rb !== undefined) {
+    const r = 15;
+    el('circle', {cx, cy, r, fill: 'none', stroke: road, 'stroke-width': 8}, svg);
+    el('line', {x1: cx, y1: 96, x2: cx, y2: cy + r, stroke: road, 'stroke-width': 9}, svg);
+    for (const a of [0, 90, -90]) {
+      const [x1, y1] = at(cx, cy, a, r), [x2, y2] = at(cx, cy, a, 40);
+      el('line', {x1, y1, x2, y2, stroke: road, 'stroke-width': 9}, svg);
+    }
+    const [ex1, ey1] = at(cx, cy, spec.rb, r), [ex2, ey2] = at(cx, cy, spec.rb, 40);
+    el('line', {x1: ex1, y1: ey1, x2: ex2, y2: ey2, stroke: road, 'stroke-width': 9}, svg);
+    // RHT counter-clockwise (clock angle decreasing from 6:00), LHT clockwise.
+    let travel = spec.lht ? ((spec.rb - 180 + 360) % 360 || 360) : ((180 - spec.rb + 360) % 360 || 360);
+    const start = at(cx, cy, 180, r), end = at(cx, cy, spec.rb, r);
+    const large = travel > 180 ? 1 : 0, sweep = spec.lht ? 1 : 0;
+    const arc = travel >= 359 ? `A${r},${r} 0 1 ${sweep} ${at(cx, cy, 0, r)} A${r},${r} 0 1 ${sweep} ${end}`
+                              : `A${r},${r} 0 ${large} ${sweep} ${end}`;
+    el('path', {d: `M${cx},92 L${start} ${arc} L${ex2 * .9 + cx * .1},${ey2 * .9 + cy * .1}`, fill: 'none',
+      stroke: arrow, 'stroke-width': 4, 'stroke-linejoin': 'round'}, svg);
+    arrowHead(svg, at(cx, cy, spec.rb, 38), spec.rb, 9, arrow);
+    return svg;
+  }
+  if (spec.uturn) {
+    const s = spec.uturn, w = 18;
+    if (spec.divided) {
+      el('line', {x1: cx, y1: 96, x2: cx, y2: 8, stroke: road, 'stroke-width': 9}, svg);
+      el('line', {x1: cx + s * 2 * w, y1: 96, x2: cx + s * 2 * w, y2: 8, stroke: road, 'stroke-width': 9}, svg);
+    }
+    const x2 = cx + s * 2 * w;
+    el('path', {d: `M${cx},92 L${cx},${30 + w} A${w},${w} 0 0 ${s > 0 ? 1 : 0} ${x2},${30 + w} L${x2},74`,
+      fill: 'none', stroke: arrow, 'stroke-width': 4}, svg);
+    arrowHead(svg, [x2, 82], 180, 9, arrow);
+    return svg;
+  }
+  el('line', {x1: cx, y1: 96, x2: cx, y2: cy, stroke: road, 'stroke-width': spec.lanes ? 16 : 9}, svg);
+  for (const a of spec.roads) {
+    const [x, y] = at(cx, cy, a, 44);
+    el('line', {x1: cx, y1: cy, x2: x, y2: y, stroke: road, 'stroke-width': 9, 'stroke-linecap': 'round'}, svg);
+  }
+  if (spec.route !== null) {
+    const [x, y] = at(cx, cy, spec.route, 44);
+    el('line', {x1: cx, y1: cy, x2: x, y2: y, stroke: road, 'stroke-width': 9, 'stroke-linecap': 'round'}, svg);
+    const startX = cx + (spec.lanes ? -spec.lanes * 4 : 0);
+    const tip = at(cx, cy, spec.route, 36);
+    el('path', {d: `M${startX},92 L${startX},${cy} L${at(cx, cy, spec.route, 28)}`, fill: 'none',
+      stroke: arrow, 'stroke-width': 4, 'stroke-linejoin': 'round'}, svg);
+    arrowHead(svg, tip, spec.route, 9, arrow);
+  }
+  return svg;
+}
+
+// ---- the junction against the classifier's angle bands
+let BANDS = null;  // junction_shape.h constants, from junction_probe
+const BAND_COLOURS = {through: '#1f5f3a', diagonal: '#1d4a6e', perpendicular: '#4a356e', behind: '#6e4a1d',
+  gap: '#5a1f24', reverse: '#2a2f36'};
+
+function bandOf(a) {
+  a = Math.abs(a);
+  const b = BANDS;
+  if (a <= b.through) return 'through';
+  if (a < b.diagonal_min) return 'gap';
+  if (a <= b.diagonal_max) return 'diagonal';
+  if (a < b.perpendicular_min) return 'gap';
+  if (a <= b.perpendicular_max) return 'perpendicular';
+  if (a < b.behind_min) return 'gap';
+  if (a <= b.behind_max) return 'behind';
+  return 'reverse';
+}
+
+function wedge(svg, a0, a1, r0, r1, fill) {
+  const p = (a, r) => at(120, 120, a, r).join(',');
+  const large = a1 - a0 > 180 ? 1 : 0;
+  el('path', {d: `M${p(a0, r0)} L${p(a0, r1)} A${r1},${r1} 0 ${large} 1 ${p(a1, r1)} L${p(a1, r0)} A${r0},${r0} 0 ${large} 0 ${p(a0, r0)} Z`,
+    fill, opacity: .9}, svg);
+}
+
+function polar(routeAngle, branches) {
+  const svg = el('svg', {viewBox: '0 0 240 240', width: 240, height: 240});
+  if (!BANDS) return svg;
+  const b = BANDS;
+  const edges = [0, b.through, b.diagonal_min, b.diagonal_max, b.perpendicular_min, b.perpendicular_max,
+    b.behind_min, b.behind_max, 180];
+  for (let i = 0; i + 1 < edges.length; ++i) {
+    const mid = (edges[i] + edges[i + 1]) / 2;
+    for (const side of [1, -1]) {
+      const [a0, a1] = side > 0 ? [edges[i], edges[i + 1]] : [-edges[i + 1], -edges[i]];
+      wedge(svg, a0, a1, 30, 100, BAND_COLOURS[bandOf(mid)]);
+    }
+  }
+  // The route's own limits: slight (<= route_slight_max) and sharp (>= route_sharp_min).
+  for (const a of [b.route_slight_max, -b.route_slight_max, b.route_sharp_min, -b.route_sharp_min]) {
+    const [x, y] = at(120, 120, a, 108);
+    el('line', {x1: 120, y1: 120, x2: x, y2: y, stroke: '#3fb6ff', 'stroke-width': 1, 'stroke-dasharray': '3 3', opacity: .6}, svg);
+  }
+  const spoke = (a, colour, width, label) => {
+    const [x, y] = at(120, 120, a, 96);
+    el('line', {x1: 120, y1: 120, x2: x, y2: y, stroke: colour, 'stroke-width': width, 'stroke-linecap': 'round'}, svg);
+    if (label !== undefined) {
+      const [tx, ty] = at(120, 120, a, 112);
+      const t = el('text', {x: tx, y: ty, 'text-anchor': 'middle', 'dominant-baseline': 'middle', fill: colour,
+        'font-size': 11, 'font-family': 'system-ui'}, svg);
+      t.textContent = label;
+    }
+  };
+  spoke(180, '#8b95a3', 6);
+  for (const a of branches) spoke(a, '#d6dbe2', 4, Math.round(a) + '°');
+  spoke(routeAngle, '#43d17a', 6, Math.round(routeAngle) + '°');
+  arrowHead(svg, at(120, 120, routeAngle, 98), routeAngle, 10, '#43d17a');
+  el('circle', {cx: 120, cy: 120, r: 5, fill: '#e6e9ee'}, svg);
+  return svg;
+}
+
+function legend() {
+  const box = document.getElementById('legend');
+  box.innerHTML = '';
+  if (!BANDS) return;
+  const b = BANDS;
+  const items = [['through', `through ≤${b.through}`], ['diagonal', `diagonal ${b.diagonal_min}–${b.diagonal_max}`],
+    ['perpendicular', `perpendicular ${b.perpendicular_min}–${b.perpendicular_max}`],
+    ['behind', `behind ${b.behind_min}–${b.behind_max}`], ['gap', 'gap: ambiguous → turn-type picture'],
+    ['reverse', `ignored >${b.behind_max}`]];
+  for (const [k, label] of items) box.insertAdjacentHTML('beforeend', `<span><i style="background:${BAND_COLOURS[k]}"></i>${label}</span>`);
+  box.insertAdjacentHTML('beforeend', `<span>green = route, grey = incoming, dashed = slight ≤${b.route_slight_max} / sharp ≥${b.route_sharp_min}</span>`);
+}
+
+// ---- map
+const map = L.map('map').setView([50.4501, 30.5234], 16);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 20, maxNativeZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'}).addTo(map);
+let from = null, to = null, routeLine = null, maneuverLayer = L.layerGroup().addTo(map),
+  armsLayer = L.layerGroup().addTo(map), result = null, selected = -1;
+
+const status = text => { document.getElementById('status').innerHTML = text; };
+const fmt = ll => `${ll.lat.toFixed(6)},${ll.lng.toFixed(6)}`;
+
+function marker(ll, label, colour) {
+  const m = L.marker(ll, {draggable: true, icon: L.divIcon({className: '', iconSize: [44, 18], iconAnchor: [22, 9],
+    html: `<div style="background:${colour};color:#000;font:700 11px system-ui;border-radius:9px;text-align:center;line-height:18px">${label}</div>`})});
+  m.on('dragend', route);
+  return m.addTo(map);
+}
+
+map.on('click', e => {
+  if (!from) { from = marker(e.latlng, 'FROM', '#8b95a3'); status('now click TO'); }
+  else if (!to) { to = marker(e.latlng, 'TO', '#43d17a'); route(); }
+  else { to.setLatLng(e.latlng); route(); }
+});
+
+function clearAll() {
+  for (const m of [from, to, routeLine]) if (m) map.removeLayer(m);
+  from = to = routeLine = null; result = null; selected = -1;
+  maneuverLayer.clearLayers(); armsLayer.clearLayers();
+  document.getElementById('maneuvers-box').hidden = true;
+  document.getElementById('detail').hidden = true;
+  status(''); history.replaceState(null, '', location.pathname);
+}
+
+async function route() {
+  if (!from || !to) return;
+  const a = fmt(from.getLatLng()), b = fmt(to.getLatLng());
+  document.getElementById('coords').value = `${a}  ${b}`;
+  history.replaceState(null, '', `#from=${a}&to=${b}`);
+  status('routing…');
+  const response = await fetch(`/api/route?from=${a}&to=${b}`);
+  result = await response.json();
+  maneuverLayer.clearLayers(); armsLayer.clearLayers();
+  if (routeLine) map.removeLayer(routeLine);
+  if (!result.ok) { status(`<span class="err">${result.error}</span>`); return; }
+  routeLine = L.polyline(result.geometry, {color: '#3fb6ff', weight: 5, opacity: .8}).addTo(map);
+  status(`${result.maneuvers.length} manoeuvre(s)`);
+  const list = document.getElementById('maneuvers');
+  list.innerHTML = '';
+  result.maneuvers.forEach((m, i) => {
+    const button = document.createElement('button');
+    button.className = 'item';
+    button.appendChild(glyph(m.symbol, 34));
+    button.insertAdjacentHTML('beforeend', `<span><b>${i + 1}. ${m.turn}</b> → #${m.symbol}<br><span style="color:var(--muted)">${m.road || '(no name)'}</span></span>`);
+    button.onclick = () => select(i);
+    list.appendChild(button);
+    L.circleMarker([m.lat, m.lon], {radius: 8, color: '#fff', weight: 2, fillColor: '#3fb6ff', fillOpacity: 1})
+      .bindTooltip(String(i + 1), {permanent: true, direction: 'center', className: ''})
+      .on('click', () => select(i)).addTo(maneuverLayer);
+  });
+  document.getElementById('maneuvers-box').hidden = result.maneuvers.length === 0;
+  document.getElementById('detail').hidden = true;
+  // the manoeuvre nearest to the middle of FROM-TO: usually the junction asked about
+  if (result.maneuvers.length) {
+    const mid = L.latLng((from.getLatLng().lat + to.getLatLng().lat) / 2, (from.getLatLng().lng + to.getLatLng().lng) / 2);
+    let best = 0;
+    result.maneuvers.forEach((m, i) => { if (mid.distanceTo([m.lat, m.lon]) < mid.distanceTo([result.maneuvers[best].lat, result.maneuvers[best].lon])) best = i; });
+    select(best);
+  }
+}
+
+function offset(lat, lon, bearing, metres) {
+  const dLat = metres * Math.cos(rad(bearing)) / 111320;
+  const dLon = metres * Math.sin(rad(bearing)) / (111320 * Math.cos(rad(lat)));
+  return [lat + dLat, lon + dLon];
+}
+
+function lanePattern(j) {
+  let s = '';
+  for (let i = 0; i < j.lane_count; ++i) s += (j.recommended_lanes >> i) & 1 ? '*' : '.';
+  return s;
+}
+
+function showSymbol(m, junction) {
+  const g = document.getElementById('glyph');
+  g.innerHTML = '';
+  g.appendChild(glyph(m.symbol, 120));
+  document.getElementById('sym-num').textContent = `#${m.symbol}`;
+  document.getElementById('sym-name').textContent = (SYMBOLS[m.symbol] || ['unknown'])[0];
+  document.getElementById('sym-source').innerHTML = m.junction_symbol
+    ? 'junction picture (junction_shape.cpp)'
+    : `<span class="fallback">no junction picture → turn-type picture</span>`;
+  const p = document.getElementById('polar');
+  p.innerHTML = '';
+  if (junction.valid) p.appendChild(polar(junction.route_angle, junction.branches));
+  else p.textContent = 'no junction geometry (roundabout, or no incoming segment)';
+}
+
+function select(i) {
+  selected = i;
+  document.querySelectorAll('#maneuvers .item').forEach((b, k) => b.classList.toggle('sel', k === i));
+  const m = result.maneuvers[i], j = m.junction;
+  document.getElementById('detail').hidden = false;
+  showSymbol(m, j);
+  const bands = BANDS ? j.branches.map(a => `${Math.round(a)}° ${bandOf(a)}`).join(', ') : '';
+  document.getElementById('facts').innerHTML = [
+    ['OsmAnd turn', `${m.turn} (angle ${m.turn_angle.toFixed(0)}°${m.left_side ? ', left side' : ''})`],
+    ['kind', m.kind], ['road', m.road || '—'], ['OsmAnd lanes', m.lanes || '—'],
+    ['route angle', j.valid ? `${j.route_angle.toFixed(0)}° ${BANDS ? bandOf(j.route_angle) : ''}` : '—'],
+    ['other arms', (bands || '—') + (j.truncated ? ' (+more, truncated)' : '')],
+    ['lanes summary', j.lane_count ? `${lanePattern(j)} change ${j.lane_change}` : '—'],
+    ['junction / turn-type', `${m.junction_symbol || 'none'} / ${m.turn_type_symbol}`],
+  ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+  // the arms on the map, from the incoming direction
+  armsLayer.clearLayers();
+  if (j.valid) {
+    const line = (angle, colour, weight, dash) => L.polyline([[m.lat, m.lon], offset(m.lat, m.lon, m.incoming_bearing + angle, 35)],
+      {color: colour, weight, dashArray: dash, opacity: .95}).addTo(armsLayer);
+    line(180, '#8b95a3', 6);
+    for (const a of j.branches) line(a, '#ffb347', 4, '6 4');
+    line(j.route_angle, '#43d17a', 6);
+  }
+  map.panTo([m.lat, m.lon]);
+  // what-if editor
+  document.getElementById('w-kind').value = m.kind;
+  document.getElementById('w-route').value = j.route_angle.toFixed(0);
+  document.getElementById('w-arms').value = j.branches.map(a => a.toFixed(0)).join(',');
+  document.getElementById('w-lanes').value = lanePattern(j);
+  document.getElementById('w-result').textContent = '';
+  document.getElementById('case').value = caseText();
+}
+
+async function whatIf() {
+  const m = result.maneuvers[selected];
+  const q = new URLSearchParams({kind: document.getElementById('w-kind').value,
+    route: document.getElementById('w-route').value, arms: document.getElementById('w-arms').value,
+    lanes: document.getElementById('w-lanes').value, turn_angle: m.turn_angle, left_side: m.left_side ? 1 : 0});
+  const r = await (await fetch(`/api/probe?${q}`)).json();
+  const out = document.getElementById('w-result');
+  if (r.error) { out.innerHTML = `<span class="err">${r.error}</span>`; return; }
+  out.textContent = `→ #${r.symbol} ${(SYMBOLS[r.symbol] || [''])[0]}`;
+  showSymbol(r, r);
+}
+
+function caseText() {
+  if (!result || selected < 0) return '';
+  const m = result.maneuvers[selected], j = m.junction;
+  return [`junction_lab.py --route ${fmt(from.getLatLng())} ${fmt(to.getLatLng())}`,
+    `manoeuvre ${selected + 1}/${result.maneuvers.length} at ${m.lat.toFixed(6)},${m.lon.toFixed(6)} road "${m.road}"`,
+    `osmand turn=${m.turn} angle=${m.turn_angle.toFixed(0)} kind=${m.kind} lanes=${m.lanes || '-'}`,
+    `junction route=${j.route_angle.toFixed(0)} arms=${j.branches.map(a => a.toFixed(0)).join(',') || '-'}${j.truncated ? '+' : ''} lanes=${lanePattern(j) || '-'} change=${j.lane_change}`,
+    `cluster symbol=${m.symbol} (${(SYMBOLS[m.symbol] || [''])[0]}) junction=${m.junction_symbol} turn_type=${m.turn_type_symbol}`,
+    `expected: `].join('\n');
+}
+
+function goCoords() {
+  const parts = document.getElementById('coords').value.trim().split(/[\s;]+/).filter(Boolean);
+  if (parts.length !== 2) { status('<span class="err">expected "lat,lon lat,lon"</span>'); return; }
+  const [a, b] = parts.map(p => p.split(',').map(Number));
+  clearAll();
+  from = marker(L.latLng(a[0], a[1]), 'FROM', '#8b95a3');
+  to = marker(L.latLng(b[0], b[1]), 'TO', '#43d17a');
+  map.fitBounds(L.latLngBounds([a, b]).pad(0.6));
+  route();
+}
+
+document.getElementById('go').onclick = goCoords;
+document.getElementById('coords').addEventListener('keydown', e => { if (e.key === 'Enter') goCoords(); });
+document.getElementById('clear').onclick = clearAll;
+document.getElementById('w-run').onclick = whatIf;
+document.getElementById('w-kind').innerHTML = KINDS.map(k => `<option>${k}</option>`).join('');
+
+(async () => {
+  const r = await (await fetch('/api/probe?kind=straight&route=0&arms=')).json();
+  BANDS = r.bands;
+  legend();
+  const hash = new URLSearchParams(location.hash.slice(1));
+  if (hash.get('from') && hash.get('to')) {
+    document.getElementById('coords').value = `${hash.get('from')} ${hash.get('to')}`;
+    goCoords();
+  }
+})();
+</script>
+</body>
+</html>
