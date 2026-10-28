@@ -98,11 +98,24 @@ target_link_libraries(route_bench_host PRIVATE osmand_routing_host ${CMAKE_DL_LI
 # ---- junction lab (tools/junction_lab) ---------------------------------------------------
 # The backend's manoeuvre and cluster code on top of the host router.
 set(_backend ${ONC_ROOT}/backends/osmand)
+# Organic Maps' car turn generator (tools/junction_lab/omaps, Apache-2.0, see its README)
+# runs on the same OsmAnd route through tools/junction_lab/omaps_adapter.cpp.
+set(_omaps ${ONC_ROOT}/tools/junction_lab/omaps)
+add_library(omaps_turns STATIC
+  ${_omaps}/routing/car_directions.cpp ${_omaps}/routing/directions_engine.cpp
+  ${_omaps}/routing/routing_settings.cpp ${_omaps}/routing/turns.cpp
+  ${_omaps}/routing/turns_generator.cpp ${_omaps}/routing/turns_generator_utils.cpp
+  ${_omaps}/routing/lanes/lane_info.cpp ${_omaps}/routing/lanes/lane_way.cpp
+  ${_omaps}/routing/lanes/lanes_parser.cpp ${_omaps}/routing/lanes/lanes_recommendation.cpp)
+target_include_directories(omaps_turns PUBLIC ${_omaps} ${_omaps}/shim)
+target_compile_options(omaps_turns PRIVATE -O2 -g)
+
 add_executable(junction_lab_tool ${ONC_ROOT}/tools/junction_lab/junction_lab_tool.cpp
+  ${ONC_ROOT}/tools/junction_lab/omaps_adapter.cpp
   ${_backend}/route_maneuvers.cpp ${_backend}/junction_shape.cpp ${_backend}/cluster_payload.cpp)
 target_include_directories(junction_lab_tool PRIVATE ${_backend} ${ONC_ROOT}/include)
 target_compile_options(junction_lab_tool PRIVATE -O2 -g)
-target_link_libraries(junction_lab_tool PRIVATE osmand_routing_host m)
+target_link_libraries(junction_lab_tool PRIVATE osmand_routing_host omaps_turns m)
 set_target_properties(junction_lab_tool PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ONC_ROOT}/build/junction_lab)
 
 # The classifier alone, for edited angles (no router).
