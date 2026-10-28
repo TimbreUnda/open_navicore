@@ -898,6 +898,19 @@ Result Builder::Run(std::vector<SHARED_PTR<RouteSegmentResult>> const & route, d
       for (auto const & c : candidates.candidates)
         if (!known || !(c.m_segment == routeSegment))
           turn.other_roads.push_back(c.m_angle);
+      // OM's tie-break between two almost straight roads: its own angle says "go
+      // straight" and CorrectRightmostAndLeftmost / CorrectGoStraight made it a slight
+      // turn because the route is the leftmost (rightmost) of them. That is "keep
+      // left/right" to a driver, not a turn (48.410077,35.086365: the road bears
+      // right, a ramp leaves 9 degrees further right; OM said TurnSlightLeft).
+      using routing::turns::CarDirection;
+      if (routing::turns::IntermediateDirection(turn.route_angle) == CarDirection::GoStraight)
+      {
+        if (item.m_turn == CarDirection::TurnSlightLeft)
+          turn.kind = ManeuverKind::KeepLeft;
+        else if (item.m_turn == CarDirection::TurnSlightRight)
+          turn.kind = ManeuverKind::KeepRight;
+      }
       break;
     }
     result.turns.push_back(std::move(turn));

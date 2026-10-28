@@ -228,7 +228,10 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
                 if (at > 0)
                     std::fprintf(stderr, " back=%.0f prev=%u,%u", road->directionRoute(at, false, 10.0f) / M_PI * 180.0,
                                  road->pointsX[at - 1], road->pointsY[at - 1]);
-                std::fprintf(stderr, " osm_way=%lld\n", (long long)(road->getId() >> 6));
+                const ::LatLon first(get31LatitudeY(road->pointsY[0]), get31LongitudeX(road->pointsX[0]));
+                const ::LatLon last(get31LatitudeY(road->pointsY[n - 1]), get31LongitudeX(road->pointsX[n - 1]));
+                std::fprintf(stderr, " ends=%.6f,%.6f..%.6f,%.6f osm_way=%lld\n", first.lat, first.lon, last.lat,
+                             last.lon, (long long)(road->getId() >> 6));
             }
         }
     }
@@ -298,7 +301,8 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
             }
         if (direction.empty() && p.segment < segments.size() && segments[p.segment]) {
             const auto& s = segments[p.segment];
-            direction = s->turnType ? "OsmAnd " + s->turnType->toString() : "?";
+            // One word (cases.tsv tokens): OsmAnd:RNDB3 = roundabout, third exit.
+            direction = s->turnType ? "OsmAnd:" + s->turnType->toXmlString() : "?";
             const ::LatLon at = s->getPoint(s->getStartPointIndex());
             lat = at.lat;
             lon = at.lon;
