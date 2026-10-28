@@ -19,6 +19,8 @@
 #include "routingConfiguration.h"
 #include "routingContext.h"
 
+#include "omaps_adapter.hpp"
+
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -246,7 +248,25 @@ std::string route(RoutePlannerFrontEnd& front_end, const SHARED_PTR<RoutingConfi
         out << "]}";
         first = false;
     }
-    out << "]}";
+    // The same route through Organic Maps' car turn generator (omaps_adapter).
+    const auto omaps = junction_lab::omaps::annotate(*context, segments, lat1, lon1, lat2, lon2);
+    out << "],\"omaps\":[";
+    for (std::size_t i = 0; i < omaps.maneuvers.size(); ++i) {
+        const auto& m = omaps.maneuvers[i];
+        out << (i ? "," : "") << "{\"segment\":" << m.segment << ",\"lat\":" << m.lat << ",\"lon\":" << m.lon
+            << ",\"turn\":" << quoted(m.turn) << ",\"exit\":" << m.exit << ",\"lanes\":[";
+        for (std::size_t k = 0; k < m.lanes.size(); ++k) {
+            out << (k ? "," : "") << "{\"active\":" << (m.lanes[k].active ? "true" : "false") << ",\"turns\":[";
+            for (std::size_t t = 0; t < m.lanes[k].turns.size(); ++t)
+                out << (t ? "," : "") << quoted(m.lanes[k].turns[t]);
+            out << "]}";
+        }
+        out << "],\"road\":" << quoted(m.road) << "}";
+    }
+    out << "]";
+    if (!omaps.ok)
+        out << ",\"omaps_error\":" << quoted(omaps.error);
+    out << "}";
     return out.str();
 }
 
